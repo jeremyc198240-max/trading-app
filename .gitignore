@@ -1,0 +1,26 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# Local environment secrets
+.env
+.env.local
+.env.*.local
+# Ignore Replit junk
+.local/
+.replit/
+
+# Ignore backup folders
+.history/
+.restore-backup-*/
+
+# Ignore logs
+logs/*.jsonl
+attached_assets/
+client/public/favicon.png
+client/src/components/ui/accordion.tsx
+client/src/components/ui/alert-dialog.tsx
+client/src/components/ui/alert.tsx
