@@ -2,7 +2,7 @@ import yahooFinance from "yahoo-finance2";
 
 export async function fetchOptionsChain0DTE(symbol: string) {
   try {
-    const chain = await yahooFinance.options(symbol);
+    const chain = await yahooFinance.options(symbol, {});
 
     const expirations = chain.expirationDates;
     if (!expirations || expirations.length === 0) {
@@ -13,7 +13,7 @@ export async function fetchOptionsChain0DTE(symbol: string) {
     const today = new Date();
     const todayStr = today.toISOString().split("T")[0];
 
-    const zeroDTE = expirations.find(exp => exp === todayStr);
+    const zeroDTE = expirations.find(exp => exp.toISOString().split("T")[0] === todayStr);
     if (!zeroDTE) {
       return { calls: [], puts: [], expiration: null };
     }
@@ -34,5 +34,4 @@ export async function fetchOptionsChain0DTE(symbol: string) {
     console.error("fetchOptionsChain0DTE error:", err);
     return { calls: [], puts: [], expiration: null };
   }
-}
 }

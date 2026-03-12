@@ -1272,17 +1272,28 @@ export function PriceCard({
   const { data: scannerResults } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
     enabled: !!symbol,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
   const scannerSignal = scannerResults?.find(
     (result) => String(result.symbol ?? "").toUpperCase() === symbol.toUpperCase(),
   );
+
+  const scannerMomentumSigned = Number.isFinite(scannerSignal?.momentumStrength)
+    ? (scannerSignal?.momentumStrength ?? 0)
+    : 0;
   
   // Use INTRADAY change for gauges (slope geometry, price action, sector pulse)
   // This ensures pre-market price gaps don't skew the intraday sentiment
-  const dayMovePct = Number.isFinite(intradayChangePercent) ? (intradayChangePercent ?? 0) : (Number.isFinite(changePercent) ? (changePercent ?? 0) : 0);
+  const intradayMovePct = Number.isFinite(intradayChangePercent) ? (intradayChangePercent ?? 0) : null;
+  const sessionMovePct = Number.isFinite(changePercent) ? (changePercent ?? 0) : 0;
+  const scannerMomentumPct = Math.max(-1.6, Math.min(1.6, scannerMomentumSigned / 30));
+  const baseMovePct = intradayMovePct ?? sessionMovePct;
+  const dayMovePct =
+    Math.abs(scannerMomentumSigned) >= 10
+      ? baseMovePct * 0.7 + scannerMomentumPct * 0.3
+      : baseMovePct;
   const normalizedMove = clamp01(Math.abs(dayMovePct) / 2.4);
 
   const sectorModels = [
@@ -1336,11 +1347,13 @@ export function PriceCard({
   );
 
   const liveSectorCount = liveSectorStates.length;
+  const totalSectorCount = sectorModels.length;
+  const hasLiveSectorFeed = liveSectorCount > 0;
   const sectorCompositeLive =
     liveSectorCount > 0
       ? clamp01(liveSectorStates.reduce((sum, sector) => sum + sector.value, 0) / liveSectorCount)
       : null;
-  const sectorComposite = sectorCompositeLive ?? 0.5;
+  const sectorCompositeForViz = sectorCompositeLive ?? 0;
 
   const bullishSectorCount = liveSectorStates.filter((sector) => sector.liveChangePct >= 0).length;
   const bearishSectorCount = liveSectorStates.filter((sector) => sector.liveChangePct < 0).length;
@@ -1429,18 +1442,17 @@ export function PriceCard({
     sectorPulseBias === "bullish" ? "#10b981" : sectorPulseBias === "bearish" ? "#ef4444" : "#38bdf8";
   const sectorPulseTone =
     sectorPulseBias === "bullish" ? "text-emerald-300" : sectorPulseBias === "bearish" ? "text-red-300" : "text-cyan-300";
-  const sectorPulseNeedle = sectorComposite * 180 - 180;
+  const sectorPulseNeedle = sectorCompositeForViz * 180 - 180;
   const sectorPulsePct = sectorCompositeLive == null ? null : Math.round(sectorCompositeLive * 100);
 
   // ── EXPLOSION / SURGE DETECTION ──────────────────────────────────────
-  const breadthEdge = Math.abs((breadthSync ?? 0.5) - 0.5) * 2;
-  const sectorAlignScore = clamp01(1 - (typeof sectorDispersion === "number" ? sectorDispersion : 0) * 1.2);
+  const breadthEdge = breadthSync == null ? null : Math.abs(breadthSync - 0.5) * 2;
+  const sectorAlignScore =
+    typeof sectorDispersion === "number" ? clamp01(1 - sectorDispersion * 1.2) : null;
   const scannerBreakoutScore = Number.isFinite(scannerSignal?.breakoutScore)
     ? (scannerSignal?.breakoutScore ?? 0)
     : 0;
-  const scannerMomentumAbs = Math.abs(
-    Number.isFinite(scannerSignal?.momentumStrength) ? (scannerSignal?.momentumStrength ?? 0) : 0,
-  );
+  const scannerMomentumAbs = Math.abs(scannerMomentumSigned);
   const scannerVolumeSpike = Number.isFinite(scannerSignal?.volumeSpike)
     ? (scannerSignal?.volumeSpike ?? 1)
     : 1;
@@ -1461,7 +1473,9 @@ export function PriceCard({
       ? 0.35
       : 0;
 
-  const baseSurgeHeat = clamp01(normalizedMove * 0.45 + breadthEdge * 0.35 + (slopeGeometryMagnitude / 100) * 0.20);
+  const baseSurgeHeat = clamp01(
+    normalizedMove * 0.45 + (breadthEdge ?? 0) * 0.35 + (slopeGeometryMagnitude / 100) * 0.20,
+  );
   const scannerBreakoutHeat = clamp01(scannerBreakoutScore / 100);
   const scannerMomentumHeat = clamp01(scannerMomentumAbs / 45);
   const scannerVolumeHeat = clamp01((scannerVolumeSpike - 0.85) / 1.2);
@@ -1493,6 +1507,10 @@ export function PriceCard({
   cpRawScore += priceActionBias === "buy" ? 2 : priceActionBias === "sell" ? -2 : 0;
   // 2. Slope geometry (derived from intraday % — always real)
   cpRawScore += slopeBias === "up" ? 1.5 : slopeBias === "down" ? -1.5 : 0;
+  // 2b. Scanner momentum adds short-horizon direction context.
+  if (Math.abs(scannerMomentumSigned) >= 8) {
+    cpRawScore += Math.max(-1.4, Math.min(1.4, scannerMomentumSigned / 22));
+  }
   // 3. Sector composite (only when live sectors are available)
   if (sectorCompositeLive != null) {
     cpRawScore += sectorPulseBias === "bullish" ? 1.5 : sectorPulseBias === "bearish" ? -1.5 : 0;
@@ -1501,10 +1519,23 @@ export function PriceCard({
   if (breadthSync != null) {
     cpRawScore += breadthSync >= 0.65 ? 1 : breadthSync <= 0.35 ? -1 : 0;
   }
+  // Prevent false bullish/bearish bias when momentum strongly disagrees with aggregate drivers.
+  if (scannerMomentumSigned <= -16 && cpRawScore > 0) {
+    cpRawScore *= 0.45;
+  } else if (scannerMomentumSigned >= 16 && cpRawScore < 0) {
+    cpRawScore *= 0.45;
+  }
   // Surge amplifier — explosive conditions sharpen the signal
   if (isSurging) cpRawScore *= 1.25;
-  const cpMaxScore = sectorCompositeLive != null && breadthSync != null ? 6 : 3.5;
-  const callPutScore = Math.round((cpRawScore / cpMaxScore) * 100);
+  const hasMomentumSignal = Math.abs(scannerMomentumSigned) >= 8;
+  const cpMaxScore = sectorCompositeLive != null && breadthSync != null
+    ? hasMomentumSignal
+      ? 7.4
+      : 6
+    : hasMomentumSignal
+    ? 4.9
+    : 3.5;
+  const callPutScore = Math.max(-100, Math.min(100, Math.round((cpRawScore / cpMaxScore) * 100)));
   const callPutSignal: "CALL" | "PUT" | "NO TRADE" =
     callPutScore >= 55 ? "CALL" : callPutScore <= -55 ? "PUT" : "NO TRADE";
   const cpStrength = Math.abs(callPutScore) >= 65 ? "HIGH" : Math.abs(callPutScore) >= 35 ? "MOD" : "LOW";
@@ -1721,22 +1752,43 @@ export function PriceCard({
             </div>
           </div>
 
-          <div className="relative mt-2 rounded-2xl border p-2.5" style={{ borderColor: callPutColor + "4d", background: "linear-gradient(168deg,rgba(4,6,12,0.94),rgba(3,8,16,0.9))", boxShadow: `inset 0 0 40px ${callPutColor}0f, 0 0 26px ${callPutColor}14` }}>
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-cyan-500/0 via-cyan-300/80 to-sky-400/0" />
-            <div className="pointer-events-none absolute inset-0 opacity-28 bg-[radial-gradient(circle_at_12%_0%,rgba(6,182,212,0.24),transparent_48%),radial-gradient(circle_at_88%_100%,rgba(56,189,248,0.18),transparent_45%)]" />
-            <div className="pointer-events-none absolute inset-0 opacity-22" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />
-            <div className="pointer-events-none absolute left-2 top-2 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "70" }} />
-            <div className="pointer-events-none absolute right-2 bottom-2 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "45" }} />
+          <div
+            className="relative mt-2 overflow-hidden rounded-2xl border p-2.5 backdrop-blur-md transition-all duration-300"
+            style={{
+              borderColor: callPutColor + "63",
+              background: "linear-gradient(150deg,#07080d 0%,#0b0d18 58%,#05070d 100%)",
+              boxShadow: `0 0 30px ${callPutColor}2a, inset 0 0 30px ${callPutColor}16`,
+            }}
+          >
+            <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />
+            <div className="pointer-events-none absolute inset-0 opacity-18" style={{ backgroundImage: `linear-gradient(${callPutColor}24 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,0.08) 1px,transparent 1px)`, backgroundSize: "22px 22px" }} />
+            <div className={cn("pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r", cpTopBar)} />
+            <div className="pointer-events-none absolute left-2 top-2 h-3 w-3 border-l border-t" style={{ borderColor: callPutColor + "66" }} />
+            <div className="pointer-events-none absolute right-2 bottom-2 h-3 w-3 border-r border-b" style={{ borderColor: callPutColor + "4d" }} />
+            <div className="pointer-events-none absolute right-2 top-2 text-[8px] tracking-[0.18em] font-mono" style={{ color: callPutColor + "aa" }}>ENGINE HUD</div>
 
-            <div className="mb-1.5 flex items-center justify-between text-[9px] uppercase tracking-wider">
-              <span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: callPutColor }}>
-                <Layers className="h-3 w-3" />
+            <div
+              className="relative z-20 mb-1 mt-0.5 flex items-center gap-2 rounded-xl border px-2 py-1"
+              style={{
+                borderColor: callPutColor + "52",
+                background: `linear-gradient(135deg,${callPutColor}1c,rgba(2,6,23,0.88) 58%)`,
+                boxShadow: `inset 0 0 18px ${callPutColor}1f, 0 0 20px ${callPutColor}26`,
+              }}
+            >
+              <Flame className="w-4 h-4" style={{ color: callPutColor, filter: `drop-shadow(0 0 7px ${callPutColor})` }} />
+              <span className="font-mono text-[13px] font-black tracking-[0.12em] uppercase" style={{ color: callPutColor, textShadow: `0 0 10px ${callPutColor}88` }}>
                 SPY Engine Monitor
               </span>
+              <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-gradient-to-r border"
+                style={{ borderColor: callPutColor + "45", backgroundColor: callPutColor + "18", color: callPutColor }}>
+                {callPutSignal}
+              </span>
+              <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-cyan-400/40 text-cyan-200 bg-cyan-500/10">
+                {cpStrength}
+              </span>
               <span className="rounded-md px-1.5 py-0.5 font-mono font-black text-[9px] tracking-widest border"
-                style={{ color: callPutColor, borderColor: callPutColor + "45", backgroundColor: callPutColor + "15",
-                  textShadow: `0 0 10px ${callPutColor}55` }}>
-                {Math.round(marketStrength * 100)}% STRENGTH
+                style={{ color: callPutColor, borderColor: callPutColor + "45", backgroundColor: callPutColor + "15", textShadow: `0 0 10px ${callPutColor}55` }}>
+                {Math.round(marketStrength * 100)}%
               </span>
             </div>
 
@@ -1781,25 +1833,32 @@ export function PriceCard({
 
             <div className="space-y-1.5">
               <div className={cn(
-                "rounded-md border p-1",
+                "relative overflow-hidden rounded-xl border p-1.5",
                 sectorPulseBias === "bullish"
                   ? "border-emerald-400/45 bg-[linear-gradient(120deg,rgba(6,28,24,0.78),rgba(3,16,18,0.5))] shadow-[0_0_22px_rgba(16,185,129,0.22)]"
                   : sectorPulseBias === "bearish"
                   ? "border-red-400/45 bg-[linear-gradient(120deg,rgba(34,6,6,0.78),rgba(18,4,4,0.56))] shadow-[0_0_22px_rgba(239,68,68,0.2)]"
                   : "border-cyan-300/45 bg-[linear-gradient(120deg,rgba(8,20,34,0.78),rgba(6,12,20,0.6))] shadow-[0_0_22px_rgba(56,189,248,0.18)]",
               )}>
+                <div className="pointer-events-none absolute inset-0 opacity-12" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" />
                 <div className={cn("mb-1 flex items-center justify-between text-[8px] uppercase tracking-wider", sectorPulseBias === "bullish" ? "text-emerald-300/85" : sectorPulseBias === "bearish" ? "text-red-300/85" : "text-cyan-300/85")}>
                   <span>SPY Sectors · Live Pulse</span>
-                  <span className={cn(
-                    "rounded border px-1.5 py-0.5 text-[7px] font-mono font-black tracking-[0.08em]",
-                    sectorPulseBias === "bullish"
-                      ? "border-emerald-400/40 bg-emerald-500/18 text-emerald-300"
-                      : sectorPulseBias === "bearish"
-                      ? "border-red-400/40 bg-red-500/18 text-red-300"
-                      : "border-cyan-400/40 bg-cyan-500/18 text-cyan-300",
-                  )}>
-                    {sectorCompositeLive == null ? "NO DATA" : sectorPulseBias.toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={cn(
+                      "rounded border px-1.5 py-0.5 text-[7px] font-mono font-black tracking-[0.08em]",
+                      sectorPulseBias === "bullish"
+                        ? "border-emerald-400/40 bg-emerald-500/18 text-emerald-300"
+                        : sectorPulseBias === "bearish"
+                        ? "border-red-400/40 bg-red-500/18 text-red-300"
+                        : "border-cyan-400/40 bg-cyan-500/18 text-cyan-300",
+                    )}>
+                      {hasLiveSectorFeed ? sectorPulseBias.toUpperCase() : "NO DATA"}
+                    </span>
+                    <span className="rounded border border-cyan-400/35 bg-cyan-500/10 px-1.5 py-0.5 text-[7px] font-mono font-black tracking-[0.08em] text-cyan-200">
+                      LIVE {liveSectorCount}/{totalSectorCount}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="relative z-10 space-y-1.5">
@@ -1814,14 +1873,21 @@ export function PriceCard({
                             const sr = toRsp(s); const er = toRsp(e);
                             return `M ${76 + r * Math.cos(sr)} ${68 + r * Math.sin(sr)} A ${r} ${r} 0 ${(e - s) > 180 ? 1 : 0} 1 ${76 + r * Math.cos(er)} ${68 + r * Math.sin(er)}`;
                           };
-                          const spVal = sectorComposite;
+                          const hasSpData = sectorCompositeLive != null;
+                          const spVal = sectorCompositeLive ?? 0;
                           const spFE = -220 + 260 * Math.min(1, spVal);
                           const spTX = 76 + 46 * Math.cos(toRsp(spFE));
                           const spTY = 68 + 46 * Math.sin(toRsp(spFE));
                           const spTicks = Array.from({ length: 9 }, (_, i) => {
                             const deg = -220 + (260 / 8) * i;
                             const rad = toRsp(deg);
-                            return { x1: 76 + 52 * Math.cos(rad), y1: 68 + 52 * Math.sin(rad), x2: 76 + 57 * Math.cos(rad), y2: 68 + 57 * Math.sin(rad), active: deg <= spFE };
+                            return {
+                              x1: 76 + 52 * Math.cos(rad),
+                              y1: 68 + 52 * Math.sin(rad),
+                              x2: 76 + 57 * Math.cos(rad),
+                              y2: 68 + 57 * Math.sin(rad),
+                              active: hasSpData && deg <= spFE,
+                            };
                           });
                           const spBkts = [`M 10 3 L 3 3 L 3 10`, `M 142 3 L 149 3 L 149 10`, `M 10 107 L 3 107 L 3 100`, `M 142 107 L 149 107 L 149 100`];
                           return (
@@ -1839,11 +1905,11 @@ export function PriceCard({
                                     strokeWidth={ti === 0 || ti === 8 ? "1.6" : "0.9"} strokeLinecap="round" />
                                 ))}
                                 <path d={arsp(-220, 40, 46)} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" strokeLinecap="round" strokeDasharray="4 3" />
-                                {spVal > 0 && <>
+                                {hasSpData && spVal > 0 && <>
                                   <path d={arsp(-220, spFE, 46)} fill="none" stroke={sectorPulseColor} strokeWidth="11" strokeLinecap="round" opacity={0.22} style={{ filter: `drop-shadow(0 0 14px ${sectorPulseColor}cc)` }} />
                                   <path d={arsp(-220, spFE, 46)} fill="none" stroke={sectorPulseColor} strokeWidth="5.5" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 6px ${sectorPulseColor}aa)` }} />
                                 </>}
-                                {spVal > 0.02 && <circle cx={spTX} cy={spTY} r="4.5" fill={sectorPulseColor} style={{ filter: `drop-shadow(0 0 7px ${sectorPulseColor}) drop-shadow(0 0 16px ${sectorPulseColor}88)` }} />}
+                                {hasSpData && spVal > 0.02 && <circle cx={spTX} cy={spTY} r="4.5" fill={sectorPulseColor} style={{ filter: `drop-shadow(0 0 7px ${sectorPulseColor}) drop-shadow(0 0 16px ${sectorPulseColor}88)` }} />}
                                 <circle cx="76" cy="68" r="37" fill={sectorPulseColor + "07"} />
                                 <circle cx="76" cy="68" r="37" fill="none" stroke={sectorPulseColor + "22"} strokeWidth="0.6" />
                                 <text x="76" y="63" textAnchor="middle" dominantBaseline="middle" fill={sectorPulseColor}
@@ -1852,7 +1918,13 @@ export function PriceCard({
                                 </text>
                                 <text x="76" y="76" textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.28)"
                                   fontSize="7" fontWeight="700" letterSpacing="1.5">
-                                  {sectorComposite >= 0.65 ? "BULL" : sectorComposite <= 0.35 ? "BEAR" : "NEUT"}
+                                  {hasSpData
+                                    ? sectorPulseBias === "bullish"
+                                      ? "BULL"
+                                      : sectorPulseBias === "bearish"
+                                      ? "BEAR"
+                                      : "NEUT"
+                                    : "NO DATA"}
                                 </text>
                               </svg>
                             </div>
@@ -2008,8 +2080,10 @@ export function PriceCard({
                   )}
 
                   {/* ── EXPLOSION DETECTOR ── */}
-                  <div className="rounded-lg border border-rose-500/25 bg-rose-950/15 px-3 py-2"
+                  <div className="relative overflow-hidden rounded-xl border border-rose-500/25 bg-rose-950/15 px-3 py-2"
                     style={{ boxShadow: surgeHeat >= 0.7 ? `0 0 20px rgba(244,63,94,0.28), inset 0 0 14px rgba(244,63,94,0.10)` : "none" }}>
+                    <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-px" style={{ background: "linear-gradient(90deg,transparent,rgba(244,63,94,0.35),transparent)" }} />
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[8px] font-black tracking-[0.2em] uppercase" style={{ color: surgeColor }}>
                         ⚡ Explosion Detector
@@ -2033,17 +2107,36 @@ export function PriceCard({
                             ? "Vol elevated"
                             : "Vol calm",
                         },
-                        { label: "Sector Align", value: sectorAlignScore, desc: sectorAlignScore >= 0.7 ? "Sectors in sync" : "Diverging" },
-                        { label: "Breadth Edge", value: breadthEdge, desc: breadthEdge >= 0.5 ? `${bullishSectorCount > bearishSectorCount ? "Bull" : "Bear"} extreme` : "Balanced" },
+                        {
+                          label: "Sector Align",
+                          value: sectorAlignScore,
+                          desc:
+                            sectorAlignScore == null
+                              ? "Awaiting live sectors"
+                              : sectorAlignScore >= 0.7
+                              ? "Sectors in sync"
+                              : "Diverging",
+                        },
+                        {
+                          label: "Breadth Edge",
+                          value: breadthEdge,
+                          desc:
+                            breadthEdge == null
+                              ? "Awaiting live breadth"
+                              : breadthEdge >= 0.5
+                              ? `${bullishSectorCount > bearishSectorCount ? "Bull" : "Bear"} extreme`
+                              : "Balanced",
+                        },
                       ].map(({ label, value, desc }) => {
-                        const barColor = value >= 0.7 ? "#f43f5e" : value >= 0.45 ? "#f59e0b" : "#22d3ee";
+                        const metricValue = value ?? 0;
+                        const barColor = metricValue >= 0.7 ? "#f43f5e" : metricValue >= 0.45 ? "#f59e0b" : "#22d3ee";
                         const segs = 14;
-                        const filled = Math.round(value * segs);
+                        const filled = Math.round(metricValue * segs);
                         return (
                           <div key={label} className="space-y-1">
                             <div className="flex justify-between text-[7px] font-bold uppercase tracking-wider">
                               <span className="text-white/35">{label}</span>
-                              <span style={{ color: barColor }}>{Math.round(value * 100)}</span>
+                              <span style={{ color: barColor }}>{value == null ? "--" : Math.round(metricValue * 100)}</span>
                             </div>
                             <div className="flex gap-[1.5px] h-[7px]">
                               {Array.from({ length: segs }).map((_, i) => {
@@ -2085,7 +2178,7 @@ export function BreakoutAlertBar({
 }) {
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 

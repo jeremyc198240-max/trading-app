@@ -1,6 +1,9 @@
 // marketData.ts - Multi-source market data (Finnhub primary, Yahoo fallback)
 
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY || '';
+const FINNHUB_COOLDOWN_MS = 30 * 1000;
+let finnhubGlobalCooldownUntil = 0;
+let finnhubCooldownLogAt = 0;
 
 let yahooFinanceInstance: any | null = null;
 
@@ -21,12 +24,24 @@ async function fetchFinnhubQuote(symbol: string): Promise<FinnhubQuote | null> {
   if (!FINNHUB_API_KEY) {
     return null;
   }
+
+  if (Date.now() < finnhubGlobalCooldownUntil) {
+    if (process.env.DEBUG_SIGNALS === '1' && (Date.now() - finnhubCooldownLogAt > 5_000)) {
+      const remainingSec = Math.max(1, Math.ceil((finnhubGlobalCooldownUntil - Date.now()) / 1000));
+      console.warn(`[Finnhub] Cooldown active (${remainingSec}s), skipping ${symbol}.`);
+      finnhubCooldownLogAt = Date.now();
+    }
+    return null;
+  }
   
   try {
     const url = `https://finnhub.io/api/v1/quote?symbol=${symbol.toUpperCase()}&token=${FINNHUB_API_KEY}`;
     const response = await fetch(url);
     
     if (!response.ok) {
+      if (response.status === 429) {
+        finnhubGlobalCooldownUntil = Math.max(finnhubGlobalCooldownUntil, Date.now() + FINNHUB_COOLDOWN_MS);
+      }
       console.warn(`[Finnhub] HTTP ${response.status} for ${symbol}`);
       return null;
     }
@@ -163,13 +178,11 @@ function getCacheKey(
   period1: Date,
   period2: Date
 ): string {
-  return [
-    symbol.toUpperCase(),
-    timeframe,
-    session,
-    period1.getTime(),
-    period2.getTime(),
-  ].join('-');
+  // Time-window params are dynamic per request; keep cache key stable per symbol/timeframe/session
+  // and rely on TTL to invalidate.
+  void period1;
+  void period2;
+  return [symbol.toUpperCase(), timeframe, session].join('-');
 }
 
 function getFromCache(
@@ -652,6 +665,7 @@ export async function fetchLiveSpot(symbol: string): Promise<{
   source: 'finnhub' | 'yahoo';
 }> {
   const upperSymbol = symbol.toUpperCase();
+  const cached = spotCache.get(upperSymbol);
 
   const toMs = (raw: unknown): number | null => {
     if (raw == null) return null;
@@ -667,6 +681,74 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       const ms = Date.parse(raw);
       return Number.isFinite(ms) ? ms : null;
     }
+    return null;
+  };
+
+  const parseStooqTimestampMs = (datePart: string, timePart: string): number | null => {
+    if (!/^\d{8}$/.test(datePart)) return null;
+
+    const year = Number(datePart.slice(0, 4));
+    const month = Number(datePart.slice(4, 6));
+    const day = Number(datePart.slice(6, 8));
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+
+    let hour = 16;
+    let minute = 0;
+    let second = 0;
+    if (/^\d{6}$/.test(timePart)) {
+      hour = Number(timePart.slice(0, 2));
+      minute = Number(timePart.slice(2, 4));
+      second = Number(timePart.slice(4, 6));
+    }
+
+    const ts = Date.UTC(year, Math.max(0, month - 1), day, hour, minute, second);
+    return Number.isFinite(ts) ? ts : null;
+  };
+
+  const resolveStooqFallback = async (): Promise<SpotCache['data'] | null> => {
+    const symbolCandidates = [`${upperSymbol.toLowerCase()}.us`, upperSymbol.toLowerCase()];
+
+    for (const stooqSymbol of symbolCandidates) {
+      try {
+        const response = await fetch(`https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=5`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
+        if (!response.ok) continue;
+
+        const raw = (await response.text()).trim();
+        if (!raw) continue;
+
+        const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        const row = lines[lines.length - 1];
+        if (!row) continue;
+
+        const cols = row.split(',');
+        if (cols.length < 7) continue;
+
+        const close = Number(cols[6]);
+        if (!Number.isFinite(close) || close <= 0) continue;
+
+        const open = Number(cols[3]);
+        const prevClose = Number.isFinite(open) && open > 0
+          ? open
+          : cached?.data.prevClose ?? close;
+
+        const timestampMs = parseStooqTimestampMs(cols[1] ?? '', cols[2] ?? '') ?? Date.now();
+
+        return {
+          symbol: upperSymbol,
+          spot: close,
+          prevClose,
+          marketState: 'REGULAR',
+          timestamp: new Date(timestampMs).toISOString(),
+          source: 'yahoo',
+        };
+      } catch {
+        // Continue to next candidate.
+      }
+    }
+
     return null;
   };
 
@@ -690,18 +772,24 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     if (!finnhubQuote || !Number.isFinite(finnhubQuote.c) || finnhubQuote.c <= 0) {
       return null;
     }
+
+    const finnhubTsMs = finnhubQuote.t ? finnhubQuote.t * 1000 : 0;
+    const finnhubIsFresh = finnhubTsMs > 0 && (Date.now() - finnhubTsMs) <= FINNHUB_MAX_STALENESS_MS;
+    if (!finnhubIsFresh) {
+      return null;
+    }
+
     return {
       symbol: upperSymbol,
       spot: finnhubQuote.c,
       prevClose: Number.isFinite(finnhubQuote.pc) && finnhubQuote.pc > 0 ? finnhubQuote.pc : finnhubQuote.c,
       marketState: 'REGULAR',
-      timestamp: new Date((finnhubQuote.t || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+      timestamp: new Date(finnhubTsMs).toISOString(),
       source: 'finnhub',
     };
   };
   
   // Check spot cache first (5-second TTL for real-time feel without rate limiting)
-  const cached = spotCache.get(upperSymbol);
   if (cached && Date.now() - cached.timestamp < SPOT_CACHE_TTL_MS) {
     return cached.data;
   }
@@ -709,6 +797,26 @@ export async function fetchLiveSpot(symbol: string): Promise<{
   // Global cooldown after Yahoo 429s to avoid quote hammering loops.
   if (Date.now() < yahooSpotGlobalCooldownUntil) {
     const remainingSec = Math.max(1, Math.ceil((yahooSpotGlobalCooldownUntil - Date.now()) / 1000));
+    const finnhubFallback = await resolveFinnhubFallback();
+    if (finnhubFallback) {
+      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+      return finnhubFallback;
+    }
+
+    const intradayFallback = await resolveIntradayFallback();
+    if (intradayFallback) {
+      const intradayResult: SpotCache['data'] = {
+        symbol: upperSymbol,
+        spot: intradayFallback.price,
+        prevClose: cached?.data.prevClose ?? intradayFallback.price,
+        marketState: cached?.data.marketState ?? 'REGULAR',
+        timestamp: new Date(intradayFallback.timestampMs).toISOString(),
+        source: 'yahoo',
+      };
+      spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
+      return intradayResult;
+    }
+
     if (cached && Date.now() - cached.timestamp <= MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS) {
       if (process.env.DEBUG_SIGNALS === '1' && (Date.now() - yahooSpotCooldownLogAt > 5_000)) {
         console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), using cached quote for ${upperSymbol}.`);
@@ -717,11 +825,22 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       return cached.data;
     }
 
-    const finnhubFallback = await resolveFinnhubFallback();
-    if (finnhubFallback) {
-      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
-      return finnhubFallback;
+    if (cached) {
+      if (process.env.DEBUG_SIGNALS === '1' && (Date.now() - yahooSpotCooldownLogAt > 5_000)) {
+        const ageSec = Math.max(1, Math.floor((Date.now() - cached.timestamp) / 1000));
+        console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), using stale cached quote for ${upperSymbol} (${ageSec}s old).`);
+        yahooSpotCooldownLogAt = Date.now();
+      }
+      return cached.data;
     }
+
+    const stooqFallback = await resolveStooqFallback();
+    if (stooqFallback) {
+      spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
+      return stooqFallback;
+    }
+
+    throw new Error(`Yahoo rate-limited cooldown active (${remainingSec}s), no fallback data`);
   }
   
   try {
@@ -743,18 +862,22 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     const preMarketPrice = (quote as any).preMarketPrice;
     const postMarketPrice = (quote as any).postMarketPrice;
     const quotePrevClose = (quote as any).regularMarketPreviousClose || regularPrice;
-    const quoteTimeMs =
-      toMs((quote as any).regularMarketTime) ??
-      toMs((quote as any).postMarketTime) ??
-      toMs((quote as any).preMarketTime) ??
-      Date.now();
+    const regularMarketTimeMs = toMs((quote as any).regularMarketTime);
+    const postMarketTimeMs = toMs((quote as any).postMarketTime);
+    const preMarketTimeMs = toMs((quote as any).preMarketTime);
+    const quoteTimeMs = regularMarketTimeMs ?? postMarketTimeMs ?? preMarketTimeMs ?? Date.now();
 
     const nowEt = toEST(new Date());
     const day = nowEt.getDay();
     const minutesEt = nowEt.getHours() * 60 + nowEt.getMinutes();
     const isWeekdayEt = day >= 1 && day <= 5;
     const isLikelyRegularHoursEt = isWeekdayEt && minutesEt >= (9 * 60 + 30) && minutesEt < (16 * 60);
-    const useExtendedHoursPath = marketState !== 'REGULAR' && !isLikelyRegularHoursEt;
+    const isLikelyPremarketEt = isWeekdayEt && minutesEt >= (4 * 60) && minutesEt < (9 * 60 + 30);
+    const isLikelyPostMarketEt = isWeekdayEt && minutesEt >= (16 * 60) && minutesEt < (20 * 60);
+    const hasExtendedPrint = preMarketPrice != null || postMarketPrice != null;
+    const useExtendedHoursPath =
+      (!isLikelyRegularHoursEt && hasExtendedPrint) ||
+      (marketState !== 'REGULAR' && !isLikelyRegularHoursEt);
 
     let result: SpotCache['data'];
 
@@ -763,14 +886,43 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     if (useExtendedHoursPath) {
       let spot = regularPrice;
       let prevClose = quotePrevClose;
+      let timestampMs = quoteTimeMs;
       let source: 'finnhub' | 'yahoo' = 'yahoo';
-      if (marketState === 'PRE' && preMarketPrice != null) {
+
+      // Prefer explicit time-window pricing over ambiguous market states.
+      if (isLikelyPremarketEt && preMarketPrice != null) {
         spot = preMarketPrice;
-      } else if ((marketState === 'POST' || marketState === 'POSTPOST' || marketState === 'CLOSED') && postMarketPrice != null) {
+        timestampMs = preMarketTimeMs ?? quoteTimeMs;
+      } else if (isLikelyPostMarketEt && postMarketPrice != null) {
         spot = postMarketPrice;
+        timestampMs = postMarketTimeMs ?? quoteTimeMs;
+      } else if (marketState === 'PRE' && preMarketPrice != null) {
+        spot = preMarketPrice;
+        timestampMs = preMarketTimeMs ?? quoteTimeMs;
+      } else if ((marketState === 'POST' || marketState === 'POSTPOST') && postMarketPrice != null) {
+        spot = postMarketPrice;
+        timestampMs = postMarketTimeMs ?? quoteTimeMs;
+      } else if (marketState === 'CLOSED') {
+        const preTs = preMarketTimeMs ?? 0;
+        const postTs = postMarketTimeMs ?? 0;
+
+        if (preMarketPrice != null && postMarketPrice != null) {
+          if (preTs >= postTs) {
+            spot = preMarketPrice;
+            timestampMs = preMarketTimeMs ?? quoteTimeMs;
+          } else {
+            spot = postMarketPrice;
+            timestampMs = postMarketTimeMs ?? quoteTimeMs;
+          }
+        } else if (preMarketPrice != null) {
+          spot = preMarketPrice;
+          timestampMs = preMarketTimeMs ?? quoteTimeMs;
+        } else if (postMarketPrice != null) {
+          spot = postMarketPrice;
+          timestampMs = postMarketTimeMs ?? quoteTimeMs;
+        }
       }
 
-      let timestampMs = quoteTimeMs;
       if (Date.now() - timestampMs > YAHOO_MAX_STALENESS_MS) {
         const intradayFallback = await resolveIntradayFallback();
         if (intradayFallback) {
@@ -889,24 +1041,48 @@ export async function fetchLiveSpot(symbol: string): Promise<{
         console.warn(`[Spot] Yahoo rate-limited for ${upperSymbol}; cooling down ${remainingSec}s.`);
         yahooSpotCooldownLogAt = Date.now();
       }
+
+      // For Yahoo 429s, try fresh fallbacks before using stale cache.
+      const finnhubFallback = await resolveFinnhubFallback();
+      if (finnhubFallback) {
+        spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+        return finnhubFallback;
+      }
+
+      const intradayFallback = await resolveIntradayFallback();
+      if (intradayFallback) {
+        const intradayResult: SpotCache['data'] = {
+          symbol: upperSymbol,
+          spot: intradayFallback.price,
+          prevClose: cached?.data.prevClose ?? intradayFallback.price,
+          marketState: 'REGULAR',
+          timestamp: new Date(intradayFallback.timestampMs).toISOString(),
+          source: 'yahoo',
+        };
+        spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
+        return intradayResult;
+      }
+
+      const stooqFallback = await resolveStooqFallback();
+      if (stooqFallback) {
+        spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
+        return stooqFallback;
+      }
+    }
+
+    const stooqFallback = await resolveStooqFallback();
+    if (stooqFallback) {
+      spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
+      return stooqFallback;
     }
 
     // GAP PROTECTION: On error, return last known spot if available
     const maxFallbackAgeMs = rateLimited
       ? MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS
       : MAX_CACHED_SPOT_FALLBACK_MS;
-    if (cached && Date.now() - cached.timestamp <= maxFallbackAgeMs) {
+    if (cached && (Date.now() - cached.timestamp <= maxFallbackAgeMs || rateLimited)) {
       console.warn(`[Spot] Error for ${symbol}, using last known: $${cached.data.spot.toFixed(2)}`);
       return cached.data;
-    }
-
-    // For Yahoo 429s, try Finnhub-only fallback before failing.
-    if (rateLimited) {
-      const finnhubFallback = await resolveFinnhubFallback();
-      if (finnhubFallback) {
-        spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
-        return finnhubFallback;
-      }
     }
 
     throw error;
@@ -928,6 +1104,66 @@ export async function fetchDailyVolumeStats(symbol: string): Promise<{
   } catch {
     return { regularMarketVolume: 0, averageDailyVolume: 0, volumeRatio: 1 };
   }
+}
+
+export function getCachedSpot(symbol: string): {
+  data: {
+    symbol: string;
+    spot: number;
+    prevClose: number;
+    marketState: string;
+    timestamp: string;
+    source: 'finnhub' | 'yahoo';
+  };
+  ageMs: number;
+} | null {
+  const entry = spotCache.get(symbol.toUpperCase());
+  if (!entry) return null;
+  return {
+    data: entry.data,
+    ageMs: Date.now() - entry.timestamp,
+  };
+}
+
+export function getLastKnownSpotFromCandles(symbol: string): {
+  data: {
+    symbol: string;
+    spot: number;
+    prevClose: number;
+    marketState: string;
+    timestamp: string;
+    source: 'finnhub' | 'yahoo';
+  };
+  ageMs: number;
+} | null {
+  const upperSymbol = symbol.toUpperCase();
+  let best: { last: OHLC; prev: OHLC } | null = null;
+
+  for (const [key, entry] of lastKnownData.entries()) {
+    if (!key.startsWith(`${upperSymbol}-`)) continue;
+    if (!entry.full || entry.full.length === 0) continue;
+
+    const last = entry.full[entry.full.length - 1];
+    const prev = entry.full.length > 1 ? entry.full[entry.full.length - 2] : last;
+    if (!best || last.time > best.last.time) {
+      best = { last, prev };
+    }
+  }
+
+  if (!best) return null;
+
+  const timestampMs = (best.last.time ?? Math.floor(Date.now() / 1000)) * 1000;
+  return {
+    data: {
+      symbol: upperSymbol,
+      spot: best.last.close,
+      prevClose: best.prev.close,
+      marketState: 'REGULAR',
+      timestamp: new Date(timestampMs).toISOString(),
+      source: 'yahoo',
+    },
+    ageMs: Date.now() - timestampMs,
+  };
 }
 
 export function clearCache(): void {

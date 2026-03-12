@@ -68,13 +68,13 @@ interface ScannerPanelProps {
 export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelProps) {
   const { data: results, isLoading } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
   const { data: status } = useQuery<ScannerStatus>({
     queryKey: ["/api/scanner/status"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 

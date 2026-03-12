@@ -1027,10 +1027,7 @@ export function computeUnifiedSignal(params: {
   // Step 3: Apply weighted fusion with timeframe priority, trend bonuses, and volatility mode switching
   const fusionResult = computeWeightedFusion(normalizedInputs, volatilityRegime.regime);
 
-  // =============== TARGET CALCULATION (based on FINAL fusion direction) ===============
-  // Targets must use the unified direction from fusion, not early probabilities
-  const isBullishDirection = fusionResult.direction === 'CALL';
-  
+  // =============== TARGET CALCULATION ===============
   // 0DTE PREMIUM-OPTIMIZED targets based on CURRENT price
   // H1/L1 = ±0.30% from current = ~25-30% premium gain
   // H2/L2 = ±0.50% from current = ~40-50% premium gain  
@@ -1042,21 +1039,24 @@ export function computeUnifiedSignal(params: {
   const l2 = Math.round(currentPrice * 0.995 * 100) / 100;  // -0.50%
   const l3 = Math.round(currentPrice * 0.9925 * 100) / 100; // -0.75%
 
-  let generatedTargets: number[];
-  let generatedStopLoss: number;
+  const buildLevelsForDirection = (
+    direction: 'CALL' | 'PUT' | 'WAIT'
+  ): { targets: number[]; stopLoss: number | null } => {
+    if (direction === 'CALL') {
+      return { targets: [h1, h2, h3], stopLoss: l1 };
+    }
+    if (direction === 'PUT') {
+      return { targets: [l1, l2, l3], stopLoss: h1 };
+    }
+    return { targets: [], stopLoss: null };
+  };
 
-  if (isBullishDirection) {
-    // CALL targets - price goes UP for premium gains
-    generatedTargets = [h1, h2, h3];  // +0.30%, +0.50%, +0.75%
-    generatedStopLoss = l1;           // -0.30% stop
-  } else {
-    // PUT targets - price goes DOWN for premium gains
-    generatedTargets = [l1, l2, l3];  // -0.30%, -0.50%, -0.75%
-    generatedStopLoss = h1;           // +0.30% stop
-  }
-  
-  const targets = params.targets ?? generatedTargets;
-  const stopLoss = params.stopLoss ?? generatedStopLoss;
+  const providedTargets = Array.isArray(params.targets)
+    ? params.targets.filter((target) => Number.isFinite(target))
+    : null;
+  const providedStopLoss = Number.isFinite(params.stopLoss as number)
+    ? Number(params.stopLoss)
+    : null;
 
   // =============== LEGACY RESOLUTION (for compatibility) ===============
   const dirResult = resolveDirection({
@@ -1150,14 +1150,9 @@ export function computeUnifiedSignal(params: {
     `Vol regime: ${volatilityRegime.regime} (${toPct(volatilityRegime.score).toFixed(0)}%)`
   );
 
-  const rr =
-    entryZone && stopLoss && targets.length > 0 && entryZone.low > 0 && stopLoss !== null
-      ? Math.abs((targets[0] - entryZone.low) / (entryZone.low - stopLoss))
-      : null;
-
   // Calculate 0DTE strike targets
   const expectedMove = snapshot.forecast.expectedMovePct ?? 0;
-  const strikeTargets = calculateStrikeTargets(currentPrice, dirResult.direction, state, expectedMove);
+  const signalStrikeTargets = calculateStrikeTargets(currentPrice, dirResult.direction, state, expectedMove);
 
   // 0DTE-focused recommended actions
   const gatingPct = toPct(gatingState.gatingScore);
@@ -1167,13 +1162,13 @@ export function computeUnifiedSignal(params: {
   
   if (state === 'ACTIVE' && dirResult.direction === 'bullish') {
     if (gatingPct >= 80 && monsterPct >= 55) {
-      recommendedAction = `🟢 0DTE CALL - Strike: $${strikeTargets?.aggressive ?? strikeTargets?.atm ?? 'ATM'}. Target: +80-100% premium. Stop: -40%.`;
+      recommendedAction = `🟢 0DTE CALL - Strike: $${signalStrikeTargets?.aggressive ?? signalStrikeTargets?.atm ?? 'ATM'}. Target: +80-100% premium. Stop: -40%.`;
     } else {
       recommendedAction = `🟡 CALL setup forming - Gating ${gatingPct.toFixed(0)}% Monster ${monsterPct.toFixed(0)}%. Wait for 80%/55% unlock.`;
     }
   } else if (state === 'ACTIVE' && dirResult.direction === 'bearish') {
     if (gatingPct >= 80 && monsterPct >= 55) {
-      recommendedAction = `🟢 0DTE PUT - Strike: $${strikeTargets?.aggressive ?? strikeTargets?.atm ?? 'ATM'}. Target: +80-100% premium. Stop: -40%.`;
+      recommendedAction = `🟢 0DTE PUT - Strike: $${signalStrikeTargets?.aggressive ?? signalStrikeTargets?.atm ?? 'ATM'}. Target: +80-100% premium. Stop: -40%.`;
     } else {
       recommendedAction = `🟡 PUT setup forming - Gating ${gatingPct.toFixed(0)}% Monster ${monsterPct.toFixed(0)}%. Wait for 80%/55% unlock.`;
     }
@@ -1184,19 +1179,7 @@ export function computeUnifiedSignal(params: {
   }
 
   // =============== BUILD UNIFIED PLAY ===============
-  const unifiedPlay: UnifiedPlay | null = fusionResult.direction !== 'WAIT' ? {
-    type: fusionResult.direction,
-    symbol: snapshot.symbol,
-    strike: strikeTargets?.atm ?? null,
-    strikeType: strikeTargets ? 'ATM' : null,
-    style: 'scalp',
-    alignment: snapshot.mtfReversal?.hasReversal ? 'reversal' : 
-               dominantTrend === 'bullish' && fusionResult.direction === 'CALL' ? 'trend-aligned' :
-               dominantTrend === 'bearish' && fusionResult.direction === 'PUT' ? 'trend-aligned' :
-               dominantTrend !== 'neutral' ? 'counter-trend' : 'neutral',
-    confidence: fusionResult.confidence,
-    reason: fusionResult.reasonStack[0] ?? 'Weighted fusion signal'
-  } : null;
+  let unifiedPlay: UnifiedPlay | null = null;
 
   // =============== BUILD DECISION EXPLANATION ===============
   const decisionExplanation: DecisionExplanation = {
@@ -1248,23 +1231,10 @@ export function computeUnifiedSignal(params: {
   }
 
   // =============== OPTION B FILTERING (GOLD/HOT, 75%+, optimal timing) ===============
-  const OPTION_B_GRADES = ['GOLD', 'HOT'];
+  const OPTION_B_GRADES: SetupGrade[] = ['GOLD', 'HOT'];
   const OPTION_B_MIN_CONF = 75;
-  const optionBReasons: string[] = [];
-  
-  const gradeOk = OPTION_B_GRADES.includes(setupGrade);
-  const confOk = fusionResult.confidence >= OPTION_B_MIN_CONF;
-  
-  if (gradeOk) optionBReasons.push(`Grade: ${setupGrade} ✓`);
-  else optionBReasons.push(`Grade: ${setupGrade} ✗ (need GOLD/HOT)`);
-  
-  if (confOk) optionBReasons.push(`Confidence: ${fusionResult.confidence}% ✓`);
-  else optionBReasons.push(`Confidence: ${fusionResult.confidence}% ✗ (need 75%+)`);
-  
-  const optionBQualified = gradeOk && confOk && fusionResult.direction !== 'WAIT';
-  if (optionBQualified) {
-    optionBReasons.push(`✅ OPTION B QUALIFIED - Trade this setup!`);
-  }
+  let optionBReasons: string[] = [];
+  let optionBQualified = false;
 
   // =============== REVERSAL ALERT (boost reversals for bounce catching) ===============
   const reversalSignal = snapshot.reversalSignal;
@@ -1380,6 +1350,81 @@ export function computeUnifiedSignal(params: {
 
   const finalDirection = memorySmoothing.smoothedDirection;
 
+  const levelsAlignWithDirection = (
+    direction: 'CALL' | 'PUT' | 'WAIT',
+    entryPrice: number,
+    stopLossValue: number | null,
+    targetValues: number[]
+  ): boolean => {
+    if (direction === 'WAIT') return true;
+    if (!Number.isFinite(stopLossValue as number) || targetValues.length === 0) return false;
+
+    if (direction === 'CALL') {
+      return (stopLossValue as number) < entryPrice && targetValues.every((target) => target > entryPrice);
+    }
+
+    return (stopLossValue as number) > entryPrice && targetValues.every((target) => target < entryPrice);
+  };
+
+  const finalDirectionalLevels = buildLevelsForDirection(finalDirection);
+  let resolvedTargets = providedTargets ?? finalDirectionalLevels.targets;
+  let resolvedStopLoss = providedStopLoss ?? finalDirectionalLevels.stopLoss;
+
+  if (!levelsAlignWithDirection(finalDirection, currentPrice, resolvedStopLoss, resolvedTargets)) {
+    resolvedTargets = finalDirectionalLevels.targets;
+    resolvedStopLoss = finalDirectionalLevels.stopLoss;
+  }
+
+  let outputSetupGrade: SetupGrade = setupGrade;
+  let outputConfidence = safeConfidence;
+  if (state === 'STALE') {
+    outputConfidence = Math.min(outputConfidence, 54);
+    if (outputSetupGrade === 'GOLD' || outputSetupGrade === 'HOT' || outputSetupGrade === 'READY') {
+      outputSetupGrade = 'BUILDING';
+    }
+  }
+
+  const strikeBias: 'bullish' | 'bearish' | 'neutral' =
+    finalDirection === 'CALL' ? 'bullish' :
+    finalDirection === 'PUT' ? 'bearish' : 'neutral';
+  const strikeTargets = calculateStrikeTargets(currentPrice, strikeBias, state, expectedMove);
+
+  const rr =
+    entryZone && resolvedStopLoss && resolvedTargets.length > 0 && entryZone.low > 0
+      ? Math.abs((resolvedTargets[0] - entryZone.low) / (entryZone.low - resolvedStopLoss))
+      : null;
+
+  const gradeOk = OPTION_B_GRADES.includes(outputSetupGrade);
+  const confOk = outputConfidence >= OPTION_B_MIN_CONF;
+  optionBReasons = [];
+
+  if (gradeOk) optionBReasons.push(`Grade: ${outputSetupGrade} ✓`);
+  else optionBReasons.push(`Grade: ${outputSetupGrade} ✗ (need GOLD/HOT)`);
+
+  if (confOk) optionBReasons.push(`Confidence: ${outputConfidence}% ✓`);
+  else optionBReasons.push(`Confidence: ${outputConfidence}% ✗ (need 75%+)`);
+
+  optionBQualified = state === 'ACTIVE' && gradeOk && confOk && finalDirection !== 'WAIT';
+  if (optionBQualified) {
+    optionBReasons.push(`✅ OPTION B QUALIFIED - Trade this setup!`);
+  }
+
+  if (finalDirection !== 'WAIT') {
+    unifiedPlay = {
+      type: finalDirection,
+      symbol: snapshot.symbol,
+      strike: strikeTargets?.atm ?? null,
+      strikeType: strikeTargets ? 'ATM' : null,
+      style: 'scalp',
+      alignment: snapshot.mtfReversal?.hasReversal ? 'reversal' :
+                 dominantTrend === 'bullish' && finalDirection === 'CALL' ? 'trend-aligned' :
+                 dominantTrend === 'bearish' && finalDirection === 'PUT' ? 'trend-aligned' :
+                 dominantTrend !== 'neutral' ? 'counter-trend' : 'neutral',
+      confidence: outputConfidence,
+      reason: fusionResult.reasonStack[0] ?? 'Weighted fusion signal'
+    };
+  }
+
   return {
     symbol: snapshot.symbol,
     timestamp: snapshot.timestamp,
@@ -1387,9 +1432,9 @@ export function computeUnifiedSignal(params: {
 
     // =============== SINGLE SOURCE OF TRUTH (UI reads ONLY these) ===============
     unifiedDirection: finalDirection,
-    unifiedConfidence: safeConfidence,
+    unifiedConfidence: outputConfidence,
     unifiedPlay,
-    setupGrade,
+    setupGrade: outputSetupGrade,
 
     // Legacy direction (maps to unifiedDirection for compatibility)
     direction: finalDirection === 'CALL' ? 'bullish' : 
@@ -1404,15 +1449,15 @@ export function computeUnifiedSignal(params: {
     entryZone: entryZone.low > 0 && entryZone.high > 0 
       ? { low: entryZone.low, high: entryZone.high, min: entryZone.low, max: entryZone.high } 
       : null,
-    stopLoss,
-    targets: targets.filter(t => t > 0),
+    stopLoss: resolvedStopLoss,
+    targets: resolvedTargets.filter(t => t > 0),
     // priceTargets for UI compatibility
-    priceTargets: targets.filter(t => t > 0),
+    priceTargets: resolvedTargets.filter(t => t > 0),
     rr,
     strikeTargets,
 
     // confidence as 0-1 for UI compatibility (UI compares to 0.7, 0.5)
-    confidence: safeConfidence / 100,
+    confidence: outputConfidence / 100,
     mtfAlignment: toPct(mtfConsensus.alignmentScore),
     forecastConfidence: toPct(forecast.confidence),
     riskScore: toPct(riskModel.riskIndex),

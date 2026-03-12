@@ -121,6 +121,7 @@ interface MonsterOTMPanelData {
 
 interface MonsterOTMPanelProps {
   symbol: string;
+  currentPriceOverride?: number;
 }
 
 function formatPrice(value: number): string {
@@ -499,11 +500,11 @@ function PCEMeter({ pce }: { pce: PCESignal }) {
 
 
 
-export function MonsterOTMPanel({ symbol }: MonsterOTMPanelProps) {
+export function MonsterOTMPanel({ symbol, currentPriceOverride }: MonsterOTMPanelProps) {
   const { data, isLoading, error } = useQuery<MonsterOTMPanelData>({
     queryKey: ['/api/monster-panel', symbol],
     enabled: !!symbol,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
     refetchOnWindowFocus: false
   });
@@ -553,6 +554,10 @@ export function MonsterOTMPanel({ symbol }: MonsterOTMPanelProps) {
   }
 
   const { chain, hasMonsterPlay, setupQuality, summary } = data;
+  const displaySpot =
+    typeof currentPriceOverride === "number" && Number.isFinite(currentPriceOverride) && currentPriceOverride > 0
+      ? currentPriceOverride
+      : chain.spotPrice;
   const qualityStyles = getQualityStyles(setupQuality);
   const directionColor = data.direction === 'bullish' ? 'text-emerald-400' : data.direction === 'bearish' ? 'text-red-400' : 'text-muted-foreground';
   const metaConfidencePct = Math.round((chain.meta.confidence || 0) * 100);
@@ -729,7 +734,7 @@ export function MonsterOTMPanel({ symbol }: MonsterOTMPanelProps) {
                 <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Spot</span>
               </div>
               <div className="text-xl font-mono font-bold text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.3)]">
-                ${chain.spotPrice.toFixed(2)}
+                ${displaySpot.toFixed(2)}
               </div>
             </div>
           </div>

@@ -1,6 +1,8 @@
 // Backtest the Unified Signal for INTRADAY/0DTE plays
 // Realistic model: Higher gating = better setup quality = higher win probability
 
+export {};
+
 interface TradeResult {
   gatingScore: number;
   monsterPCE: number;

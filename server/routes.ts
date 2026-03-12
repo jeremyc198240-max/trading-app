@@ -3,7 +3,7 @@ import { type Server } from "http";
 import { db } from "./db";
 import { termsAcceptanceLogs } from "@shared/schema";
 import { analyzeSymbol, generateSampleOHLC } from "./finance";
-import { fetchLiveOHLC, fetchLiveSpot } from "./marketData";
+import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, analyzeMarket, analyzeGaps } from "./patterns";
 import { convertToDrawablePatterns } from "./patternDrawingAdapter";
 import { normalizePatterns, computePatternFusionSignal } from "./patternFusion";
@@ -42,9 +42,13 @@ import {
   getGoldHotSignals, 
   getDailySummary,
   getAllSymbolsWithHistory,
+  getSignalMetrics,
+  getDailyTuningLog,
+  getLiveTuningSnapshot,
   clearHistory
 } from "./signalHistory";
 import { runTuningAnalysis, formatTuningReport } from "./signalTuning";
+import { clearBreakoutAlertLog, getBreakoutAlertLog, getBreakoutAlertSummary } from "./breakoutAlertHistory";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -55,6 +59,8 @@ export async function registerRoutes(
     return (
       m.includes("too many requests") ||
       m.includes("rate limit") ||
+      m.includes("rate-limited") ||
+      m.includes("cooldown active") ||
       m.includes("status code 429") ||
       m.includes("http 429")
     );
@@ -66,6 +72,28 @@ export async function registerRoutes(
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
+
+  const resolveFallbackSpotPrice = async (
+    symbol: string,
+    timeframe: string = "15m",
+  ): Promise<number | undefined> => {
+    const cachedSpot = getCachedSpot(symbol);
+    if (cachedSpot) return cachedSpot.data.spot;
+
+    const candleSpot = getLastKnownSpotFromCandles(symbol);
+    if (candleSpot) return candleSpot.data.spot;
+
+    try {
+      const result = await fetchLiveOHLC(symbol, timeframe, "FULL");
+      if (result.data.length > 0) {
+        return result.data[result.data.length - 1].close;
+      }
+    } catch {
+      // Intentionally swallow and let caller continue to synthetic fallback.
+    }
+
+    return undefined;
+  };
 
   // ---------- Core analysis ----------
   app.get("/api/analyze/:symbol/:timeframe?", async (req, res) => {
@@ -85,7 +113,11 @@ export async function registerRoutes(
         const spotData = await fetchLiveSpot(upperSymbol);
         spotPrice = spotData.spot;
       } catch (e) {
-        // Will use fallback prices in generateSampleOHLC
+        // Fall through to cache/candle fallback.
+      }
+
+      if (spotPrice == null) {
+        spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
       }
       
       const liveResult = await fetchLiveOHLC(upperSymbol, tf, "FULL");
@@ -95,16 +127,23 @@ export async function registerRoutes(
       let dataSource = "simulated";
       let sessionSplit = { rth: [] as any[], overnight: [] as any[], prevDayRth: [] as any[] };
       
-      if (liveResult.isLive && liveResult.data.length > 0) {
+      if (liveResult.data.length > 0) {
         ohlc = liveResult.data;
-        isLive = true;
-        dataSource = "live";
+        isLive = liveResult.isLive;
+        dataSource = liveResult.isLive
+          ? "live"
+          : liveResult.error
+          ? `cached (${liveResult.error})`
+          : "cached";
         sessionSplit = {
           rth: liveResult.rth,
           overnight: liveResult.overnight,
           prevDayRth: liveResult.prevDayRth,
         };
       } else {
+        if (spotPrice == null) {
+          spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
+        }
         // Use live spot price to generate realistic simulated data
         const candleCount = getCandleCount(tf);
         ohlc = generateSampleOHLC(upperSymbol, candleCount, spotPrice);
@@ -610,10 +649,87 @@ export async function registerRoutes(
     }
   });
 
+  const sectorUniverse = [
+    { code: "XLC", label: "Communication Services" },
+    { code: "XLY", label: "Consumer Discretionary" },
+    { code: "XLP", label: "Consumer Staples" },
+    { code: "XLE", label: "Energy" },
+    { code: "XLF", label: "Financials" },
+    { code: "XLV", label: "Health Care" },
+    { code: "XLI", label: "Industrials" },
+    { code: "XLK", label: "Information Technology" },
+    { code: "XLB", label: "Materials" },
+    { code: "XLRE", label: "Real Estate" },
+    { code: "XLU", label: "Utilities" },
+  ] as const;
+
+  // ---------- Sector Pulse (live ETF breadth feed for top panel) ----------
+  app.get("/api/sectors/:symbol", async (req, res) => {
+    const anchorSymbol = String(req.params.symbol ?? "SPY").toUpperCase();
+
+    const sectorFetches = await Promise.all(
+      sectorUniverse.map(async (sector) => {
+        try {
+          const quote = await fetchLiveSpot(sector.code);
+          const hasPrevClose = Number.isFinite(quote.prevClose) && quote.prevClose !== 0;
+          const baseline = hasPrevClose ? quote.prevClose : quote.spot;
+          const rawChangePct = baseline === 0 ? 0 : ((quote.spot - baseline) / baseline) * 100;
+
+          return {
+            code: sector.code,
+            label: sector.label,
+            changePct: Number.isFinite(rawChangePct) ? Number(rawChangePct.toFixed(4)) : null,
+            live: true,
+            source: quote.source,
+            marketState: quote.marketState,
+            timestamp: quote.timestamp,
+          };
+        } catch {
+          return {
+            code: sector.code,
+            label: sector.label,
+            changePct: null,
+            live: false,
+          };
+        }
+      }),
+    );
+
+    const liveSectors = sectorFetches.filter(
+      (sector): sector is (typeof sectorFetches)[number] & { changePct: number; live: true } =>
+        sector.live && typeof sector.changePct === "number",
+    );
+
+    const liveCount = liveSectors.length;
+    const bullishCount = liveSectors.filter((sector) => sector.changePct >= 0).length;
+    const bearishCount = liveSectors.filter((sector) => sector.changePct < 0).length;
+    const breadthSync = liveCount > 0 ? bullishCount / liveCount : null;
+    const breadthEdge =
+      breadthSync === null ? null : Number((Math.abs(breadthSync - 0.5) * 2).toFixed(4));
+
+    res.json({
+      symbol: anchorSymbol,
+      asOf: new Date().toISOString(),
+      sectors: sectorFetches,
+      breadth: {
+        liveCount,
+        bullishCount,
+        bearishCount,
+        breadthSync,
+        breadthEdge,
+      },
+    });
+  });
+
   // ---------- Spot Price (Lightweight endpoint for frequent polling) ----------
   app.get("/api/spot/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const upperSymbol = symbol.toUpperCase();
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
     
     try {
       const spotData = await fetchLiveSpot(upperSymbol);
@@ -622,6 +738,57 @@ export async function registerRoutes(
       const message = error instanceof Error ? error.message : String(error);
       if (isRateLimitedMessage(message)) {
         console.warn(`[Spot] Rate-limited for ${upperSymbol}.`);
+
+        const cachedSpot = getCachedSpot(upperSymbol);
+        if (cachedSpot && cachedSpot.ageMs <= 2 * 60 * 1000) {
+          return res.json({
+            ...cachedSpot.data,
+            degraded: true,
+            degradedReason: "cached-spot",
+          });
+        }
+
+        // Degraded fallback: use latest candle close from the freshest timeframe available.
+        const fallbackTimeframes: Array<"5m" | "15m" | "30m"> = ["5m", "15m", "30m"];
+        for (const tf of fallbackTimeframes) {
+          try {
+            const intraday = await fetchLiveOHLC(upperSymbol, tf, "FULL");
+            if (intraday.data.length > 0) {
+              const last = intraday.data[intraday.data.length - 1];
+              const prev = intraday.data.length > 1 ? intraday.data[intraday.data.length - 2] : last;
+              return res.json({
+                symbol: upperSymbol,
+                spot: last.close,
+                prevClose: prev.close,
+                marketState: "REGULAR",
+                timestamp: new Date(((last.time ?? Math.floor(Date.now() / 1000)) * 1000)).toISOString(),
+                source: "yahoo",
+                degraded: true,
+                degradedReason: `intraday-${tf}`,
+              });
+            }
+          } catch {
+            // Continue to the next degraded fallback option.
+          }
+        }
+
+        const candleFallback = getLastKnownSpotFromCandles(upperSymbol);
+        if (candleFallback) {
+          return res.json({
+            ...candleFallback.data,
+            degraded: true,
+            degradedReason: "last-known-candle",
+          });
+        }
+
+        if (cachedSpot) {
+          return res.json({
+            ...cachedSpot.data,
+            degraded: true,
+            degradedReason: "stale-cached-spot",
+          });
+        }
+
         return res.status(503).json({ error: "Spot provider rate-limited. Please retry shortly." });
       }
       console.error(`[Spot] Error fetching ${upperSymbol}:`, error);
@@ -641,6 +808,43 @@ export async function registerRoutes(
 
   app.get("/api/scanner/results", (_req, res) => {
     res.json(getScannerResults());
+  });
+
+  app.get("/api/scanner/breakout-log", (req, res) => {
+    const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+    const requested = Number(req.query.limit);
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(2000, requested) : 200;
+
+    res.json({
+      success: true,
+      symbol: symbol?.toUpperCase() || null,
+      entries: getBreakoutAlertLog(limit, symbol),
+      timestamp: Date.now(),
+    });
+  });
+
+  app.get("/api/scanner/breakout-log/summary", (req, res) => {
+    const requested = Number(req.query.hours);
+    const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(48, requested) : 48;
+
+    res.json({
+      success: true,
+      summary: getBreakoutAlertSummary(lookbackHours),
+      timestamp: Date.now(),
+    });
+  });
+
+  app.delete("/api/scanner/breakout-log/:symbol?", (req, res) => {
+    const symbol = req.params.symbol?.toUpperCase();
+    clearBreakoutAlertLog(symbol);
+
+    res.json({
+      success: true,
+      message: symbol
+        ? `Cleared breakout alert log for ${symbol}`
+        : "Cleared full breakout alert log",
+      timestamp: Date.now(),
+    });
   });
 
   app.get("/api/scanner/result/:symbol", (req, res) => {
@@ -696,7 +900,11 @@ export async function registerRoutes(
         const spotData = await fetchLiveSpot(upperSymbol);
         liveSpotPrice = spotData.spot;
       } catch (e) {
-        // Will use fallback prices
+        // Fall through to cache/candle fallback.
+      }
+
+      if (liveSpotPrice == null) {
+        liveSpotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
       }
       
       const liveResult = await fetchLiveOHLC(upperSymbol, tf, "FULL");
@@ -704,7 +912,7 @@ export async function registerRoutes(
       let ohlc: any[];
       let sessionSplit = { rth: [] as any[], overnight: [] as any[], prevDayRth: [] as any[] };
       
-      if (liveResult.isLive && liveResult.data.length > 0) {
+      if (liveResult.data.length > 0) {
         ohlc = liveResult.data;
         sessionSplit = {
           rth: liveResult.rth,
@@ -773,12 +981,16 @@ export async function registerRoutes(
         const spotData = await fetchLiveSpot(upperSymbol);
         lastPrice = spotData.spot;
       } catch (e) {
-        // Will fallback to OHLC close
+        // Fall through to cache/candle fallback.
+      }
+
+      if (lastPrice == null) {
+        lastPrice = await resolveFallbackSpotPrice(upperSymbol, '15m');
       }
 
       // Fetch OHLC for analysis
       const tfResult = await fetchLiveOHLC(upperSymbol, '15m', 'FULL');
-      const ohlc = tfResult.isLive && tfResult.data.length > 0
+      const ohlc = tfResult.data.length > 0
         ? tfResult.data
         : generateSampleOHLC(upperSymbol, 100, lastPrice);
 
@@ -866,9 +1078,17 @@ export async function registerRoutes(
       } catch (e) {
         // Fallback to candle close if spot fetch fails
         const liveResult = await fetchLiveOHLC(upperSymbol, '15m', 'FULL');
-        lastPrice = liveResult.isLive && liveResult.data.length > 0
-          ? liveResult.data[liveResult.data.length - 1].close
-          : 450 + Math.random() * 50;
+        if (liveResult.data.length > 0) {
+          lastPrice = liveResult.data[liveResult.data.length - 1].close;
+        } else {
+          const fallbackSpot = await resolveFallbackSpotPrice(upperSymbol, '15m');
+          if (fallbackSpot != null) {
+            lastPrice = fallbackSpot;
+          } else {
+            const synthetic = generateSampleOHLC(upperSymbol, 2);
+            lastPrice = synthetic[synthetic.length - 1]?.close ?? 100;
+          }
+        }
       }
 
       // Use cached chain if available and not expired, and price hasn't moved too much
@@ -917,7 +1137,11 @@ export async function registerRoutes(
         const spotData = await fetchLiveSpot(upperSymbol);
         lastPrice = spotData.spot;
       } catch (e) {
-        // Will use fallback
+        // Fall through to cache/candle fallback.
+      }
+
+      if (lastPrice == null) {
+        lastPrice = await resolveFallbackSpotPrice(upperSymbol, '15m');
       }
 
       // Fetch OHLC for all timeframes in parallel (excluding 1m for stability)
@@ -933,7 +1157,7 @@ export async function registerRoutes(
       const ohlcPromises = tfConfigs.map(async ({ tf, count }) => {
         try {
           const result = await fetchLiveOHLC(upperSymbol, tf, "FULL");
-          if (result.isLive && result.data.length > 0) {
+          if (result.data.length > 0) {
             return { tf, ohlc: result.data };
           }
           return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice) };
@@ -1139,6 +1363,46 @@ export async function registerRoutes(
   });
 
   // ========== Signal History Tracking ==========
+
+  app.get("/api/signal-history/live-tuning", async (req, res) => {
+    try {
+      const requested = Number(req.query.hours);
+      const hours = Number.isFinite(requested) && requested > 0 ? Math.min(48, requested) : 8;
+      const snapshot = getLiveTuningSnapshot(hours);
+
+      res.json({
+        success: true,
+        snapshot,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Live tuning snapshot error:', error);
+      res.status(500).json({ error: 'Failed to get live tuning snapshot' });
+    }
+  });
+
+  app.get("/api/signal-history/daily-tuning/:limitParam?", async (req, res) => {
+    try {
+      const rawLimit = typeof req.query.limit === 'string'
+        ? req.query.limit
+        : typeof req.params.limitParam === 'string'
+          ? req.params.limitParam.replace(/^limit=/i, '')
+          : undefined;
+      const parsed = rawLimit ? parseInt(rawLimit, 10) : Number.NaN;
+      const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(180, parsed) : 7;
+      const entries = getDailyTuningLog(limit);
+
+      res.json({
+        success: true,
+        entries,
+        count: entries.length,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Daily tuning log error:', error);
+      res.status(500).json({ error: 'Failed to get daily tuning log' });
+    }
+  });
   
   // Get signal history for a symbol
   app.get("/api/signal-history/:symbol", async (req, res) => {
@@ -1166,6 +1430,32 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Signal history error:', error);
       res.status(500).json({ error: 'Failed to get signal history' });
+    }
+  });
+
+  app.get("/api/signal-history/:symbol/metrics", async (req, res) => {
+    try {
+      const symbol = req.params.symbol.toUpperCase();
+      const requested = Number(req.query.hours);
+      const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(720, requested) : 24;
+
+      try {
+        const spotData = await fetchLiveSpot(symbol);
+        updateOutcomes(symbol, spotData.spot);
+      } catch (e) {
+        // Continue without update.
+      }
+
+      const metrics = getSignalMetrics(symbol, lookbackHours);
+
+      res.json({
+        symbol,
+        metrics,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Signal metrics error:', error);
+      res.status(500).json({ error: 'Failed to get signal metrics' });
     }
   });
   
@@ -1264,11 +1554,17 @@ export async function registerRoutes(
   app.get("/api/signal-tuning", async (_req, res) => {
     try {
       const result = runTuningAnalysis();
+      const recentDaily = getDailyTuningLog(2);
+      const liveSnapshot = getLiveTuningSnapshot(24);
       
       res.json({
         success: true,
         result,
-        formatted: formatTuningReport(result)
+        formatted: formatTuningReport(result),
+        context: {
+          recentDaily,
+          liveSnapshot,
+        },
       });
     } catch (error) {
       console.error('Tuning analysis error:', error);

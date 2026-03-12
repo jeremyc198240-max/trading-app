@@ -398,20 +398,20 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
     queryKey: ['/api/fusion', symbol],
     enabled: !!symbol,
     staleTime: 8000,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
   });
 
   const { data: bestPlayData } = useQuery<BestPlayData>({
     queryKey: ['/api/best-play', symbol],
     enabled: !!symbol,
     staleTime: 8000,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
   });
 
   const { data: scannerResults } = useQuery<ScannerResult[]>({
     queryKey: ['/api/scanner/results'],
     staleTime: 10000,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
   });
 
   const scannerData = scannerResults?.find(r => r.symbol === symbol);

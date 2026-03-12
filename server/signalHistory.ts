@@ -1,7 +1,6 @@
 import type { UnifiedSignal } from "./unifiedSignal";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { appendSystemAudit } from "./systemAuditLog";
 
 export type SignalOutcome = 'win_t1' | 'win_t2' | 'win_t3' | 'loss' | 'pending' | 'missed';
@@ -156,10 +155,56 @@ const SCANNER_ADAPTIVE_MAX_INTERVAL_SHIFT = 8;
 const SIGNAL_OUTCOME_TIMEOUT_MINS = 75;
 const SIGNAL_OUTCOME_TIMEOUT_MOVE_PCT = 0.1;
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const SIGNAL_HISTORY_STORAGE_PATH = path.resolve(__dirname, "..", "logs", "signal_history.json");
-const SIGNAL_HISTORY_DAILY_LOG_PATH = path.resolve(__dirname, "..", "logs", "signal_history_daily.jsonl");
+const HARD_BLOCK_REASON_PATTERN = /risk override|global gate failed|late move|no new setups|monster gate conflict|suppressing continuation|low_live_coverage|wait for breakout|consolidation/i;
+
+function isHardBlockingReason(reason: string): boolean {
+  return HARD_BLOCK_REASON_PATTERN.test(reason);
+}
+
+function roundToCent(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function buildFallbackLevelsForDirection(price: number, direction: 'CALL' | 'PUT'): { stopLoss: number; targets: number[] } {
+  if (direction === 'CALL') {
+    return {
+      stopLoss: roundToCent(price * 0.997),
+      targets: [
+        roundToCent(price * 1.003),
+        roundToCent(price * 1.005),
+        roundToCent(price * 1.0075),
+      ],
+    };
+  }
+
+  return {
+    stopLoss: roundToCent(price * 1.003),
+    targets: [
+      roundToCent(price * 0.997),
+      roundToCent(price * 0.995),
+      roundToCent(price * 0.9925),
+    ],
+  };
+}
+
+function hasDirectionalLevelMismatch(
+  direction: 'CALL' | 'PUT',
+  entryPrice: number,
+  stopLoss: number | null,
+  targets: number[],
+): boolean {
+  if (!Number.isFinite(stopLoss as number) || targets.length === 0) return true;
+
+  if (direction === 'CALL') {
+    return (stopLoss as number) >= entryPrice || targets.some((target) => target <= entryPrice);
+  }
+
+  return (stopLoss as number) <= entryPrice || targets.some((target) => target >= entryPrice);
+}
+
+const PROJECT_ROOT = process.cwd();
+const SIGNAL_HISTORY_STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "signal_history.json");
+const SIGNAL_HISTORY_DAILY_LOG_PATH = path.resolve(PROJECT_ROOT, "logs", "signal_history_daily.jsonl");
 
 let lastSignalTime: { [symbol: string]: number } = {};
 let lastSignalGrade: { [symbol: string]: string } = {};
@@ -627,10 +672,7 @@ export function recordSignal(
     ? Number(unifiedSignal.gatingScore)
     : Number(unifiedSignal.gatingState?.gatingScore || 0) * 100;
   const reasons = unifiedSignal.gatingState?.reasons || [];
-  const hasBlockedReason = reasons.some((reason) =>
-    /consolidation|global gate failed|low_live_coverage|wait for breakout/i.test(reason)
-  );
-
+  
   const directionalProbs = unifiedSignal.directionalProbs || { up: 0, down: 0, chop: 1 };
   const upProb = Number.isFinite(directionalProbs.up) ? directionalProbs.up : 0;
   const downProb = Number.isFinite(directionalProbs.down) ? directionalProbs.down : 0;
@@ -655,6 +697,7 @@ export function recordSignal(
   const directionSupported = directionalProb >= minDirectionalProb && directionalEdge >= minDirectionalEdge;
   const scannerGradeOk = source !== 'scanner' || currentGrade === 'HOT' || currentGrade === 'GOLD';
   const scannerStateOk = source !== 'scanner' || currentGrade !== 'BUILDING';
+  const hasHardBlockReason = reasons.some((reason) => isHardBlockingReason(reason));
 
   const confidenceChangedEnough = (() => {
     const prev = signalHistory[sym][signalHistory[sym].length - 1]?.confidence;
@@ -662,7 +705,7 @@ export function recordSignal(
     return Math.abs(confidencePct - Number(prev)) >= 8;
   })();
   
-  // Record all actionable directional signals for unbiased analytics
+  // Record only actionable directional signals that pass hard quality constraints.
   if (!actionableState || !actionableDirection) return;
 
   const passesQualityGate =
@@ -671,9 +714,31 @@ export function recordSignal(
     directionSupported &&
     scannerGradeOk &&
     scannerStateOk &&
-    !hasBlockedReason;
+    !hasHardBlockReason;
 
   if (!passesQualityGate) return;
+
+  const snapshotDirection = currentDirection as 'CALL' | 'PUT';
+  const rawTargets = (
+    Array.isArray(unifiedSignal.targets) && unifiedSignal.targets.length > 0
+      ? unifiedSignal.targets
+      : Array.isArray(unifiedSignal.priceTargets)
+        ? unifiedSignal.priceTargets
+        : []
+  ).filter((target) => Number.isFinite(target));
+
+  let snapshotStopLoss = Number.isFinite(unifiedSignal.stopLoss as number)
+    ? Number(unifiedSignal.stopLoss)
+    : snapshotDirection === 'CALL'
+      ? roundToCent(price * 0.995)
+      : roundToCent(price * 1.005);
+  let snapshotTargets = rawTargets.map((target) => Number(target));
+
+  if (hasDirectionalLevelMismatch(snapshotDirection, price, snapshotStopLoss, snapshotTargets)) {
+    const fallback = buildFallbackLevelsForDirection(price, snapshotDirection);
+    snapshotStopLoss = fallback.stopLoss;
+    snapshotTargets = fallback.targets;
+  }
   
   const shouldRecord = 
     timeSinceLastMins >= minRecordIntervalMins ||
@@ -689,7 +754,7 @@ export function recordSignal(
     symbol: sym,
     source,
     price,
-    direction: currentDirection,
+    direction: snapshotDirection,
     grade: currentGrade,
     state: unifiedSignal.state,
     confidence: confidencePct,
@@ -701,8 +766,8 @@ export function recordSignal(
     monsterDirection: monsterGate?.direction || 'none',
     monsterValue: monsterGate?.value || 0,
     entryZone: unifiedSignal.entryZone || { low: price * 0.998, high: price * 1.002 },
-    stopLoss: unifiedSignal.stopLoss || (currentDirection === 'CALL' ? price * 0.995 : price * 1.005),
-    targets: unifiedSignal.targets || unifiedSignal.priceTargets || [],
+    stopLoss: snapshotStopLoss,
+    targets: snapshotTargets,
     gatingReasons: reasons,
     priceAtCapture: price,
     maxPriceSeen: price,
@@ -711,6 +776,7 @@ export function recordSignal(
   };
   
   signalHistory[sym].push(snapshot);
+  const blockingReasons = snapshot.gatingReasons.filter((reason) => isHardBlockingReason(reason));
 
   appendSystemAudit('signal.recorded', {
     symbol: sym,
@@ -726,7 +792,8 @@ export function recordSignal(
     priceAtCapture: snapshot.priceAtCapture,
     stopLoss: snapshot.stopLoss,
     target1: snapshot.targets?.[0] ?? null,
-    blockedReasons: snapshot.gatingReasons,
+    blockedReasons: blockingReasons,
+    gatingReasons: snapshot.gatingReasons,
   });
   
   if (signalHistory[sym].length > MAX_HISTORY_PER_SYMBOL) {
@@ -737,7 +804,7 @@ export function recordSignal(
   
   lastSignalTime[sym] = now;
   lastSignalGrade[sym] = currentGrade;
-  lastSignalDirection[sym] = currentDirection;
+  lastSignalDirection[sym] = snapshotDirection;
   
   if (process.env.DEBUG_SIGNALS === '1') {
     console.log(`[SignalHistory] ${currentGrade} ${currentDirection} recorded for ${sym} @ $${price.toFixed(2)} | Conf: ${snapshot.confidence.toFixed(0)}%`);

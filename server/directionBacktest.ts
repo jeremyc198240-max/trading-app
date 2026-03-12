@@ -1,6 +1,8 @@
 // Backtest the multi-factor direction analysis for 0DTE trades
 // Using correlation-based simulation
 
+export {};
+
 interface OHLC {
   open: number;
   high: number;

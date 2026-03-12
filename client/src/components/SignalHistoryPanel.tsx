@@ -108,30 +108,84 @@ interface LiveTuningData {
   timestamp: number;
 }
 
+interface BreakoutSummarySlice {
+  total: number;
+  completed: number;
+  wins: number;
+  losses: number;
+  missed: number;
+  pending: number;
+  winRate: number;
+}
+
+interface BreakoutSummaryData {
+  success: boolean;
+  summary: {
+    lookbackHours: number;
+    sample: BreakoutSummarySlice;
+    bySignal: Record<string, BreakoutSummarySlice>;
+    byDirection: Record<string, BreakoutSummarySlice>;
+    avgResolutionMins: number;
+  };
+  timestamp: number;
+}
+
+interface BreakoutLogEntry {
+  id: string;
+  timestamp: number;
+  symbol: string;
+  timeframe: string;
+  signal: 'BREAKOUT' | 'BREAKDOWN' | 'SQUEEZE' | 'CONSOLIDATING' | 'EXPANSION' | 'BUILDING' | 'MOMENTUM';
+  direction: 'bullish' | 'bearish' | 'neutral';
+  breakoutScore: number;
+  momentumStrength: number;
+  volumeSpike: number;
+  outcome: 'win_t1' | 'win_t2' | 'loss' | 'pending' | 'missed';
+}
+
+interface BreakoutLogData {
+  success: boolean;
+  symbol: string | null;
+  entries: BreakoutLogEntry[];
+  timestamp: number;
+}
+
 export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
   const { data, isLoading } = useQuery<SignalHistoryData>({
     queryKey: ["/api/signal-history", symbol],
     enabled: !!symbol,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
   const { data: metricsData } = useQuery<SignalMetricsData>({
     queryKey: ["/api/signal-history", symbol, "metrics?hours=24"],
     enabled: !!symbol,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
   const { data: dailyTuningData } = useQuery<DailyTuningLogData>({
     queryKey: ["/api/signal-history/daily-tuning", "limit=7"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
   const { data: liveTuningData } = useQuery<LiveTuningData>({
     queryKey: ["/api/signal-history/live-tuning"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
+    staleTime: 10000,
+  });
+
+  const { data: breakoutSummaryData } = useQuery<BreakoutSummaryData>({
+    queryKey: ["/api/scanner/breakout-log/summary?hours=48"],
+    refetchInterval: 30000,
+    staleTime: 10000,
+  });
+
+  const { data: breakoutLogData } = useQuery<BreakoutLogData>({
+    queryKey: ["/api/scanner/breakout-log?limit=200"],
+    refetchInterval: 30000,
     staleTime: 10000,
   });
 
@@ -210,6 +264,50 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
       : completedCount === 0
       ? { label: 'NO DATA', tone: 'neutral' as const }
       : { label: 'WEAK', tone: 'bad' as const };
+
+  const breakoutSummary = breakoutSummaryData?.summary;
+  const breakoutSample = breakoutSummary?.sample;
+  const breakoutEntries = breakoutLogData?.entries ?? [];
+  const breakoutLookbackHours = breakoutSummary?.lookbackHours ?? 48;
+  const breakoutCompleted = breakoutSample?.completed ?? 0;
+  const breakoutWinRate = breakoutSample?.winRate ?? 0;
+  const breakoutAvgResolutionMins = breakoutSummary?.avgResolutionMins ?? 0;
+
+  const resolvedBreakouts = breakoutEntries.filter((entry) => entry.outcome !== 'pending');
+  const breakoutWins = resolvedBreakouts.filter((entry) => entry.outcome === 'win_t1' || entry.outcome === 'win_t2');
+  const breakoutLossLike = resolvedBreakouts.filter((entry) => entry.outcome === 'loss' || entry.outcome === 'missed');
+
+  const average = (values: number[]): number => {
+    if (values.length === 0) return 0;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  };
+
+  const winScores = breakoutWins.map((entry) => entry.breakoutScore).filter((value) => Number.isFinite(value));
+  const lossScores = breakoutLossLike.map((entry) => entry.breakoutScore).filter((value) => Number.isFinite(value));
+  const winMomentumAbs = breakoutWins.map((entry) => Math.abs(entry.momentumStrength)).filter((value) => Number.isFinite(value));
+  const lossMomentumAbs = breakoutLossLike.map((entry) => Math.abs(entry.momentumStrength)).filter((value) => Number.isFinite(value));
+  const winVolume = breakoutWins.map((entry) => entry.volumeSpike).filter((value) => Number.isFinite(value));
+  const lossVolume = breakoutLossLike.map((entry) => entry.volumeSpike).filter((value) => Number.isFinite(value));
+
+  const hasKnobSample = breakoutCompleted >= 6 && breakoutWins.length >= 2 && breakoutLossLike.length >= 2;
+  const suggestedScoreFloor = hasKnobSample
+    ? Math.max(58, Math.min(92, Math.round((average(winScores) + average(lossScores)) / 2)))
+    : null;
+  const suggestedMomentumFloor = hasKnobSample
+    ? Math.max(12, Math.min(45, Math.round((average(winMomentumAbs) + average(lossMomentumAbs)) / 2)))
+    : null;
+  const suggestedVolumeFloor = hasKnobSample
+    ? Math.max(1.0, Math.min(2.2, Math.round(((average(winVolume) + average(lossVolume)) / 2) * 100) / 100))
+    : null;
+
+  const signalLeaderboard = breakoutSummary
+    ? Object.entries(breakoutSummary.bySignal)
+        .map(([signal, stats]) => ({ signal, ...stats }))
+        .filter((row) => row.total > 0)
+        .sort((a, b) => b.winRate - a.winRate)
+    : [];
+  const strongestSignal = signalLeaderboard.find((row) => row.completed >= 2);
+  const weakestSignal = [...signalLeaderboard].reverse().find((row) => row.completed >= 2);
 
   return (
     <Card className="relative overflow-hidden border-violet-500/30 bg-gradient-to-b from-slate-950/95 via-slate-900/95 to-slate-950/95 shadow-[0_0_30px_rgba(139,92,246,0.22)]" data-testid="card-signal-history">
@@ -345,6 +443,139 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
           ) : (
             <div className="relative rounded-lg border border-dashed border-fuchsia-500/35 bg-black/25 p-2 text-[11px] text-fuchsia-200/80">
               Daily archive not available yet. It populates after the first NY date rollover.
+            </div>
+          )}
+        </div>
+
+        <div className="relative overflow-hidden rounded-xl border border-amber-500/30 bg-gradient-to-r from-slate-950/85 via-amber-950/20 to-cyan-950/20 p-3 shadow-[0_0_28px_rgba(251,191,36,0.16)]">
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.18),transparent_52%)]" />
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_bottom_left,rgba(34,211,238,0.12),transparent_45%)]" />
+          <div className="absolute inset-x-2 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/80 to-transparent" />
+
+          <div className="relative flex items-center justify-between gap-2 mb-2">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-amber-200/90">Breakout Card Tuning</div>
+            <div className="text-[10px] text-cyan-200/80">LIVE {breakoutLookbackHours}H</div>
+          </div>
+
+          {breakoutSummary ? (
+            <div className="relative space-y-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <MetricPill
+                  label="Cards"
+                  value={`${breakoutSample?.total ?? 0}`}
+                  tone="neutral"
+                />
+                <MetricPill
+                  label="Completed"
+                  value={`${breakoutCompleted}`}
+                  tone={breakoutCompleted >= 6 ? 'good' : 'warn'}
+                />
+                <MetricPill
+                  label="Win %"
+                  value={`${breakoutWinRate.toFixed(0)}%`}
+                  tone={breakoutWinRate >= 60 ? 'good' : breakoutWinRate >= 50 ? 'warn' : 'bad'}
+                />
+                <MetricPill
+                  label="Avg Resolve"
+                  value={breakoutAvgResolutionMins > 0 ? `${breakoutAvgResolutionMins.toFixed(0)}m` : '--'}
+                  tone={breakoutAvgResolutionMins > 0 && breakoutAvgResolutionMins <= 90 ? 'good' : breakoutAvgResolutionMins > 0 ? 'warn' : 'neutral'}
+                />
+              </div>
+
+              <div className="rounded-lg border border-amber-500/25 bg-black/25 p-2">
+                <div className="text-[9px] uppercase tracking-[0.12em] text-amber-200/85 mb-1.5">Suggested Filters</div>
+                {hasKnobSample ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="rounded-md border border-amber-400/35 bg-amber-500/10 px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-300/80">Score Floor</div>
+                      <div className="text-sm font-mono font-semibold text-amber-100 mt-1">&gt;= {suggestedScoreFloor}</div>
+                    </div>
+                    <div className="rounded-md border border-cyan-400/35 bg-cyan-500/10 px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-300/80">Momentum Floor</div>
+                      <div className="text-sm font-mono font-semibold text-cyan-100 mt-1">|mom| &gt;= {suggestedMomentumFloor}</div>
+                    </div>
+                    <div className="rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 py-1.5">
+                      <div className="text-[9px] uppercase tracking-[0.12em] text-slate-300/80">Volume Floor</div>
+                      <div className="text-sm font-mono font-semibold text-emerald-100 mt-1">vol &gt;= {suggestedVolumeFloor?.toFixed(2)}x</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-amber-100/85">Need at least 6 completed breakout cards with both wins and losses before auto-suggesting filter knobs.</div>
+                )}
+              </div>
+
+              {(strongestSignal || weakestSignal) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5">
+                    <div className="text-[9px] uppercase tracking-[0.12em] text-emerald-200/80">Strongest Signal</div>
+                    <div className="text-xs font-mono text-emerald-100 mt-1">
+                      {strongestSignal ? `${strongestSignal.signal} ${strongestSignal.winRate.toFixed(0)}% (${strongestSignal.wins}W/${strongestSignal.losses}L)` : '--'}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5">
+                    <div className="text-[9px] uppercase tracking-[0.12em] text-red-200/80">Weakest Signal</div>
+                    <div className="text-xs font-mono text-red-100 mt-1">
+                      {weakestSignal ? `${weakestSignal.signal} ${weakestSignal.winRate.toFixed(0)}% (${weakestSignal.wins}W/${weakestSignal.losses}L)` : '--'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/85">Recent Fired Cards</div>
+                {breakoutEntries.length > 0 ? (
+                  <div className="max-h-44 overflow-y-auto rounded-md border border-amber-500/20 bg-black/20 p-1.5 space-y-1">
+                    {breakoutEntries.slice(0, 8).map((entry) => {
+                      const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                      const outcomeLabel =
+                        entry.outcome === 'win_t2'
+                          ? 'WIN T2'
+                          : entry.outcome === 'win_t1'
+                          ? 'WIN T1'
+                          : entry.outcome === 'loss'
+                          ? 'LOSS'
+                          : entry.outcome === 'missed'
+                          ? 'MISSED'
+                          : 'PENDING';
+                      const outcomeClass =
+                        entry.outcome === 'win_t1' || entry.outcome === 'win_t2'
+                          ? 'border-emerald-500/35 bg-emerald-500/12 text-emerald-300'
+                          : entry.outcome === 'loss' || entry.outcome === 'missed'
+                          ? 'border-red-500/35 bg-red-500/12 text-red-300'
+                          : 'border-slate-500/35 bg-slate-500/12 text-slate-300';
+                      const directionClass =
+                        entry.direction === 'bullish'
+                          ? 'text-emerald-300'
+                          : entry.direction === 'bearish'
+                          ? 'text-red-300'
+                          : 'text-slate-300';
+
+                      return (
+                        <div key={entry.id} className="grid grid-cols-[40px_44px_auto_34px_52px_auto] items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/5 px-1.5 py-1">
+                          <div className="text-[10px] font-mono text-slate-400">{time}</div>
+                          <div className="text-[10px] font-mono text-cyan-200">{entry.symbol}</div>
+                          <div className="text-[10px] text-amber-100 truncate">{entry.signal}</div>
+                          <div className="text-[10px] font-mono text-amber-200 text-right">{entry.breakoutScore.toFixed(0)}</div>
+                          <div className={`text-[10px] uppercase tracking-[0.08em] text-center ${directionClass}`}>
+                            {entry.direction === 'bullish' ? 'LONG' : entry.direction === 'bearish' ? 'SHORT' : 'NEUTRAL'}
+                          </div>
+                          <div className={`justify-self-end rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] ${outcomeClass}`}>
+                            {outcomeLabel}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-amber-500/30 bg-black/20 p-2 text-[11px] text-amber-100/80">
+                    No breakout card events logged yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="relative rounded-lg border border-dashed border-amber-500/35 bg-black/25 p-2 text-[11px] text-amber-100/80">
+              Waiting for breakout log data. It starts filling as scanner cards fire.
             </div>
           )}
         </div>

@@ -47,8 +47,9 @@ export default function Dashboard() {
   const { data: spotData } = useQuery<SpotData>({
     queryKey: ["/api/spot", searchTicker],
     enabled: !!searchTicker,
-    refetchInterval: 5000,
-    staleTime: 3000,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: true,
+    staleTime: 25000,
     refetchOnWindowFocus: true,
     retry: false,
   });
@@ -231,8 +232,8 @@ function DashboardContent({
   const { data: sectorSnapshot } = useQuery<SectorSnapshot>({
     queryKey: ["/api/sectors", "SPY"],
     enabled: !!analysis.symbol,
-    refetchInterval: 15000,
-    staleTime: 10000,
+    refetchInterval: 30000,
+    staleTime: 20000,
   });
   const {
     data: gammaGhostData,
@@ -242,8 +243,29 @@ function DashboardContent({
     queryKey: ["/api/gamma-ghost", analysis.symbol],
     enabled: !!analysis.symbol,
     retry: false,
-    refetchInterval: (query) => (query.state.data ? 10000 : false),
+    refetchInterval: (query) => (query.state.data ? 30000 : false),
   });
+
+  const tapeLookbackBars =
+    timeframe === "5m" ? 12 :
+    timeframe === "15m" ? 8 :
+    timeframe === "30m" ? 6 :
+    timeframe === "1h" ? 4 :
+    timeframe === "4h" ? 3 : 2;
+
+  const ohlcSeries = analysis.ohlc ?? [];
+  const latestBar = ohlcSeries.length > 0 ? ohlcSeries[ohlcSeries.length - 1] : null;
+  const anchorIndex = Math.max(0, ohlcSeries.length - 1 - tapeLookbackBars);
+  const anchorBar = ohlcSeries.length > 0 ? ohlcSeries[anchorIndex] : null;
+  const anchorClose = anchorBar?.close;
+  const tapeChange =
+    latestBar && typeof anchorClose === "number" && Number.isFinite(anchorClose)
+      ? lastPrice - anchorClose
+      : undefined;
+  const tapeChangePct =
+    typeof tapeChange === "number" && typeof anchorClose === "number" && anchorClose > 0
+      ? (tapeChange / anchorClose) * 100
+      : undefined;
 
   return (
     <div className="space-y-6" data-testid="dashboard-content">
@@ -254,6 +276,8 @@ function DashboardContent({
             price={lastPrice}
             change={priceChange}
             changePercent={priceChangePercent}
+            intradayChange={tapeChange}
+            intradayChangePercent={tapeChangePct}
             sectorData={sectorSnapshot?.sectors}
           />
 
@@ -264,7 +288,12 @@ function DashboardContent({
 
           <DivergenceWarningCard data={analysis.divergenceWarning} />
 
-          <MetaSignalPanel metaSignal={analysis.metaSignal} currentPrice={lastPrice} />
+          <MetaSignalPanel
+            metaSignal={analysis.metaSignal}
+            currentPrice={lastPrice}
+            symbol={analysis.symbol}
+            timeframe={timeframe}
+          />
 
           <TradeAnalysisPanel symbol={analysis.symbol} currentPriceOverride={lastPrice} />
 
@@ -293,6 +322,7 @@ function DashboardContent({
             symbol={analysis.symbol}
             isLoading={gammaGhostLoading}
             error={gammaGhostError}
+            currentPriceOverride={lastPrice}
           />
 
           <Card className="overflow-hidden">

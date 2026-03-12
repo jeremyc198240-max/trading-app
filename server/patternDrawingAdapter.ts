@@ -1,5 +1,12 @@
 import type { PatternResult } from './patterns';
-import type { DrawablePattern, PatternGeometry, GeometryPoint, GeometryLine, PatternLifecycle } from '@shared/schema';
+import type {
+  DrawablePattern,
+  PatternGeometry,
+  GeometryPoint,
+  GeometryLine,
+  PatternLifecycle,
+  BreakoutValidation,
+} from '@shared/schema';
 
 export const TIMEFRAME_GEOMETRY: Record<string, { swing: number, wick: number, slope: number, touch: number }> = {
   "1m":  { swing: 1.0, wick: 1.0, slope: 1.0, touch: 1.0 },
@@ -77,18 +84,6 @@ function findLocalMinima(ohlc: OHLC[], lookback = 5, timeframe = "5m"): number[]
   return minima;
 }
 
-export interface BreakoutValidation {
-  confirmed: boolean;
-  score: number;
-  checks: {
-    closeBeyondLevel: boolean;
-    impulseBody: boolean;
-    momentumAlign: boolean;
-    notInvalidated: boolean;
-  };
-  reason: string;
-}
-
 function validateBreakout(
   pattern: PatternResult,
   ohlc: OHLC[],
@@ -124,6 +119,10 @@ function validateBreakout(
   // 4. Invalidation (IL)
   // Price must not have returned inside structure (simplification: last close must stay beyond level)
   const notInvalidated = closeBeyondLevel;
+  const bodyCloseStrong = impulseBody;
+  // We currently use momentum alignment as the strict confirmation proxy.
+  const volumeConfirm = momentumAlign;
+  const holdAboveLevel = notInvalidated;
 
   let score = 0;
   if (closeBeyondLevel) score += 40;
@@ -131,7 +130,7 @@ function validateBreakout(
   if (momentumAlign) score += 30;
 
   // STRICT REQUIREMENT: ALL 4 conditions must pass
-  const confirmed = closeBeyondLevel && impulseBody && momentumAlign && notInvalidated;
+  const confirmed = closeBeyondLevel && bodyCloseStrong && volumeConfirm && holdAboveLevel;
 
   let reason = '';
   if (!closeBeyondLevel) reason = 'SB failed: No close beyond structure level';
@@ -143,7 +142,7 @@ function validateBreakout(
   return { 
     confirmed, 
     score, 
-    checks: { closeBeyondLevel, impulseBody, momentumAlign, notInvalidated }, 
+    checks: { closeBeyondLevel, volumeConfirm, holdAboveLevel, bodyCloseStrong }, 
     reason 
   };
 }

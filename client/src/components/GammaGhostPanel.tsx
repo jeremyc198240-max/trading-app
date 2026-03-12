@@ -79,6 +79,7 @@ interface GammaGhostPanelProps {
   symbol: string;
   isLoading?: boolean;
   error?: unknown;
+  currentPriceOverride?: number;
 }
 
 function formatGex(value: number): string {
@@ -139,7 +140,7 @@ function MeterCard({
   );
 }
 
-export function GammaGhostPanel({ data, symbol, isLoading = false, error }: GammaGhostPanelProps) {
+export function GammaGhostPanel({ data, symbol, isLoading = false, error, currentPriceOverride }: GammaGhostPanelProps) {
   if (error) {
     const errorText = error instanceof Error ? error.message : "Gamma Ghost unavailable";
     return (
@@ -196,6 +197,10 @@ export function GammaGhostPanel({ data, symbol, isLoading = false, error }: Gamm
   }
 
   const { liquidityMap, underlying } = data;
+  const displaySpot =
+    typeof currentPriceOverride === "number" && Number.isFinite(currentPriceOverride) && currentPriceOverride > 0
+      ? currentPriceOverride
+      : underlying.spot;
   const { 
     nearestAbove, nearestBelow, wallsAbove, wallsBelow, 
     magnets, voidZones, liquidityBias, confidence,
@@ -286,7 +291,7 @@ export function GammaGhostPanel({ data, symbol, isLoading = false, error }: Gamm
                 isBearish && "text-red-400",
                 !isBullish && !isBearish && "text-foreground"
               )}>
-                ${underlying.spot.toFixed(2)}
+                ${displaySpot.toFixed(2)}
               </div>
               <div className="text-[9px] text-cyan-200/65 mt-0.5">{symbol.toUpperCase()} live liquidity map</div>
             </div>

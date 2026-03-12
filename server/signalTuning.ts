@@ -1,4 +1,16 @@
-import { getSignalHistory, getGoldHotSignals, getDailySummary, getAllSymbolsWithHistory } from './signalHistory';
+import {
+  getSignalHistory,
+  getGoldHotSignals,
+  getDailySummary,
+  getAllSymbolsWithHistory,
+  isCompletedOutcome,
+  isLossOutcome,
+  isWinOutcome,
+} from './signalHistory';
+
+function isLossLikeOutcome(outcome?: string): boolean {
+  return isLossOutcome(outcome) || outcome === 'missed';
+}
 
 interface ThresholdAnalysis {
   currentThreshold: number;
@@ -103,10 +115,10 @@ export function runTuningAnalysis(): TuningAnalysisResult {
     allSignals.push(...history);
   }
   
-  const completedSignals = allSignals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
-  const wins = allSignals.filter(s => s.outcome === 'win');
-  const losses = allSignals.filter(s => s.outcome === 'loss');
-  const pending = allSignals.filter(s => s.outcome === 'pending');
+  const completedSignals = allSignals.filter(s => isCompletedOutcome(s.outcome));
+  const wins = allSignals.filter(s => isWinOutcome(s.outcome));
+  const losses = allSignals.filter(s => isLossLikeOutcome(s.outcome));
+  const pending = allSignals.filter(s => !isCompletedOutcome(s.outcome));
   
   const dataQuality = getDataQuality(completedSignals.length);
   
@@ -129,11 +141,11 @@ export function runTuningAnalysis(): TuningAnalysisResult {
     : 0;
   
   const goldSignals = completedSignals.filter(s => s.grade === 'GOLD');
-  const goldWins = goldSignals.filter(s => s.outcome === 'win');
+  const goldWins = goldSignals.filter(s => isWinOutcome(s.outcome));
   const goldWinRate = goldSignals.length > 0 ? (goldWins.length / goldSignals.length) * 100 : 0;
   
   const hotSignals = completedSignals.filter(s => s.grade === 'HOT');
-  const hotWins = hotSignals.filter(s => s.outcome === 'win');
+  const hotWins = hotSignals.filter(s => isWinOutcome(s.outcome));
   const hotWinRate = hotSignals.length > 0 ? (hotWins.length / hotSignals.length) * 100 : 0;
   
   const summary = generateSummary(
@@ -189,10 +201,10 @@ function analyzeGradePerformance(signals: any[]): GradePerformance[] {
   
   return grades.map(grade => {
     const gradeSignals = signals.filter(s => s.grade === grade);
-    const completed = gradeSignals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
-    const wins = gradeSignals.filter(s => s.outcome === 'win');
-    const losses = gradeSignals.filter(s => s.outcome === 'loss');
-    const pending = gradeSignals.filter(s => s.outcome === 'pending');
+    const completed = gradeSignals.filter(s => isCompletedOutcome(s.outcome));
+    const wins = gradeSignals.filter(s => isWinOutcome(s.outcome));
+    const losses = gradeSignals.filter(s => isLossLikeOutcome(s.outcome));
+    const pending = gradeSignals.filter(s => !isCompletedOutcome(s.outcome));
     
     const winRate = completed.length > 0 ? (wins.length / completed.length) * 100 : 0;
     const avgConfidence = gradeSignals.length > 0 
@@ -231,9 +243,9 @@ function analyzeTimeWindows(signals: any[]): TimeWindowAnalysis[] {
       return hour >= w.startHour && hour < w.endHour;
     });
     
-    const completed = windowSignals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
-    const wins = windowSignals.filter(s => s.outcome === 'win');
-    const losses = windowSignals.filter(s => s.outcome === 'loss');
+    const completed = windowSignals.filter(s => isCompletedOutcome(s.outcome));
+    const wins = windowSignals.filter(s => isWinOutcome(s.outcome));
+    const losses = windowSignals.filter(s => isLossLikeOutcome(s.outcome));
     
     const winRate = completed.length > 0 ? (wins.length / completed.length) * 100 : 0;
     const avgConfidence = windowSignals.length > 0 
@@ -277,9 +289,9 @@ function analyzeConfidenceBuckets(signals: any[]): ConfidenceBucket[] {
       s.confidence >= b.minConf && s.confidence <= b.maxConf
     );
     
-    const completed = bucketSignals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
-    const wins = bucketSignals.filter(s => s.outcome === 'win');
-    const losses = bucketSignals.filter(s => s.outcome === 'loss');
+    const completed = bucketSignals.filter(s => isCompletedOutcome(s.outcome));
+    const wins = bucketSignals.filter(s => isWinOutcome(s.outcome));
+    const losses = bucketSignals.filter(s => isLossLikeOutcome(s.outcome));
     
     const winRate = completed.length > 0 ? (wins.length / completed.length) * 100 : 0;
     
@@ -351,7 +363,7 @@ function analyzeLosses(losses: any[]): LossAnalysis {
 }
 
 function analyzeThresholds(signals: any[]): TuningAnalysisResult['thresholdAnalysis'] {
-  const completed = signals.filter(s => s.outcome === 'win' || s.outcome === 'loss');
+  const completed = signals.filter(s => isCompletedOutcome(s.outcome));
   
   const findOptimalThreshold = (
     getValue: (s: any) => number,
@@ -368,7 +380,7 @@ function analyzeThresholds(signals: any[]): TuningAnalysisResult['thresholdAnaly
     
     for (const threshold of thresholds) {
       const filtered = completed.filter(s => higher ? getValue(s) >= threshold : getValue(s) <= threshold);
-      const wins = filtered.filter(s => s.outcome === 'win');
+      const wins = filtered.filter(s => isWinOutcome(s.outcome));
       const winRate = filtered.length > 0 ? (wins.length / filtered.length) * 100 : 0;
       
       if (filtered.length >= 5 && winRate > bestWinRate) {
@@ -379,7 +391,7 @@ function analyzeThresholds(signals: any[]): TuningAnalysisResult['thresholdAnaly
     }
     
     const currentFiltered = completed.filter(s => higher ? getValue(s) >= currentThreshold : getValue(s) <= currentThreshold);
-    const currentWins = currentFiltered.filter(s => s.outcome === 'win');
+    const currentWins = currentFiltered.filter(s => isWinOutcome(s.outcome));
     const currentWinRate = currentFiltered.length > 0 ? (currentWins.length / currentFiltered.length) * 100 : 0;
     
     return {

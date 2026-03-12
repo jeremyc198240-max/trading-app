@@ -1,10 +1,9 @@
-let yahooFinanceInstance: InstanceType<typeof import('yahoo-finance2').default> | null = null;
+let yahooFinanceInstance: typeof import('yahoo-finance2').default | null = null;
 
 async function getYahooFinance() {
   if (!yahooFinanceInstance) {
     const mod = await import('yahoo-finance2');
-    const YahooFinance = mod.default;
-    yahooFinanceInstance = new YahooFinance();
+    yahooFinanceInstance = mod.default;
   }
   return yahooFinanceInstance;
 }

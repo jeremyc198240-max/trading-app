@@ -542,7 +542,7 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
   const { data, isLoading, error } = useQuery<FusionSnapshot>({
     queryKey: ['/api/fusion', symbol],
     enabled: !!symbol,
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 10000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false

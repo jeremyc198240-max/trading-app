@@ -1,7 +1,8 @@
 import { analyzeSymbol, generateSampleOHLC } from "./finance";
-import { fetchLiveOHLC, fetchLiveSpot } from "./marketData";
+import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, type PatternResult } from "./patterns";
 import { runMonsterOTMEngine } from "./monsterOtmEngine";
+import { recordBreakoutAlert, updateBreakoutAlertOutcomes } from "./breakoutAlertHistory";
 
 interface OHLC {
 	open: number;
@@ -400,18 +401,24 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 		const upperSymbol = normalizeSymbol(symbol);
 		if (!upperSymbol) return null;
 
-		const liveSpot = await fetchLiveSpot(upperSymbol).catch(() => null);
+		const liveSpot = await fetchLiveSpot(upperSymbol).catch(() => {
+			const cached = getCachedSpot(upperSymbol);
+			if (cached) return cached.data;
+			const candleSpot = getLastKnownSpotFromCandles(upperSymbol);
+			return candleSpot ? candleSpot.data : null;
+		});
 		const live = await fetchLiveOHLC(upperSymbol, timeframe, "FULL");
+		const hasOhlcData = live.data.length > 0;
 
 		const ohlc =
-			live.isLive && live.data.length > 0
+			hasOhlcData
 				? live.data
 				: generateSampleOHLC(upperSymbol, getCandleCount(timeframe), liveSpot?.spot);
 
 		if (!ohlc.length) return null;
 
 		const sessionSplit =
-			live.isLive && live.data.length > 0
+			hasOhlcData
 				? {
 						rth: live.rth,
 						overnight: live.overnight,
@@ -482,7 +489,7 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			cmfContribution: analysis.marketHealth?.cmf?.contribution ?? 0,
 		});
 
-		return {
+		const result: ScannerResult = {
 			symbol: upperSymbol,
 			patterns: sortedPatterns,
 			lastPrice,
@@ -507,6 +514,35 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			signalQuality,
 			compression,
 		};
+
+		if (timeframe === DEFAULT_TIMEFRAME) {
+			updateBreakoutAlertOutcomes(upperSymbol, lastPrice, {
+				high: lastCandle.high,
+				low: lastCandle.low,
+				now: Date.now(),
+			});
+
+			recordBreakoutAlert({
+				symbol: upperSymbol,
+				timeframe,
+				timestamp: result.scanTime,
+				lastPrice: result.lastPrice,
+				priceChangePercent: result.priceChangePercent,
+				breakoutSignal: result.breakoutSignal,
+				breakoutScore: result.breakoutScore,
+				momentumStrength: result.momentumStrength,
+				volumeSpike: result.volumeSpike,
+				rsiValue: result.rsiValue,
+				healthScore: result.healthScore,
+				healthGrade: result.healthGrade,
+				signalQuality: result.signalQuality,
+				expansionDirection: result.expansionDirection,
+				warnings: result.warnings,
+				compression: result.compression,
+			});
+		}
+
+		return result;
 	} catch (error) {
 		console.error(`[Scanner] Failed scan for ${symbol}:`, error);
 		return null;
