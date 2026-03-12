@@ -21,6 +21,7 @@ import type { ReversalSignal } from './reversalEngine';
 import { getStableDirection, type StableDirection } from './signalStability';
 import { pushMemory, applyMemorySmoothing, type MemorySmoothing } from './signalMemory';
 import { computePriceActionSafety, type PriceActionSafety } from './priceActionSafety';
+import { readRecentSystemAudit } from './systemAuditLog';
 
 export type { FusionSnapshot };
 
@@ -303,6 +304,283 @@ function calculateStrikeTargets(
 
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
+}
+
+function clampRange(x: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, x));
+}
+
+type TradeDirection = 'CALL' | 'PUT';
+
+interface UnifiedAuditCalibration {
+  confidenceBias: number;
+  directionConfidenceBias: Record<TradeDirection, number>;
+  gradeThresholds: {
+    goldMin: number;
+    hotMin: number;
+    readyMin: number;
+    buildingMin: number;
+  };
+  minActiveConfidence: number;
+  sample: {
+    resolved: number;
+    decisive: number;
+    wins: number;
+    losses: number;
+    missed: number;
+  };
+  notes: string[];
+}
+
+const DEFAULT_UNIFIED_AUDIT_CALIBRATION: UnifiedAuditCalibration = {
+  confidenceBias: 0,
+  directionConfidenceBias: { CALL: 0, PUT: 0 },
+  gradeThresholds: {
+    goldMin: 85,
+    hotMin: 75,
+    readyMin: 65,
+    buildingMin: 55,
+  },
+  minActiveConfidence: 55,
+  sample: {
+    resolved: 0,
+    decisive: 0,
+    wins: 0,
+    losses: 0,
+    missed: 0,
+  },
+  notes: [],
+};
+
+const UNIFIED_AUDIT_LOOKBACK_DAYS = 2;
+const UNIFIED_AUDIT_CACHE_MS = 90_000;
+
+let unifiedAuditCalibrationCache: { computedAt: number; value: UnifiedAuditCalibration } | null = null;
+
+function normalizeAuditDirection(direction: unknown): TradeDirection | null {
+  const value = String(direction ?? '').toUpperCase();
+  if (value === 'CALL' || value === 'BULLISH') return 'CALL';
+  if (value === 'PUT' || value === 'BEARISH') return 'PUT';
+  return null;
+}
+
+function normalizeAuditGrade(grade: unknown): SetupGrade {
+  const value = String(grade ?? '').toUpperCase();
+  if (value === 'GOLD' || value === 'HOT' || value === 'READY' || value === 'BUILDING' || value === 'WAIT') {
+    return value;
+  }
+  return 'WAIT';
+}
+
+function toConfidenceBucket(confidence: number): '0-59' | '60-69' | '70-79' | '80-100' {
+  if (confidence >= 80) return '80-100';
+  if (confidence >= 70) return '70-79';
+  if (confidence >= 60) return '60-69';
+  return '0-59';
+}
+
+function getUnifiedAuditCalibration(now: number = Date.now()): UnifiedAuditCalibration {
+  if (unifiedAuditCalibrationCache && now - unifiedAuditCalibrationCache.computedAt <= UNIFIED_AUDIT_CACHE_MS) {
+    return unifiedAuditCalibrationCache.value;
+  }
+
+  try {
+    const events = readRecentSystemAudit(1600, UNIFIED_AUDIT_LOOKBACK_DAYS);
+    if (!events.length) {
+      unifiedAuditCalibrationCache = { computedAt: now, value: DEFAULT_UNIFIED_AUDIT_CALIBRATION };
+      return DEFAULT_UNIFIED_AUDIT_CALIBRATION;
+    }
+
+    const ordered = [...events].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+    const pendingByKey = new Map<string, Array<{ confidence: number | null }>>();
+
+    const directionStats: Record<TradeDirection, { wins: number; losses: number }> = {
+      CALL: { wins: 0, losses: 0 },
+      PUT: { wins: 0, losses: 0 },
+    };
+    const gradeStats: Record<SetupGrade, { wins: number; losses: number }> = {
+      GOLD: { wins: 0, losses: 0 },
+      HOT: { wins: 0, losses: 0 },
+      READY: { wins: 0, losses: 0 },
+      BUILDING: { wins: 0, losses: 0 },
+      WAIT: { wins: 0, losses: 0 },
+    };
+    const bucketStats: Record<'0-59' | '60-69' | '70-79' | '80-100', { wins: number; losses: number; count: number }> = {
+      '0-59': { wins: 0, losses: 0, count: 0 },
+      '60-69': { wins: 0, losses: 0, count: 0 },
+      '70-79': { wins: 0, losses: 0, count: 0 },
+      '80-100': { wins: 0, losses: 0, count: 0 },
+    };
+
+    let resolved = 0;
+    let decisive = 0;
+    let wins = 0;
+    let losses = 0;
+    let missed = 0;
+
+    for (const event of ordered) {
+      const payload = event?.payload ?? {};
+      const source = String(payload.source ?? 'fusion').toLowerCase();
+      if (source !== 'fusion') continue;
+
+      if (event.eventType === 'signal.recorded') {
+        const direction = normalizeAuditDirection(payload.direction);
+        if (!direction) continue;
+        const grade = normalizeAuditGrade(payload.grade);
+        const confidenceValue = Number(payload.confidence);
+        const confidence = Number.isFinite(confidenceValue) ? clampRange(Math.round(confidenceValue), 0, 100) : null;
+        const key = `${String(payload.symbol ?? '').toUpperCase()}|${direction}|${grade}`;
+        const queue = pendingByKey.get(key) ?? [];
+        queue.push({ confidence });
+        pendingByKey.set(key, queue);
+        continue;
+      }
+
+      if (event.eventType !== 'signal.resolved') continue;
+
+      const direction = normalizeAuditDirection(payload.direction);
+      if (!direction) continue;
+
+      const grade = normalizeAuditGrade(payload.grade);
+      const key = `${String(payload.symbol ?? '').toUpperCase()}|${direction}|${grade}`;
+      const queue = pendingByKey.get(key);
+      const matched = queue && queue.length > 0 ? queue.shift() : null;
+      const confidence = matched?.confidence ?? null;
+
+      const outcome = String(payload.outcome ?? '').toLowerCase();
+      const isWin = outcome.startsWith('win');
+      const isLoss = outcome === 'loss';
+      const isMissed = outcome === 'missed';
+
+      resolved += 1;
+
+      if (isWin) {
+        wins += 1;
+        decisive += 1;
+        directionStats[direction].wins += 1;
+        gradeStats[grade].wins += 1;
+      } else if (isLoss) {
+        losses += 1;
+        decisive += 1;
+        directionStats[direction].losses += 1;
+        gradeStats[grade].losses += 1;
+      } else if (isMissed) {
+        missed += 1;
+      }
+
+      if (confidence != null && (isWin || isLoss)) {
+        const bucket = toConfidenceBucket(confidence);
+        bucketStats[bucket].count += 1;
+        if (isWin) bucketStats[bucket].wins += 1;
+        else bucketStats[bucket].losses += 1;
+      }
+    }
+
+    if (decisive < 8) {
+      const fallback: UnifiedAuditCalibration = {
+        ...DEFAULT_UNIFIED_AUDIT_CALIBRATION,
+        sample: { resolved, decisive, wins, losses, missed },
+      };
+      unifiedAuditCalibrationCache = { computedAt: now, value: fallback };
+      return fallback;
+    }
+
+    const effectiveDenominator = wins + losses + missed * 0.5;
+    const adjustedWinRate = wins / Math.max(1, effectiveDenominator);
+    const sampleWeight = clampRange((decisive - 8) / 24, 0.35, 1);
+
+    let confidenceBias = Math.round(
+      clampRange((adjustedWinRate - 0.58) * 30, -8, 6) * sampleWeight,
+    );
+
+    const directionConfidenceBias: Record<TradeDirection, number> = { CALL: 0, PUT: 0 };
+    for (const direction of ['CALL', 'PUT'] as TradeDirection[]) {
+      const stats = directionStats[direction];
+      const dirDecisive = stats.wins + stats.losses;
+      if (dirDecisive < 5) continue;
+      const dirWinRate = stats.wins / Math.max(1, dirDecisive);
+      directionConfidenceBias[direction] = Math.round(
+        clampRange((dirWinRate - adjustedWinRate) * 22 * sampleWeight, -4, 4),
+      );
+    }
+
+    let goldMin = 85;
+    let hotMin = 75;
+    let readyMin = 65;
+    let buildingMin = 55;
+    const notes: string[] = [];
+
+    const goldDecisive = gradeStats.GOLD.wins + gradeStats.GOLD.losses;
+    const hotDecisive = gradeStats.HOT.wins + gradeStats.HOT.losses;
+    const readyDecisive = gradeStats.READY.wins + gradeStats.READY.losses;
+    const buildingDecisive = gradeStats.BUILDING.wins + gradeStats.BUILDING.losses;
+
+    const goldWinRate = goldDecisive > 0 ? gradeStats.GOLD.wins / goldDecisive : adjustedWinRate;
+    const hotWinRate = hotDecisive > 0 ? gradeStats.HOT.wins / hotDecisive : adjustedWinRate;
+    const readyWinRate = readyDecisive > 0 ? gradeStats.READY.wins / readyDecisive : adjustedWinRate;
+    const buildingWinRate = buildingDecisive > 0 ? gradeStats.BUILDING.wins / buildingDecisive : adjustedWinRate;
+
+    if (hotDecisive >= 6 && hotWinRate < adjustedWinRate - 0.06) {
+      hotMin += 3;
+      notes.push('HOT underperforming recent baseline');
+    }
+    if (goldDecisive >= 5 && goldWinRate < adjustedWinRate - 0.05) {
+      goldMin += 2;
+      notes.push('GOLD not separating enough from baseline');
+    }
+    if (readyDecisive >= 6 && readyWinRate > hotWinRate + 0.05) {
+      hotMin += 2;
+      notes.push('READY outperforming HOT in recent samples');
+    }
+    if (readyDecisive >= 6 && readyWinRate < adjustedWinRate - 0.08) {
+      readyMin += 3;
+    }
+    if (buildingDecisive >= 6 && buildingWinRate < adjustedWinRate - 0.1) {
+      buildingMin += 2;
+    }
+
+    const highConfBucket = bucketStats['80-100'];
+    const midConfBucket = bucketStats['60-69'];
+    if (highConfBucket.count >= 6 && midConfBucket.count >= 6) {
+      const highWinRate = highConfBucket.wins / Math.max(1, highConfBucket.wins + highConfBucket.losses);
+      const midWinRate = midConfBucket.wins / Math.max(1, midConfBucket.wins + midConfBucket.losses);
+      if (highWinRate < midWinRate - 0.05) {
+        confidenceBias = Math.max(-10, confidenceBias - 2);
+        hotMin += 1;
+        goldMin += 1;
+        notes.push('High-confidence bucket underperforming mid-confidence bucket');
+      }
+    }
+
+    hotMin = Math.round(clampRange(hotMin, 72, 84));
+    goldMin = Math.round(clampRange(Math.max(goldMin, hotMin + 8), 82, 95));
+    readyMin = Math.round(clampRange(readyMin, 60, hotMin - 4));
+    buildingMin = Math.round(clampRange(buildingMin, 52, readyMin - 4));
+
+    const minActiveConfidence = Math.round(
+      clampRange(55 + (0.56 - adjustedWinRate) * 12 * sampleWeight, 52, 62),
+    );
+
+    const calibration: UnifiedAuditCalibration = {
+      confidenceBias,
+      directionConfidenceBias,
+      gradeThresholds: {
+        goldMin,
+        hotMin,
+        readyMin,
+        buildingMin,
+      },
+      minActiveConfidence,
+      sample: { resolved, decisive, wins, losses, missed },
+      notes,
+    };
+
+    unifiedAuditCalibrationCache = { computedAt: now, value: calibration };
+    return calibration;
+  } catch {
+    unifiedAuditCalibrationCache = { computedAt: now, value: DEFAULT_UNIFIED_AUDIT_CALIBRATION };
+    return DEFAULT_UNIFIED_AUDIT_CALIBRATION;
+  }
 }
 
 function computeSignalHealth(params: {
@@ -1085,10 +1363,27 @@ export function computeUnifiedSignal(params: {
     institutionalCore: snapshot.institutionalCore
   });
 
+  const auditCalibration = getUnifiedAuditCalibration();
+
   const reasons: UnifiedReason[] = [
     ...dirResult.reasons,
     ...confResult.reasons
   ];
+
+  if (auditCalibration.sample.decisive >= 8) {
+    reasons.push({
+      label: `Audit calibration (${auditCalibration.sample.wins}/${auditCalibration.sample.decisive} wins, bias ${auditCalibration.confidenceBias >= 0 ? '+' : ''}${auditCalibration.confidenceBias})`,
+      weight: 0.12,
+      impact: 'info'
+    });
+    for (const note of auditCalibration.notes.slice(0, 2)) {
+      reasons.push({
+        label: `Audit note: ${note}`,
+        weight: 0.08,
+        impact: 'info'
+      });
+    }
+  }
 
   // Attach institutional reasons if present
   if (snapshot.institutionalCore) {
@@ -1128,11 +1423,16 @@ export function computeUnifiedSignal(params: {
   }
 
   // State
+  const calibratedStateConfidence = clampRange(
+    confResult.confidence + auditCalibration.confidenceBias,
+    0,
+    100,
+  );
   let state: UnifiedSignal['state'] = 'INACTIVE';
   if (!snapshot.gatingState.metaAllowed) {
     state = 'INACTIVE';
   // OPTIMIZED: Higher confidence threshold (was 40, now 55)
-  } else if (dirResult.direction === 'neutral' || confResult.confidence < 55) {
+  } else if (dirResult.direction === 'neutral' || calibratedStateConfidence < auditCalibration.minActiveConfidence) {
     state = 'STALE';
   } else {
     state = 'ACTIVE';
@@ -1141,7 +1441,7 @@ export function computeUnifiedSignal(params: {
   const summaryParts: string[] = [];
 
   summaryParts.push(
-    `Direction: ${dirResult.direction.toUpperCase()} | State: ${state} | Conf: ${confResult.confidence.toFixed(0)}%`
+    `Direction: ${dirResult.direction.toUpperCase()} | State: ${state} | Conf: ${calibratedStateConfidence.toFixed(0)}%`
   );
   summaryParts.push(
     `MTF: ${toPct(mtfConsensus.alignmentScore).toFixed(0)}% | Forecast: ${toPct(forecast.confidence).toFixed(0)}% | Risk: ${toPct(riskModel.riskIndex).toFixed(0)}%`
@@ -1173,7 +1473,7 @@ export function computeUnifiedSignal(params: {
       recommendedAction = `🟡 PUT setup forming - Gating ${gatingPct.toFixed(0)}% Monster ${monsterPct.toFixed(0)}%. Wait for 80%/55% unlock.`;
     }
   } else if (state === 'STALE') {
-    recommendedAction = `⚠️ STALE - Low confidence (${confResult.confidence.toFixed(0)}%). Wait for fresh momentum or regime shift.`;
+    recommendedAction = `⚠️ STALE - Low confidence (${calibratedStateConfidence.toFixed(0)}%). Wait for fresh momentum or regime shift.`;
   } else {
     recommendedAction = `❌ INACTIVE - Gating blocked. ${gatingState.reasons[0] ?? 'Conditions not met for 0DTE entry.'}`;
   }
@@ -1204,18 +1504,29 @@ export function computeUnifiedSignal(params: {
   // NOTE: These are quality tiers, NOT guaranteed win rates
   // Real historical backtest shows ~52% overall accuracy
   // Better grades have slightly higher edge but NO guarantees
-  const confPct = fusionResult.confidence;
+  const fusionDirectionBias =
+    fusionResult.direction === 'CALL'
+      ? auditCalibration.directionConfidenceBias.CALL
+      : fusionResult.direction === 'PUT'
+        ? auditCalibration.directionConfidenceBias.PUT
+        : 0;
+  const confPct = clampRange(
+    fusionResult.confidence + auditCalibration.confidenceBias + fusionDirectionBias,
+    0,
+    100,
+  );
   const gradeGatingPct = toPct(gatingState.gatingScore);
   const monsterValue = snapshot.monsterGateDecision?.value ?? 0;
+  const gradeThresholds = auditCalibration.gradeThresholds;
   
   let setupGrade: SetupGrade = 'WAIT';
-  if (confPct >= 85 && gradeGatingPct >= 80 && monsterValue >= 55) {
+  if (confPct >= gradeThresholds.goldMin && gradeGatingPct >= 80 && monsterValue >= 55) {
     setupGrade = 'GOLD';  // Highest quality setup
-  } else if (confPct >= 75 && gradeGatingPct >= 70 && monsterValue >= 45) {
+  } else if (confPct >= gradeThresholds.hotMin && gradeGatingPct >= 70 && monsterValue >= 45) {
     setupGrade = 'HOT';   // High quality setup
-  } else if (confPct >= 65 && gradeGatingPct >= 60) {
+  } else if (confPct >= gradeThresholds.readyMin && gradeGatingPct >= 60) {
     setupGrade = 'READY'; // Standard quality setup
-  } else if (confPct >= 55 && gradeGatingPct >= 50) {
+  } else if (confPct >= gradeThresholds.buildingMin && gradeGatingPct >= 50) {
     setupGrade = 'BUILDING'; // Developing setup
   }
   // else WAIT (low quality - avoid trading)
@@ -1376,7 +1687,23 @@ export function computeUnifiedSignal(params: {
   }
 
   let outputSetupGrade: SetupGrade = setupGrade;
-  let outputConfidence = safeConfidence;
+  const finalDirectionBias =
+    finalDirection === 'CALL'
+      ? auditCalibration.directionConfidenceBias.CALL
+      : finalDirection === 'PUT'
+        ? auditCalibration.directionConfidenceBias.PUT
+        : 0;
+  let outputConfidence = Math.round(
+    clampRange(
+      safeConfidence + auditCalibration.confidenceBias + finalDirectionBias,
+      0,
+      100,
+    ),
+  );
+  if (state === 'ACTIVE' && outputConfidence < auditCalibration.minActiveConfidence) {
+    state = 'STALE';
+    recommendedAction = `⚠️ STALE - Audit-calibrated confidence (${outputConfidence.toFixed(0)}%) below active floor (${auditCalibration.minActiveConfidence}%). Wait for stronger confirmation.`;
+  }
   if (state === 'STALE') {
     outputConfidence = Math.min(outputConfidence, 54);
     if (outputSetupGrade === 'GOLD' || outputSetupGrade === 'HOT' || outputSetupGrade === 'READY') {
@@ -1395,14 +1722,15 @@ export function computeUnifiedSignal(params: {
       : null;
 
   const gradeOk = OPTION_B_GRADES.includes(outputSetupGrade);
-  const confOk = outputConfidence >= OPTION_B_MIN_CONF;
+  const optionBMinConf = Math.max(OPTION_B_MIN_CONF, gradeThresholds.hotMin);
+  const confOk = outputConfidence >= optionBMinConf;
   optionBReasons = [];
 
   if (gradeOk) optionBReasons.push(`Grade: ${outputSetupGrade} ✓`);
   else optionBReasons.push(`Grade: ${outputSetupGrade} ✗ (need GOLD/HOT)`);
 
   if (confOk) optionBReasons.push(`Confidence: ${outputConfidence}% ✓`);
-  else optionBReasons.push(`Confidence: ${outputConfidence}% ✗ (need 75%+)`);
+  else optionBReasons.push(`Confidence: ${outputConfidence}% ✗ (need ${optionBMinConf}%+)`);
 
   optionBQualified = state === 'ACTIVE' && gradeOk && confOk && finalDirection !== 'WAIT';
   if (optionBQualified) {

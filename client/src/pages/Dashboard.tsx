@@ -54,13 +54,35 @@ export default function Dashboard() {
     retry: false,
   });
 
+  const analysisDataSource = String((analysis as Record<string, unknown> | undefined)?.dataSource ?? "").toLowerCase();
+  const lastCandleClose =
+    analysis?.ohlc && analysis.ohlc.length > 0
+      ? analysis.ohlc[analysis.ohlc.length - 1].close
+      : undefined;
+  const spotPrice = spotData?.spot;
+  const spotDivergencePct =
+    spotPrice != null &&
+    lastCandleClose != null &&
+    Number.isFinite(lastCandleClose) &&
+    lastCandleClose > 0
+      ? Math.abs(spotPrice - lastCandleClose) / lastCandleClose
+      : 0;
+  const spotLooksAligned =
+    spotPrice != null &&
+    (
+      lastCandleClose == null ||
+      spotDivergencePct <= 0.012 ||
+      analysisDataSource.startsWith("live") ||
+      analysisDataSource.startsWith("cached (")
+    );
+
   const lastPrice =
-    spotData?.spot ??
+    (spotLooksAligned ? spotPrice : undefined) ??
     analysis?.lastPrice ??
-    analysis?.ohlc?.[analysis.ohlc.length - 1]?.close ??
+    lastCandleClose ??
     0;
   const prevClose =
-    spotData?.prevClose ??
+    (spotLooksAligned ? spotData?.prevClose : undefined) ??
     (analysis?.ohlc && analysis.ohlc.length > 1
       ? analysis.ohlc[analysis.ohlc.length - 2].close
       : lastPrice);

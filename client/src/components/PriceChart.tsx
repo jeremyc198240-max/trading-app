@@ -65,24 +65,8 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
   const [pendingCenterId, setPendingCenterId] = useState<string | null>(null);
 
-  // Update latest candle's close/high/low with live spot price to sync gauges with chart
-  const updatedOhlc = useMemo(() => {
-    if (!liveSpotPrice || ohlc.length === 0) return ohlc;
-    
-    const ohlcCopy = [...ohlc];
-    const lastCandle = ohlcCopy[ohlcCopy.length - 1];
-    
-    if (lastCandle) {
-      ohlcCopy[ohlcCopy.length - 1] = {
-        ...lastCandle,
-        close: liveSpotPrice,
-        high: Math.max(lastCandle.high, liveSpotPrice),
-        low: Math.min(lastCandle.low, liveSpotPrice),
-      };
-    }
-    
-    return ohlcCopy;
-  }, [ohlc, liveSpotPrice]);
+  // Keep chart candles server-stable; live spot is rendered as readout only.
+  const updatedOhlc = useMemo(() => ohlc, [ohlc]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -231,40 +215,53 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const candleBodyWidth = Math.max(2, candleSpacing * 0.65);
   const wickWidth = Math.max(1, candleBodyWidth * 0.15);
 
-  const sanitizedOhlc = useMemo(() => {
-    if (visibleOhlc.length < 5) return visibleOhlc.map(c => ({
-      ...c, open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close)
-    }));
-
-    const bodies = visibleOhlc.map(c => Math.abs(Number(c.close) - Number(c.open))).filter(b => b > 0).sort((a, b) => a - b);
-    const ranges = visibleOhlc.map(c => Number(c.high) - Number(c.low)).sort((a, b) => a - b);
-    const medianRange = ranges[Math.floor(ranges.length * 0.5)];
-    const medianBody = bodies.length > 0 ? bodies[Math.floor(bodies.length / 2)] : medianRange * 0.5;
-    const maxWick = Math.max(medianBody * 1.5, medianRange * 0.75);
-
+  // Keep candlesticks faithful to server OHLC and only coerce numeric safety.
+  const normalizedOhlc = useMemo(() => {
     return visibleOhlc.map((c) => {
-      const o = Number(c.open);
-      const h = Number(c.high);
-      const l = Number(c.low);
-      const cl = Number(c.close);
-
-      const bodyHigh = Math.max(o, cl);
-      const bodyLow = Math.min(o, cl);
-      const clampedHigh = (h - bodyHigh > maxWick) ? bodyHigh + maxWick : h;
-      const clampedLow = (bodyLow - l > maxWick) ? bodyLow - maxWick : l;
-      return { ...c, open: o, high: clampedHigh, low: clampedLow, close: cl };
+      const open = Number(c.open);
+      const close = Number(c.close);
+      const high = Math.max(Number(c.high), open, close);
+      const low = Math.min(Number(c.low), open, close);
+      return { ...c, open, high, low, close };
     });
   }, [visibleOhlc]);
+
+  // Use closed candles for axis scaling when the latest bar is still forming.
+  const rangeOhlc = useMemo(() => {
+    if (normalizedOhlc.length < 3) return normalizedOhlc;
+
+    const diffs: number[] = [];
+    for (let i = 1; i < normalizedOhlc.length; i++) {
+      const prevTs = Number(normalizedOhlc[i - 1]?.time);
+      const curTs = Number(normalizedOhlc[i]?.time);
+      const diff = curTs - prevTs;
+      if (Number.isFinite(diff) && diff > 0) {
+        diffs.push(diff);
+      }
+    }
+
+    if (diffs.length === 0) return normalizedOhlc;
+
+    diffs.sort((a, b) => a - b);
+    const medianDiffSec = diffs[Math.floor(diffs.length / 2)] ?? 0;
+    const lastTs = Number(normalizedOhlc[normalizedOhlc.length - 1]?.time);
+    const nowSec = Date.now() / 1000;
+    const isInFlight = Number.isFinite(lastTs) && medianDiffSec > 0 && nowSec < (lastTs + medianDiffSec - 2);
+
+    return isInFlight && normalizedOhlc.length > 2
+      ? normalizedOhlc.slice(0, -1)
+      : normalizedOhlc;
+  }, [normalizedOhlc]);
 
   const selectedPattern = selectedPatternId !== null
     ? adjustedPatterns.find(p => p.id === selectedPatternId) ?? null
     : null;
 
   const priceRange = useMemo(() => {
-    if (sanitizedOhlc.length === 0) return { min: 0, max: 1 };
+    if (rangeOhlc.length === 0) return { min: 0, max: 1 };
 
     let min = Infinity, max = -Infinity;
-    sanitizedOhlc.forEach((c) => {
+    rangeOhlc.forEach((c) => {
       min = Math.min(min, c.low);
       max = Math.max(max, c.high);
     });
@@ -291,7 +288,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
     const range = max - min;
     const pad = Math.max(range * 0.08, 0.5);
     return { min: min - pad, max: max + pad };
-  }, [sanitizedOhlc, adjustedPatterns, selectedPattern]);
+  }, [rangeOhlc, adjustedPatterns, selectedPattern]);
 
   const maxVolume = useMemo(() => {
     return Math.max(1, ...visibleOhlc.map((c) => c.volume || 0));
@@ -344,10 +341,15 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
     [margin.left, candleSpacing, leftPad, visibleOhlc.length]
   );
 
-  const hoveredCandle = hoveredIndex !== null ? sanitizedOhlc[hoveredIndex] : null;
-  const lastCandle = sanitizedOhlc.length > 0 ? sanitizedOhlc[sanitizedOhlc.length - 1] : null;
-  const displayCandleRaw = hoveredIndex !== null ? visibleOhlc[hoveredIndex] : (visibleOhlc.length > 0 ? visibleOhlc[visibleOhlc.length - 1] : null);
+  const hoveredCandle = hoveredIndex !== null ? normalizedOhlc[hoveredIndex] : null;
+  const lastCandle = normalizedOhlc.length > 0 ? normalizedOhlc[normalizedOhlc.length - 1] : null;
+  const displayCandleRaw = hoveredIndex !== null ? normalizedOhlc[hoveredIndex] : (normalizedOhlc.length > 0 ? normalizedOhlc[normalizedOhlc.length - 1] : null);
   const displayCandle = displayCandleRaw || hoveredCandle || lastCandle;
+  const displayClose = Number.isFinite(liveSpotPrice as number)
+    ? (liveSpotPrice as number)
+    : (displayCandle?.close ?? 0);
+  const displayOpen = displayCandle?.open ?? displayClose;
+  const closeIsBull = displayClose >= displayOpen;
   const currentVwap = visibleVwap.length > 0 ? visibleVwap[visibleVwap.length - 1] : null;
 
   const gridLines = useMemo(() => {
@@ -413,9 +415,12 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
                 <span className="text-muted-foreground">L</span>
                 <span className="text-red-300">{formatPrice(displayCandle.low)}</span>
                 <span className="text-muted-foreground">C</span>
-                <span className={displayCandle.close >= displayCandle.open ? "text-cyan-300 font-bold" : "text-red-300 font-bold"}>
-                  {formatPrice(displayCandle.close)}
+                <span className={closeIsBull ? "text-cyan-300 font-bold" : "text-red-300 font-bold"}>
+                  {formatPrice(displayClose)}
                 </span>
+                {Number.isFinite(liveSpotPrice as number) && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300/80">LIVE</span>
+                )}
                 {currentVwap && (
                   <>
                     <span className="text-muted-foreground">VWAP</span>
@@ -564,7 +569,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
               />
             )}
 
-            {sanitizedOhlc.map((candle, i) => {
+            {normalizedOhlc.map((candle, i) => {
               const cx = xForIndex(i);
               const isBull = candle.close >= candle.open;
               const bodyColor = isBull ? BULL_COLOR : BEAR_COLOR;

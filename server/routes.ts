@@ -69,9 +69,104 @@ export async function registerRoutes(
   const BEST_PLAY_FAST_CACHE_TTL_MS = 15_000;
   const BEST_PLAY_STALE_FALLBACK_MS = 10 * 60 * 1000;
   const BEST_PLAY_YAHOO_COOLDOWN_MS = 60 * 1000;
+  const SIMULATED_ANALYZE_CACHE_TTL_MS = 45_000;
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
+  const analyzePayloadCache = new Map<string, { payload: any; timestamp: number; isSimulated: boolean }>();
+
+  const timeframeMs = (timeframe: string): number | null => {
+    const tf = String(timeframe ?? '').toLowerCase();
+    switch (tf) {
+      case '1m': return 60_000;
+      case '5m': return 5 * 60_000;
+      case '15m': return 15 * 60_000;
+      case '30m': return 30 * 60_000;
+      case '1h': return 60 * 60_000;
+      case '2h': return 2 * 60 * 60_000;
+      case '4h': return 4 * 60 * 60_000;
+      case '1d': return 24 * 60 * 60_000;
+      default: return null;
+    }
+  };
+
+  const getStablePatternCandles = (candles: any[], timeframe: string): any[] => {
+    if (!Array.isArray(candles) || candles.length < 3) return Array.isArray(candles) ? candles : [];
+
+    const tfMs = timeframeMs(timeframe);
+    if (!tfMs) return candles;
+
+    const last = candles[candles.length - 1];
+    const lastMs = Number(last?.timeMs)
+      || (Number.isFinite(last?.time) ? Number(last.time) * 1000 : Number.NaN);
+
+    if (!Number.isFinite(lastMs)) return candles;
+
+    // Keep pattern geometry stable by excluding the in-flight candle until it closes.
+    const isClosed = Date.now() >= (lastMs + tfMs - 2_000);
+    return isClosed ? candles : candles.slice(0, -1);
+  };
+
+  const getFormingPatternFallback = (candles: any[]): any[] => {
+    if (!Array.isArray(candles) || candles.length < 24) return [];
+
+    const lookback = candles.slice(-24);
+    const half = Math.floor(lookback.length / 2);
+    const first = lookback.slice(0, half);
+    const second = lookback.slice(half);
+    if (first.length < 8 || second.length < 8) return [];
+
+    const firstHigh = Math.max(...first.map((c) => Number(c.high)));
+    const firstLow = Math.min(...first.map((c) => Number(c.low)));
+    const secondHigh = Math.max(...second.map((c) => Number(c.high)));
+    const secondLow = Math.min(...second.map((c) => Number(c.low)));
+
+    if (![firstHigh, firstLow, secondHigh, secondLow].every(Number.isFinite)) return [];
+
+    const firstRange = firstHigh - firstLow;
+    const secondRange = secondHigh - secondLow;
+    if (firstRange <= 0 || secondRange <= 0) return [];
+
+    // Only emit a fallback if range is tightening (forming compression).
+    if (secondRange >= firstRange * 0.9) return [];
+
+    const risingLows = secondLow > firstLow;
+    const fallingHighs = secondHigh < firstHigh;
+
+    let type: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    let name = 'Compression Coil (forming)';
+
+    if (risingLows && !fallingHighs) {
+      type = 'bullish';
+      name = 'Ascending Compression (forming)';
+    } else if (fallingHighs && !risingLows) {
+      type = 'bearish';
+      name = 'Descending Compression (forming)';
+    } else if (risingLows && fallingHighs) {
+      type = 'neutral';
+      name = 'Triangle Compression (forming)';
+    }
+
+    const startIndex = Math.max(0, candles.length - lookback.length);
+    const endIndex = candles.length - 1;
+    const breakoutLevel = type === 'bearish' ? secondLow : secondHigh;
+    const stopLoss = type === 'bearish' ? secondHigh : secondLow;
+    const range = Math.max(0.01, secondRange);
+
+    return [{
+      name,
+      type,
+      category: 'continuation',
+      confidence: 58,
+      description: 'Range compression detected - setup is forming and needs breakout confirmation.',
+      startIndex,
+      endIndex,
+      pt1: type === 'bearish' ? breakoutLevel - range * 0.6 : breakoutLevel + range * 0.6,
+      pt2: type === 'bearish' ? breakoutLevel - range * 1.1 : breakoutLevel + range * 1.1,
+      stopLoss,
+      strengthWeight: 0.58,
+    }];
+  };
 
   const resolveFallbackSpotPrice = async (
     symbol: string,
@@ -106,6 +201,7 @@ export async function registerRoutes(
 
       const upperSymbol = symbol.toUpperCase();
       const tf = timeframe || "15m";
+      const analyzeCacheKey = `${upperSymbol}-${tf}`;
       
       // Fetch live spot price first - this is always needed
       let spotPrice: number | undefined;
@@ -141,6 +237,28 @@ export async function registerRoutes(
           prevDayRth: liveResult.prevDayRth,
         };
       } else {
+        const cachedAnalyze = analyzePayloadCache.get(analyzeCacheKey);
+        if (cachedAnalyze) {
+          const cachedPayload = cachedAnalyze.payload;
+          const cacheAgeMs = Date.now() - cachedAnalyze.timestamp;
+          const canReuseSimulated = cachedAnalyze.isSimulated && cacheAgeMs <= SIMULATED_ANALYZE_CACHE_TTL_MS;
+
+          if (!cachedAnalyze.isSimulated || canReuseSimulated) {
+            const cacheSourceLabel = cachedAnalyze.isSimulated
+              ? "cached-simulated-analysis"
+              : "cached-analysis";
+
+            return res.json({
+              ...cachedPayload,
+              lastPrice: spotPrice ?? cachedPayload.lastPrice,
+              isLive: false,
+              dataSource: liveResult.error
+                ? `${cacheSourceLabel} (${liveResult.error})`
+                : cacheSourceLabel,
+            });
+          }
+        }
+
         if (spotPrice == null) {
           spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
         }
@@ -159,6 +277,7 @@ export async function registerRoutes(
       );
       
       const engineOutput = analyzeMarket(ohlc);
+      const isSimulatedData = String(dataSource).toLowerCase().startsWith("simulated");
       
       // Use live spot price if available, otherwise fall back to analysis lastPrice
       const finalPrice = spotPrice ?? analysis.lastPrice;
@@ -181,15 +300,43 @@ export async function registerRoutes(
         sessionSplit
       );
       
-      const allPatterns = detectAllPatterns(ohlc, tf);
-      const drawablePatterns = convertToDrawablePatterns(allPatterns, ohlc, tf);
+      const patternCandles = getStablePatternCandles(ohlc, tf);
+      const detectedPatterns = patternCandles.length >= 5
+        ? detectAllPatterns(patternCandles, tf)
+        : [];
+      const fallbackPatterns = detectedPatterns.length === 0
+        ? getFormingPatternFallback(patternCandles)
+        : [];
+      const basePatterns = detectedPatterns.length > 0 ? detectedPatterns : fallbackPatterns;
+      const allPatterns = isSimulatedData
+        ? basePatterns.map((pattern) => ({
+            ...pattern,
+            confidence: Math.max(36, Math.round((pattern.confidence ?? 0) * 0.65)),
+          }))
+        : basePatterns;
+      const drawablePatterns = convertToDrawablePatterns(allPatterns, patternCandles, tf);
       const drawableNames = new Set(drawablePatterns.map(d => d.name));
-      const normalizedPats = normalizePatterns(allPatterns, ohlc)
+      const normalizedPats = normalizePatterns(allPatterns, patternCandles)
         .filter(p => drawableNames.has(p.name));
-      const patternSignal = computePatternFusionSignal(normalizedPats);
+      let patternSignal = computePatternFusionSignal(normalizedPats);
+      if (isSimulatedData) {
+        if (normalizedPats.length > 0) {
+          patternSignal = {
+            ...patternSignal,
+            confidence: Math.max(0, Math.round(patternSignal.confidence * 0.55)),
+            reasons: [...patternSignal.reasons, "Provisional: fallback candles in use"],
+            howToTrade: [...patternSignal.howToTrade, "Wait for live candle confirmation before taking entry."],
+          };
+        } else {
+          patternSignal = {
+            ...patternSignal,
+            reasons: [...patternSignal.reasons, "Fallback candles in use; forming-pattern visibility may be limited."],
+          };
+        }
+      }
       const gapAnalysis = analyzeGaps(ohlc);
 
-      res.json({
+      const payload = {
         ...analysis,
         lastPrice: finalPrice,
         isLive,
@@ -206,7 +353,18 @@ export async function registerRoutes(
         normalizedPatterns: normalizedPats,
         patternSignal,
         gapAnalysis,
-      });
+      };
+
+      const existingAnalyzeCache = analyzePayloadCache.get(analyzeCacheKey);
+      if (!isSimulatedData || !existingAnalyzeCache || existingAnalyzeCache.isSimulated) {
+        analyzePayloadCache.set(analyzeCacheKey, {
+          payload,
+          timestamp: Date.now(),
+          isSimulated: isSimulatedData,
+        });
+      }
+
+      res.json(payload);
     } catch (error) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: "Failed to analyze symbol" });
@@ -1158,11 +1316,11 @@ export async function registerRoutes(
         try {
           const result = await fetchLiveOHLC(upperSymbol, tf, "FULL");
           if (result.data.length > 0) {
-            return { tf, ohlc: result.data };
+            return { tf, ohlc: result.data, isSimulated: false };
           }
-          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice) };
+          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice), isSimulated: true };
         } catch (e) {
-          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice) };
+          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice), isSimulated: true };
         }
       });
 
@@ -1172,9 +1330,12 @@ export async function registerRoutes(
       const ohlcByTF: Partial<Record<FusionTimeframe, any[]>> = {};
       const patternsByTF: Partial<Record<FusionTimeframe, FusionPatternResult[]>> = {};
 
-      for (const { tf, ohlc } of ohlcResults) {
+      for (const { tf, ohlc, isSimulated } of ohlcResults) {
         ohlcByTF[tf] = ohlc;
-        const patterns = detectAllPatterns(ohlc, tf);
+        const patternCandles = getStablePatternCandles(ohlc, tf);
+        const patterns = !isSimulated && patternCandles.length >= 5
+          ? detectAllPatterns(patternCandles, tf)
+          : [];
         patternsByTF[tf] = patterns.map(p => ({
           name: p.name,
           type: p.type as 'bullish' | 'bearish' | 'neutral',

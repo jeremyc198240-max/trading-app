@@ -2,7 +2,7 @@ import { analyzeSymbol, generateSampleOHLC } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, type PatternResult } from "./patterns";
 import { runMonsterOTMEngine } from "./monsterOtmEngine";
-import { recordBreakoutAlert, updateBreakoutAlertOutcomes } from "./breakoutAlertHistory";
+import { getBreakoutAlertLog, getBreakoutAlertSummary, recordBreakoutAlert, updateBreakoutAlertOutcomes } from "./breakoutAlertHistory";
 
 interface OHLC {
 	open: number;
@@ -59,6 +59,11 @@ interface ScannerResult {
 	warnings?: string[];
 	signalQuality?: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE";
 	compression?: CompressionSnapshot;
+	tvRsi?: number;
+	tvAdx?: number;
+	tvRecommendAll?: number;
+	tvTrendDirection?: DirectionalBias | "neutral";
+	tvTrendStrength?: number;
 }
 
 interface ScannerStatus {
@@ -66,6 +71,37 @@ interface ScannerStatus {
 	lastScanTime: number;
 	watchlistCount: number;
 	resultCount: number;
+}
+
+interface TrendContext {
+	trendDirection: DirectionalBias | "neutral";
+	trendStrength: number;
+	ema10: number;
+	ema20: number;
+	ema50: number;
+}
+
+interface TradingViewSnapshot {
+	close: number | null;
+	change: number | null;
+	rsi: number | null;
+	adx: number | null;
+	ema10: number | null;
+	ema20: number | null;
+	ema50: number | null;
+	macd: number | null;
+	macdSignal: number | null;
+	vwap: number | null;
+	recommendAll: number | null;
+	fetchedAt: number;
+}
+
+interface TradingViewSignalContext {
+	scoreBias: number;
+	warnings: string[];
+	trendAlignment: "aligned" | "conflict" | "neutral";
+	trendDirection: DirectionalBias | "neutral";
+	trendStrength: number;
 }
 
 interface SymbolScanState {
@@ -86,6 +122,65 @@ const DEFAULT_WATCHLIST = [
 
 const DEFAULT_TIMEFRAME = "15m";
 const SCAN_INTERVAL_MS = 30_000;
+const ADAPTIVE_TUNING_CACHE_MS = 90_000;
+const TRADINGVIEW_SCAN_CACHE_MS = 25_000;
+const TRADINGVIEW_SCAN_ENDPOINT = "https://scanner.tradingview.com/america/scan";
+const TRADINGVIEW_COLUMNS = [
+	"name",
+	"close",
+	"change",
+	"RSI",
+	"ADX",
+	"EMA10",
+	"EMA20",
+	"EMA50",
+	"MACD.macd",
+	"MACD.signal",
+	"VWAP",
+	"Recommend.All",
+] as const;
+const TRADINGVIEW_EXCHANGE_BY_SYMBOL: Record<string, string> = {
+	SPY: "AMEX",
+};
+
+type TunableSignal = Exclude<BreakoutSignal, null>;
+type DirectionalBias = "bullish" | "bearish";
+
+interface AdaptiveBreakoutTuning {
+	breakoutVolumeMin: number;
+	expansionMomentumMin: number;
+	momentumSignalMin: number;
+	qualityHighScoreMin: number;
+	qualityMediumScoreMin: number;
+	globalScoreBias: number;
+	signalScoreBias: Partial<Record<TunableSignal, number>>;
+	signalQualityScoreOffset: Partial<Record<TunableSignal, number>>;
+	signalMomentumFloor: Partial<Record<TunableSignal, number>>;
+	directionalVolumeOffset: Record<DirectionalBias, number>;
+	directionalMomentumOffset: Record<DirectionalBias, number>;
+	directionalScoreBias: Record<DirectionalBias, number>;
+	bearishBreakdownExtraVolumeMin: number;
+	lowAdxQualityDemotion: number;
+	hourlyScoreBias: Partial<Record<number, number>>;
+}
+
+const DEFAULT_ADAPTIVE_TUNING: AdaptiveBreakoutTuning = {
+	breakoutVolumeMin: 1.1,
+	expansionMomentumMin: 35,
+	momentumSignalMin: 45,
+	qualityHighScoreMin: 65,
+	qualityMediumScoreMin: 45,
+	globalScoreBias: 0,
+	signalScoreBias: {},
+	signalQualityScoreOffset: {},
+	signalMomentumFloor: {},
+	directionalVolumeOffset: { bullish: 0, bearish: 0 },
+	directionalMomentumOffset: { bullish: 0, bearish: 0 },
+	directionalScoreBias: { bullish: 0, bearish: 0 },
+	bearishBreakdownExtraVolumeMin: 0,
+	lowAdxQualityDemotion: 1,
+	hourlyScoreBias: {},
+};
 
 const state = {
 	watchlist: new Set<string>(DEFAULT_WATCHLIST),
@@ -95,6 +190,9 @@ const state = {
 	scanInFlight: false,
 	symbolState: new Map<string, SymbolScanState>(),
 };
+
+let adaptiveTuningCache: { computedAt: number; value: AdaptiveBreakoutTuning } | null = null;
+let tradingViewIndicatorCache: { computedAt: number; bySymbol: Map<string, TradingViewSnapshot> } | null = null;
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
@@ -111,12 +209,29 @@ function toNumber(value: string | number | undefined): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function roundTo(value: number, decimals: number): number {
+	const factor = Math.pow(10, Math.max(0, decimals));
+	return Math.round(value * factor) / factor;
+}
+
 function normalizeSymbol(symbol: string): string {
 	return String(symbol ?? "")
 		.trim()
 		.toUpperCase()
 		.replace(/[^A-Z0-9.-]/g, "")
 		.slice(0, 10);
+}
+
+const nyHourFormatter = new Intl.DateTimeFormat("en-US", {
+	timeZone: "America/New_York",
+	hour: "2-digit",
+	hour12: false,
+});
+
+function getNyHour(ts: number): number {
+	const hourPart = nyHourFormatter.formatToParts(new Date(ts)).find((part) => part.type === "hour")?.value;
+	const hour = Number.parseInt(hourPart ?? "0", 10);
+	return Number.isFinite(hour) ? hour : 0;
 }
 
 function getCandleCount(timeframe: string): number {
@@ -270,19 +385,500 @@ function computeRangeBreaks(candles: OHLC[]) {
 	};
 }
 
+function computeEMA(values: number[], period: number): number {
+	if (values.length === 0) return 0;
+	const k = 2 / (period + 1);
+	let ema = values[0];
+	for (let i = 1; i < values.length; i++) {
+		ema = values[i] * k + ema * (1 - k);
+	}
+	return ema;
+}
+
+function computeTrendContext(candles: OHLC[]): TrendContext {
+	const closes = candles.map((c) => c.close).filter((v) => Number.isFinite(v) && v > 0);
+	if (closes.length < 50) {
+		return {
+			trendDirection: "neutral",
+			trendStrength: 0,
+			ema10: 0,
+			ema20: 0,
+			ema50: 0,
+		};
+	}
+
+	const sample = closes.slice(-120);
+	const ema10 = computeEMA(sample, 10);
+	const ema20 = computeEMA(sample, 20);
+	const ema50 = computeEMA(sample, 50);
+
+	let trendDirection: DirectionalBias | "neutral" = "neutral";
+	if (ema10 > ema20 && ema20 > ema50) trendDirection = "bullish";
+	if (ema10 < ema20 && ema20 < ema50) trendDirection = "bearish";
+
+	const base = ema50 > 0 ? Math.abs((ema10 - ema50) / ema50) * 100 : 0;
+	const trendStrength = Math.round(clamp(base * 110, 0, 100));
+
+	return {
+		trendDirection,
+		trendStrength,
+		ema10,
+		ema20,
+		ema50,
+	};
+}
+
+function parseTvNumber(value: unknown): number | null {
+	const n = Number(value);
+	return Number.isFinite(n) ? n : null;
+}
+
+function toTradingViewTicker(symbol: string): string {
+	const upper = normalizeSymbol(symbol);
+	const exchange = TRADINGVIEW_EXCHANGE_BY_SYMBOL[upper] ?? "NASDAQ";
+	return `${exchange}:${upper}`;
+}
+
+function extractSymbolFromTicker(ticker: string): string {
+	const upper = String(ticker ?? "").toUpperCase();
+	if (!upper.includes(":")) return normalizeSymbol(upper);
+	return normalizeSymbol(upper.split(":").pop() ?? "");
+}
+
+function resolveSignalDirection(
+	breakoutSignal: BreakoutSignal,
+	expansionDirection: "bullish" | "bearish" | null,
+	momentumStrength: number,
+): DirectionalBias | null {
+	if (breakoutSignal === "BREAKOUT") return "bullish";
+	if (breakoutSignal === "BREAKDOWN") return "bearish";
+	if ((breakoutSignal === "EXPANSION" || breakoutSignal === "MOMENTUM") && expansionDirection) {
+		return expansionDirection;
+	}
+	if (breakoutSignal === "EXPANSION" || breakoutSignal === "MOMENTUM") {
+		return momentumStrength >= 0 ? "bullish" : "bearish";
+	}
+	return null;
+}
+
+async function getTradingViewIndicatorMap(symbols: string[]): Promise<Map<string, TradingViewSnapshot>> {
+	const unique = Array.from(new Set(symbols.map(normalizeSymbol).filter(Boolean)));
+	if (unique.length === 0) return new Map();
+
+	const selectFromCache = (): Map<string, TradingViewSnapshot> => {
+		const subset = new Map<string, TradingViewSnapshot>();
+		if (!tradingViewIndicatorCache) return subset;
+		for (const symbol of unique) {
+			const snapshot = tradingViewIndicatorCache.bySymbol.get(symbol);
+			if (snapshot) subset.set(symbol, snapshot);
+		}
+		return subset;
+	};
+
+	const now = Date.now();
+	if (tradingViewIndicatorCache && now - tradingViewIndicatorCache.computedAt <= TRADINGVIEW_SCAN_CACHE_MS) {
+		const cached = selectFromCache();
+		if (cached.size === unique.length) return cached;
+	}
+
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 2500);
+
+		const response = await fetch(TRADINGVIEW_SCAN_ENDPOINT, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json",
+			},
+			body: JSON.stringify({
+				symbols: {
+					tickers: unique.map(toTradingViewTicker),
+					query: { types: [] as string[] },
+				},
+				columns: Array.from(TRADINGVIEW_COLUMNS),
+			}),
+			signal: controller.signal,
+		});
+
+		clearTimeout(timeout);
+		if (!response.ok) {
+			return selectFromCache();
+		}
+
+		const payload = (await response.json()) as {
+			data?: Array<{ s?: string; d?: unknown[] }>;
+		};
+
+		const fetched = new Map<string, TradingViewSnapshot>();
+		for (const row of Array.isArray(payload?.data) ? payload.data : []) {
+			const symbol = extractSymbolFromTicker(String(row?.s ?? ""));
+			if (!symbol) continue;
+
+			const d = Array.isArray(row?.d) ? row.d : [];
+			const snapshot: TradingViewSnapshot = {
+				close: parseTvNumber(d[1]),
+				change: parseTvNumber(d[2]),
+				rsi: parseTvNumber(d[3]),
+				adx: parseTvNumber(d[4]),
+				ema10: parseTvNumber(d[5]),
+				ema20: parseTvNumber(d[6]),
+				ema50: parseTvNumber(d[7]),
+				macd: parseTvNumber(d[8]),
+				macdSignal: parseTvNumber(d[9]),
+				vwap: parseTvNumber(d[10]),
+				recommendAll: parseTvNumber(d[11]),
+				fetchedAt: now,
+			};
+			fetched.set(symbol, snapshot);
+		}
+
+		if (fetched.size > 0 || !tradingViewIndicatorCache) {
+			const merged = new Map<string, TradingViewSnapshot>(tradingViewIndicatorCache?.bySymbol ?? []);
+			for (const [symbol, snapshot] of fetched) {
+				merged.set(symbol, snapshot);
+			}
+			tradingViewIndicatorCache = {
+				computedAt: now,
+				bySymbol: merged,
+			};
+		}
+
+		return selectFromCache();
+	} catch {
+		return selectFromCache();
+	}
+}
+
+function deriveTradingViewSignalContext(
+	snapshot: TradingViewSnapshot | undefined,
+	breakoutSignal: BreakoutSignal,
+	expansionDirection: "bullish" | "bearish" | null,
+	momentumStrength: number,
+): TradingViewSignalContext {
+	const base: TradingViewSignalContext = {
+		scoreBias: 0,
+		warnings: [],
+		trendAlignment: "neutral",
+		trendDirection: "neutral",
+		trendStrength: 0,
+	};
+	if (!snapshot) return base;
+
+	let bullVotes = 0;
+	let bearVotes = 0;
+
+	if (
+		snapshot.ema10 != null &&
+		snapshot.ema20 != null &&
+		snapshot.ema50 != null
+	) {
+		if (snapshot.ema10 > snapshot.ema20 && snapshot.ema20 > snapshot.ema50) bullVotes += 2;
+		else if (snapshot.ema10 < snapshot.ema20 && snapshot.ema20 < snapshot.ema50) bearVotes += 2;
+	}
+
+	if (snapshot.macd != null && snapshot.macdSignal != null) {
+		if (snapshot.macd > snapshot.macdSignal) bullVotes += 1;
+		else if (snapshot.macd < snapshot.macdSignal) bearVotes += 1;
+	}
+
+	if (snapshot.recommendAll != null) {
+		if (snapshot.recommendAll >= 0.2) bullVotes += 1;
+		else if (snapshot.recommendAll <= -0.2) bearVotes += 1;
+	}
+
+	if (snapshot.rsi != null) {
+		if (snapshot.rsi >= 56) bullVotes += 1;
+		else if (snapshot.rsi <= 44) bearVotes += 1;
+	}
+
+	let trendDirection: DirectionalBias | "neutral" = "neutral";
+	if (bullVotes - bearVotes >= 2) trendDirection = "bullish";
+	else if (bearVotes - bullVotes >= 2) trendDirection = "bearish";
+
+	const adx = snapshot.adx ?? 0;
+	const voteEdge = Math.abs(bullVotes - bearVotes);
+	const trendStrength = Math.round(
+		clamp(voteEdge * 18 + clamp(adx - 14, 0, 30) * 1.6, 0, 100),
+	);
+
+	const signalDirection = resolveSignalDirection(
+		breakoutSignal,
+		expansionDirection,
+		momentumStrength,
+	);
+
+	let trendAlignment: "aligned" | "conflict" | "neutral" = "neutral";
+	let scoreBias = 0;
+	const warnings = new Set<string>();
+
+	if (signalDirection && trendDirection !== "neutral") {
+		if (signalDirection === trendDirection) {
+			trendAlignment = "aligned";
+			scoreBias += Math.round(clamp(1 + trendStrength / 40, 1, 4));
+		} else {
+			trendAlignment = "conflict";
+			scoreBias -= Math.round(clamp(2 + trendStrength / 24, 2, 7));
+			warnings.add("TV_TREND_CONFLICT");
+		}
+	}
+
+	if (
+		signalDirection &&
+		adx > 0 &&
+		adx < 16 &&
+		(breakoutSignal === "BREAKOUT" ||
+			breakoutSignal === "BREAKDOWN" ||
+			breakoutSignal === "EXPANSION" ||
+			breakoutSignal === "MOMENTUM")
+	) {
+		scoreBias -= 2;
+		warnings.add("TV_LOW_ADX");
+	}
+
+	if (signalDirection === "bullish" && snapshot.rsi != null && snapshot.rsi >= 72) {
+		scoreBias -= 2;
+		warnings.add("TV_RSI_OVERBOUGHT");
+	}
+	if (signalDirection === "bearish" && snapshot.rsi != null && snapshot.rsi <= 28) {
+		scoreBias -= 2;
+		warnings.add("TV_RSI_OVERSOLD");
+	}
+
+	if (signalDirection && snapshot.recommendAll != null) {
+		if (signalDirection === "bullish" && snapshot.recommendAll <= -0.25) {
+			scoreBias -= 2;
+			warnings.add("TV_RECOMMEND_OPPOSE");
+		}
+		if (signalDirection === "bearish" && snapshot.recommendAll >= 0.25) {
+			scoreBias -= 2;
+			warnings.add("TV_RECOMMEND_OPPOSE");
+		}
+	}
+
+	return {
+		scoreBias: Math.round(clamp(scoreBias, -10, 6)),
+		warnings: Array.from(warnings),
+		trendAlignment,
+		trendDirection,
+		trendStrength,
+	};
+}
+
+function getAdaptiveBreakoutTuning(now: number = Date.now()): AdaptiveBreakoutTuning {
+	if (adaptiveTuningCache && now - adaptiveTuningCache.computedAt <= ADAPTIVE_TUNING_CACHE_MS) {
+		return adaptiveTuningCache.value;
+	}
+
+	try {
+		const summary = getBreakoutAlertSummary(48);
+		const overallWins = summary.sample?.wins ?? 0;
+		const overallLosses = summary.sample?.losses ?? 0;
+		const overallDecisive = overallWins + overallLosses;
+
+		if (overallDecisive < 8) {
+			adaptiveTuningCache = { computedAt: now, value: DEFAULT_ADAPTIVE_TUNING };
+			return DEFAULT_ADAPTIVE_TUNING;
+		}
+
+		const overallWinRate = overallWins / Math.max(1, overallDecisive);
+
+		const breakoutSlice = summary.bySignal?.BREAKOUT;
+		const breakdownSlice = summary.bySignal?.BREAKDOWN;
+		const directionalWins = (breakoutSlice?.wins ?? 0) + (breakdownSlice?.wins ?? 0);
+		const directionalLosses = (breakoutSlice?.losses ?? 0) + (breakdownSlice?.losses ?? 0);
+		const directionalDecisive = directionalWins + directionalLosses;
+		const directionalWinRate = directionalDecisive > 0
+			? directionalWins / directionalDecisive
+			: overallWinRate;
+
+		const globalScoreBias = Math.round(clamp((overallWinRate - 0.58) * 18, -4, 3));
+		const baseVolumeFloor = clamp(1.1 + (0.58 - overallWinRate) * 0.35, 1.0, 1.3);
+		const directionalVolumeAdjust = clamp((0.58 - directionalWinRate) * 0.55, -0.06, 0.15);
+
+		const signalScoreBias: Partial<Record<TunableSignal, number>> = {};
+		const signalQualityScoreOffset: Partial<Record<TunableSignal, number>> = {};
+		const signalMomentumFloor: Partial<Record<TunableSignal, number>> = {};
+		const directionalVolumeOffset: Record<DirectionalBias, number> = {
+			bullish: 0,
+			bearish: 0,
+		};
+		const directionalMomentumOffset: Record<DirectionalBias, number> = {
+			bullish: 0,
+			bearish: 0,
+		};
+		const directionalScoreBias: Record<DirectionalBias, number> = {
+			bullish: 0,
+			bearish: 0,
+		};
+		const hourlyScoreBias: Partial<Record<number, number>> = {};
+		const trackedSignals: TunableSignal[] = [
+			"BREAKOUT",
+			"BREAKDOWN",
+			"SQUEEZE",
+			"EXPANSION",
+			"BUILDING",
+			"MOMENTUM",
+		];
+
+		for (const signal of trackedSignals) {
+			const slice = summary.bySignal?.[signal];
+			if (!slice) continue;
+
+			const signalDecisive = (slice.wins ?? 0) + (slice.losses ?? 0);
+			if (signalDecisive < 3) continue;
+
+			const signalWinRate = (slice.wins ?? 0) / Math.max(1, signalDecisive);
+			const delta = signalWinRate - overallWinRate;
+			const underperformance = overallWinRate - signalWinRate;
+
+			let bias = 0;
+			if (delta <= -0.12) bias = -4;
+			else if (delta <= -0.06) bias = -2;
+			else if (delta >= 0.12) bias = 3;
+			else if (delta >= 0.06) bias = 1;
+
+			const completed = slice.completed ?? signalDecisive;
+			const missRate = (slice.missed ?? 0) / Math.max(1, completed);
+			if (missRate > 0.25) bias -= 1;
+			if (signalDecisive >= 10 && bias !== 0) bias += bias > 0 ? 1 : -1;
+
+			signalScoreBias[signal] = Math.round(clamp(bias, -6, 5));
+
+			let qualityOffset = 0;
+			if (underperformance >= 0.1) qualityOffset = 6;
+			else if (underperformance >= 0.06) qualityOffset = 4;
+			else if (underperformance >= 0.03) qualityOffset = 2;
+			else if (underperformance <= -0.08) qualityOffset = -3;
+			else if (underperformance <= -0.04) qualityOffset = -2;
+			if (qualityOffset !== 0) {
+				signalQualityScoreOffset[signal] = qualityOffset;
+			}
+
+			if (signal === "BREAKOUT" || signal === "BREAKDOWN" || signal === "EXPANSION" || signal === "MOMENTUM") {
+				const baseFloor =
+					signal === "BREAKDOWN"
+						? 12
+						: signal === "BREAKOUT"
+							? 10
+							: signal === "MOMENTUM"
+								? 24
+								: 22;
+				const floorAdjust = underperformance >= 0.06 ? 4 : underperformance >= 0.03 ? 2 : underperformance <= -0.06 ? -2 : 0;
+				signalMomentumFloor[signal] = Math.round(clamp(baseFloor + floorAdjust, 6, 36));
+			}
+		}
+
+		for (const direction of ["bullish", "bearish"] as DirectionalBias[]) {
+			const slice = summary.byDirection?.[direction];
+			if (!slice) continue;
+
+			const decisive = (slice.wins ?? 0) + (slice.losses ?? 0);
+			if (decisive < 5) continue;
+
+			const directionWinRate = (slice.wins ?? 0) / Math.max(1, decisive);
+			const confidence = clamp((decisive - 4) / 10, 0, 1);
+			const drift = overallWinRate - directionWinRate;
+
+			directionalVolumeOffset[direction] = roundTo(
+				clamp(drift * 0.3 * confidence, -0.06, 0.08),
+				2,
+			);
+			directionalMomentumOffset[direction] = Math.round(
+				clamp(drift * 20 * confidence, -4, 6),
+			);
+			directionalScoreBias[direction] = Math.round(
+				clamp(-drift * 14 * confidence, -3, 3),
+			);
+		}
+
+		const lookbackCutoff = now - 48 * 60 * 60 * 1000;
+		const scopedRows = getBreakoutAlertLog(2000).filter((row) => row.timestamp >= lookbackCutoff);
+		const hourlyStats = new Map<number, { wins: number; losses: number }>();
+		for (const row of scopedRows) {
+			const decisive = row.outcome === "win_t1" || row.outcome === "win_t2" || row.outcome === "loss";
+			if (!decisive) continue;
+			const hour = getNyHour(row.timestamp);
+			const current = hourlyStats.get(hour) ?? { wins: 0, losses: 0 };
+			if (row.outcome === "loss") current.losses += 1;
+			else current.wins += 1;
+			hourlyStats.set(hour, current);
+		}
+		for (const [hour, stats] of hourlyStats.entries()) {
+			const decisive = stats.wins + stats.losses;
+			if (decisive < 12) continue;
+			const winRate = stats.wins / Math.max(1, decisive);
+			if (winRate <= 0.47) hourlyScoreBias[hour] = -6;
+			else if (winRate <= 0.52) hourlyScoreBias[hour] = -4;
+			else if (winRate >= 0.64) hourlyScoreBias[hour] = 2;
+		}
+
+		const breakdownDecisive = (breakdownSlice?.wins ?? 0) + (breakdownSlice?.losses ?? 0);
+		const breakdownWinRate = breakdownDecisive > 0
+			? (breakdownSlice?.wins ?? 0) / Math.max(1, breakdownDecisive)
+			: overallWinRate;
+		const bearishBreakdownExtraVolumeMin = roundTo(
+			clamp((overallWinRate - breakdownWinRate) * 0.9, 0, 0.18),
+			2,
+		);
+		if (breakdownDecisive >= 8 && breakdownWinRate < overallWinRate - 0.04) {
+			directionalMomentumOffset.bearish = Math.round(
+				clamp(directionalMomentumOffset.bearish + 2, -4, 8),
+			);
+		}
+
+		const bearishSlice = summary.byDirection?.bearish;
+		const bearishDecisive = (bearishSlice?.wins ?? 0) + (bearishSlice?.losses ?? 0);
+		const bearishWinRate = bearishDecisive > 0
+			? (bearishSlice?.wins ?? 0) / Math.max(1, bearishDecisive)
+			: overallWinRate;
+		const lowAdxQualityDemotion =
+			overallWinRate < 0.56 || bearishWinRate < overallWinRate - 0.05 || breakdownWinRate < overallWinRate - 0.05
+				? 2
+				: 1;
+
+		const tuned: AdaptiveBreakoutTuning = {
+			breakoutVolumeMin: roundTo(clamp(baseVolumeFloor + directionalVolumeAdjust, 1.0, 1.35), 2),
+			expansionMomentumMin: Math.round(clamp(35 + (0.56 - overallWinRate) * 24, 30, 44)),
+			momentumSignalMin: Math.round(clamp(45 + (0.56 - overallWinRate) * 28, 38, 55)),
+			qualityHighScoreMin: Math.round(clamp(65 + (0.55 - overallWinRate) * 18, 58, 74)),
+			qualityMediumScoreMin: Math.round(clamp(45 + (0.55 - overallWinRate) * 14, 38, 56)),
+			globalScoreBias,
+			signalScoreBias,
+			signalQualityScoreOffset,
+			signalMomentumFloor,
+			directionalVolumeOffset,
+			directionalMomentumOffset,
+			directionalScoreBias,
+			bearishBreakdownExtraVolumeMin,
+			lowAdxQualityDemotion,
+			hourlyScoreBias,
+		};
+
+		adaptiveTuningCache = { computedAt: now, value: tuned };
+		return tuned;
+	} catch {
+		adaptiveTuningCache = { computedAt: now, value: DEFAULT_ADAPTIVE_TUNING };
+		return DEFAULT_ADAPTIVE_TUNING;
+	}
+}
+
 function computeSignalAndSqueezeState(
 	symbol: string,
 	compression: CompressionSnapshot,
 	momentumStrength: number,
 	volumeSpike: number,
 	isNewHigh: boolean,
-	isNewLow: boolean
+	isNewLow: boolean,
+	tuning: AdaptiveBreakoutTuning,
+	trend: TrendContext
 ): {
 	breakoutSignal: BreakoutSignal;
 	breakoutScore: number;
 	expansionDirection: "bullish" | "bearish" | null;
 	wasInSqueeze: boolean;
 	squeezeCandles: number;
+	trendAlignment: "aligned" | "conflict" | "neutral";
 } {
 	const prev = state.symbolState.get(symbol) ?? {
 		inSqueeze: false,
@@ -301,21 +897,83 @@ function computeSignalAndSqueezeState(
 
 	const hasBreakoutUp = isNewHigh || compression.triggers.some((t) => t.includes("BREAKOUT UP"));
 	const hasBreakoutDown = isNewLow || compression.triggers.some((t) => t.includes("BREAKOUT DOWN"));
+	const breakoutVolumeMin = clamp(tuning.breakoutVolumeMin, 1, 1.5);
+	const expansionMomentumMin = Math.max(
+		20,
+		tuning.signalMomentumFloor.EXPANSION ?? tuning.expansionMomentumMin,
+	);
+	const momentumSignalMin = Math.max(
+		24,
+		tuning.signalMomentumFloor.MOMENTUM ?? tuning.momentumSignalMin,
+	);
+	const breakoutMomentumFloor = Math.max(
+		6,
+		tuning.signalMomentumFloor.BREAKOUT ?? 10,
+	);
+	const breakdownMomentumFloor = Math.max(
+		6,
+		tuning.signalMomentumFloor.BREAKDOWN ?? 12,
+	);
+	const bullishVolumeMin = clamp(
+		breakoutVolumeMin + tuning.directionalVolumeOffset.bullish,
+		1,
+		1.55,
+	);
+	const bearishVolumeMin = clamp(
+		breakoutVolumeMin + tuning.directionalVolumeOffset.bearish,
+		1,
+		1.55,
+	);
 
 	let expansionDirection: "bullish" | "bearish" | null = null;
 	if (hasBreakoutUp || momentumStrength >= 20) expansionDirection = "bullish";
 	if (hasBreakoutDown || momentumStrength <= -20) expansionDirection = "bearish";
+	const expansionMomentumDirection = hasBreakoutUp
+		? "bullish"
+		: hasBreakoutDown
+			? "bearish"
+			: momentumStrength >= 0
+				? "bullish"
+				: "bearish";
+	const expansionMomentumThreshold = Math.max(
+		20,
+		expansionMomentumMin + tuning.directionalMomentumOffset[expansionMomentumDirection],
+	);
+	const momentumDirection: DirectionalBias = momentumStrength >= 0 ? "bullish" : "bearish";
+	const momentumThreshold = Math.max(
+		24,
+		momentumSignalMin + tuning.directionalMomentumOffset[momentumDirection],
+	);
+	const momentumVolumeThreshold = clamp(
+		(momentumDirection === "bullish" ? bullishVolumeMin : bearishVolumeMin) + 0.1,
+		1.05,
+		1.7,
+	);
+	const counterTrendUpPenalty = trend.trendDirection === "bearish" ? 0.08 : 0;
+	const counterTrendDownPenalty = trend.trendDirection === "bullish" ? 0.08 : 0;
+	const breakoutUpVolumeMin = clamp(bullishVolumeMin + counterTrendUpPenalty, 1, 1.65);
+	const breakoutDownVolumeMin = clamp(
+		bearishVolumeMin + counterTrendDownPenalty + tuning.bearishBreakdownExtraVolumeMin,
+		1,
+		1.8,
+	);
+	const breakoutUpMomentumMin = trend.trendDirection === "bearish"
+		? Math.max(12, breakoutMomentumFloor + 4)
+		: breakoutMomentumFloor;
+	const breakoutDownMomentumMax = trend.trendDirection === "bullish"
+		? -Math.max(12, breakdownMomentumFloor + 4)
+		: -breakdownMomentumFloor;
 
 	let breakoutSignal: BreakoutSignal = null;
-	if (wasInSqueeze && (hasBreakoutUp || hasBreakoutDown || Math.abs(momentumStrength) >= 35)) {
+	if (wasInSqueeze && (hasBreakoutUp || hasBreakoutDown || Math.abs(momentumStrength) >= expansionMomentumThreshold)) {
 		breakoutSignal = "EXPANSION";
-	} else if (hasBreakoutUp && volumeSpike >= 1.1) {
+	} else if (hasBreakoutUp && volumeSpike >= breakoutUpVolumeMin && momentumStrength >= breakoutUpMomentumMin) {
 		breakoutSignal = "BREAKOUT";
-	} else if (hasBreakoutDown && volumeSpike >= 1.1) {
+	} else if (hasBreakoutDown && volumeSpike >= breakoutDownVolumeMin && momentumStrength <= breakoutDownMomentumMax) {
 		breakoutSignal = "BREAKDOWN";
 	} else if (inSqueeze && squeezeCandles >= 2) {
 		breakoutSignal = "SQUEEZE";
-	} else if (Math.abs(momentumStrength) >= 45 && volumeSpike >= 1.2) {
+	} else if (Math.abs(momentumStrength) >= momentumThreshold && volumeSpike >= momentumVolumeThreshold) {
 		breakoutSignal = "MOMENTUM";
 	} else if (compression.phase === "PREPARE" || compression.phase === "READY") {
 		breakoutSignal = "BUILDING";
@@ -331,6 +989,39 @@ function computeSignalAndSqueezeState(
 	else if (Math.abs(momentumStrength) >= 25) breakoutScore += 10;
 	if (breakoutSignal === "EXPANSION") breakoutScore += 16;
 	if (breakoutSignal === "BREAKOUT" || breakoutSignal === "BREAKDOWN") breakoutScore += 12;
+	let directionScoreBias = 0;
+	if (breakoutSignal === "BREAKOUT") directionScoreBias = tuning.directionalScoreBias.bullish;
+	else if (breakoutSignal === "BREAKDOWN") directionScoreBias = tuning.directionalScoreBias.bearish;
+	else if (
+		(breakoutSignal === "EXPANSION" || breakoutSignal === "MOMENTUM") &&
+		expansionDirection
+	) {
+		directionScoreBias = tuning.directionalScoreBias[expansionDirection];
+	}
+
+	let signalDirection: DirectionalBias | null = null;
+	if (breakoutSignal === "BREAKOUT") signalDirection = "bullish";
+	if (breakoutSignal === "BREAKDOWN") signalDirection = "bearish";
+	if ((breakoutSignal === "EXPANSION" || breakoutSignal === "MOMENTUM") && expansionDirection) {
+		signalDirection = expansionDirection;
+	}
+
+	let trendAlignment: "aligned" | "conflict" | "neutral" = "neutral";
+	let trendScoreBias = 0;
+	if (signalDirection && trend.trendDirection !== "neutral") {
+		if (signalDirection === trend.trendDirection) {
+			trendAlignment = "aligned";
+			trendScoreBias = Math.round(clamp(trend.trendStrength / 24, 1, 4));
+		} else {
+			trendAlignment = "conflict";
+			trendScoreBias = -Math.round(clamp(trend.trendStrength / 16, 2, 6));
+		}
+	}
+
+	const signalBias = breakoutSignal
+		? tuning.signalScoreBias[breakoutSignal as TunableSignal] ?? 0
+		: 0;
+	breakoutScore += tuning.globalScoreBias + signalBias + directionScoreBias + trendScoreBias;
 	breakoutScore = Math.round(clamp(breakoutScore, 0, 100));
 
 	state.symbolState.set(symbol, {
@@ -344,6 +1035,7 @@ function computeSignalAndSqueezeState(
 		expansionDirection,
 		wasInSqueeze,
 		squeezeCandles: breakoutSignal === "EXPANSION" ? prev.squeezeCandles : squeezeCandles,
+		trendAlignment,
 	};
 }
 
@@ -355,6 +1047,10 @@ function computeWarningsAndQuality(params: {
 	isNewLow: boolean;
 	breakoutScore: number;
 	cmfContribution: number;
+	tuning: AdaptiveBreakoutTuning;
+	trendAlignment: "aligned" | "conflict" | "neutral";
+	additionalWarnings?: string[];
+	timeWindowBias?: number;
 }): {
 	warnings: string[];
 	signalQuality: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE";
@@ -367,7 +1063,24 @@ function computeWarningsAndQuality(params: {
 		isNewLow,
 		breakoutScore,
 		cmfContribution,
+		tuning,
+		trendAlignment,
+		additionalWarnings,
+		timeWindowBias,
 	} = params;
+
+	const demoteQuality = (
+		quality: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE",
+		steps: number,
+	): "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE" => {
+		let next = quality;
+		for (let i = 0; i < Math.max(0, steps); i++) {
+			if (next === "HIGH") next = "MEDIUM";
+			else if (next === "MEDIUM") next = "LOW";
+			else if (next === "LOW") next = "UNRELIABLE";
+		}
+		return next;
+	};
 
 	const warnings: string[] = [];
 
@@ -378,28 +1091,81 @@ function computeWarningsAndQuality(params: {
 	if ((momentumStrength > 20 && cmfContribution < -1) || (momentumStrength < -20 && cmfContribution > 1)) {
 		warnings.push("CMF_DIVERGE");
 	}
+	if (trendAlignment === "conflict") warnings.push("TREND_CONFLICT");
 	if (breakoutSignal === "CONSOLIDATING") warnings.push("CONSOLIDATION");
 	if (breakoutSignal === "BUILDING" || breakoutSignal === "SQUEEZE") warnings.push("BUILDING_PRESSURE");
+	if ((timeWindowBias ?? 0) <= -3) warnings.push("WEAK_TIME_WINDOW");
+	for (const warning of additionalWarnings ?? []) {
+		if (!warnings.includes(warning)) warnings.push(warning);
+	}
+
+	if (breakoutSignal === "BREAKOUT" || breakoutSignal === "BREAKDOWN") {
+		const directionalFloor =
+			breakoutSignal === "BREAKOUT"
+				? tuning.signalMomentumFloor.BREAKOUT ?? 10
+				: tuning.signalMomentumFloor.BREAKDOWN ?? 12;
+		if (Math.abs(momentumStrength) < Math.max(6, directionalFloor)) {
+			warnings.push("WEAK_DIRECTIONAL_MOMENTUM");
+		}
+	}
+
+	const scoreOffset = breakoutSignal
+		? tuning.signalQualityScoreOffset[breakoutSignal as TunableSignal] ?? 0
+		: 0;
+	const highScoreMin = Math.round(clamp(tuning.qualityHighScoreMin + scoreOffset, 52, 86));
+	const mediumScoreMin = Math.round(
+		clamp(tuning.qualityMediumScoreMin + Math.round(scoreOffset * 0.75), 34, highScoreMin - 8),
+	);
+	const highVolumeMin = clamp(tuning.breakoutVolumeMin + 0.08, 1.1, 1.35);
+	const highMomentumMin = Math.max(
+		22,
+		Math.max(tuning.expansionMomentumMin - 10, (breakoutSignal ? tuning.signalMomentumFloor[breakoutSignal as TunableSignal] : 0) ?? 0),
+	);
 
 	let signalQuality: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE" = "LOW";
 
 	if (warnings.includes("CONFLICT_MOMENTUM") && warnings.includes("LOW_VOLUME")) {
 		signalQuality = "UNRELIABLE";
-	} else if (breakoutScore >= 65 && volumeSpike >= 1.2 && Math.abs(momentumStrength) >= 25) {
+	} else if (breakoutScore >= highScoreMin && volumeSpike >= highVolumeMin && Math.abs(momentumStrength) >= highMomentumMin) {
 		signalQuality = "HIGH";
-	} else if (breakoutScore >= 45) {
+	} else if (breakoutScore >= mediumScoreMin) {
 		signalQuality = "MEDIUM";
-	} else if (breakoutScore < 25) {
+	} else if (breakoutScore < Math.max(25, mediumScoreMin - 20)) {
 		signalQuality = "LOW";
+	}
+
+	if (trendAlignment === "conflict" && signalQuality === "HIGH") {
+		signalQuality = "MEDIUM";
+	}
+	if (warnings.includes("TV_TREND_CONFLICT")) {
+		signalQuality = demoteQuality(signalQuality, 1);
+		if (signalQuality === "MEDIUM" && breakoutScore < highScoreMin + 6) signalQuality = "LOW";
+	}
+	if (warnings.includes("TV_LOW_ADX")) {
+		signalQuality = demoteQuality(signalQuality, Math.max(1, tuning.lowAdxQualityDemotion));
+		if (breakoutSignal === "BREAKDOWN" && !warnings.includes("BEARISH_TREND_WEAK")) {
+			warnings.push("BEARISH_TREND_WEAK");
+		}
+	}
+	if (warnings.includes("WEAK_DIRECTIONAL_MOMENTUM") && signalQuality !== "UNRELIABLE") {
+		signalQuality = demoteQuality(signalQuality, 1);
+	}
+	if (warnings.includes("WEAK_TIME_WINDOW") && (timeWindowBias ?? 0) <= -4 && breakoutScore < highScoreMin + 10) {
+		signalQuality = demoteQuality(signalQuality, 1);
 	}
 
 	return { warnings, signalQuality };
 }
 
-async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerResult | null> {
+async function scanSymbol(
+	symbol: string,
+	timeframe: string,
+	tvSnapshotInput?: TradingViewSnapshot,
+): Promise<ScannerResult | null> {
 	try {
 		const upperSymbol = normalizeSymbol(symbol);
 		if (!upperSymbol) return null;
+		const tvSnapshot = tvSnapshotInput ?? (await getTradingViewIndicatorMap([upperSymbol])).get(upperSymbol);
 
 		const liveSpot = await fetchLiveSpot(upperSymbol).catch(() => {
 			const cached = getCachedSpot(upperSymbol);
@@ -452,6 +1218,8 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 		const momentumStrength = computeMomentumStrength(ohlc);
 		const volumeSpike = computeVolumeSpike(ohlc);
 		const { isNewHigh, isNewLow } = computeRangeBreaks(ohlc);
+		const trendContext = computeTrendContext(ohlc);
+		const adaptiveTuning = getAdaptiveBreakoutTuning();
 
 		const breakoutState = computeSignalAndSqueezeState(
 			upperSymbol,
@@ -459,7 +1227,24 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			momentumStrength,
 			volumeSpike,
 			isNewHigh,
-			isNewLow
+			isNewLow,
+			adaptiveTuning,
+			trendContext
+		);
+		const scanTime = Date.now();
+		const tvSignalContext = deriveTradingViewSignalContext(
+			tvSnapshot,
+			breakoutState.breakoutSignal,
+			breakoutState.expansionDirection,
+			momentumStrength,
+		);
+		const nyHour = getNyHour(scanTime);
+		const timeWindowBias = adaptiveTuning.hourlyScoreBias[nyHour] ?? 0;
+		const timeWindowWarnings: string[] = [];
+		if (timeWindowBias <= -3) timeWindowWarnings.push("WEAK_TIME_WINDOW");
+		else if (timeWindowBias >= 2) timeWindowWarnings.push("FAVORABLE_TIME_WINDOW");
+		const tunedBreakoutScore = Math.round(
+			clamp(breakoutState.breakoutScore + tvSignalContext.scoreBias + timeWindowBias, 0, 100),
 		);
 
 		const now = new Date();
@@ -485,8 +1270,12 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			breakoutSignal: breakoutState.breakoutSignal,
 			isNewHigh,
 			isNewLow,
-			breakoutScore: breakoutState.breakoutScore,
+			breakoutScore: tunedBreakoutScore,
 			cmfContribution: analysis.marketHealth?.cmf?.contribution ?? 0,
+			tuning: adaptiveTuning,
+			trendAlignment: breakoutState.trendAlignment,
+			additionalWarnings: [...tvSignalContext.warnings, ...timeWindowWarnings],
+			timeWindowBias,
 		});
 
 		const result: ScannerResult = {
@@ -496,12 +1285,12 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			priceChange,
 			priceChangePercent,
 			volume: lastCandle.volume ?? 0,
-			scanTime: Date.now(),
+			scanTime,
 			healthScore: analysis.marketHealth?.overallHealth ?? analysis.overall ?? 50,
 			healthGrade: analysis.marketHealth?.healthGrade ?? analysis.grade ?? "C",
 			hasMonsterPlay: Boolean(monster?.hasPlay),
 			volumeSpike,
-			breakoutScore: breakoutState.breakoutScore,
+			breakoutScore: tunedBreakoutScore,
 			isNewHigh,
 			isNewLow,
 			momentumStrength,
@@ -513,13 +1302,18 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 			warnings,
 			signalQuality,
 			compression,
+			tvRsi: tvSnapshot?.rsi ?? undefined,
+			tvAdx: tvSnapshot?.adx ?? undefined,
+			tvRecommendAll: tvSnapshot?.recommendAll ?? undefined,
+			tvTrendDirection: tvSignalContext.trendDirection,
+			tvTrendStrength: tvSignalContext.trendStrength,
 		};
 
 		if (timeframe === DEFAULT_TIMEFRAME) {
 			updateBreakoutAlertOutcomes(upperSymbol, lastPrice, {
 				high: lastCandle.high,
 				low: lastCandle.low,
-				now: Date.now(),
+				now: scanTime,
 			});
 
 			recordBreakoutAlert({
@@ -539,6 +1333,11 @@ async function scanSymbol(symbol: string, timeframe: string): Promise<ScannerRes
 				expansionDirection: result.expansionDirection,
 				warnings: result.warnings,
 				compression: result.compression,
+				tvRsi: result.tvRsi,
+				tvAdx: result.tvAdx,
+				tvRecommendAll: result.tvRecommendAll,
+				tvTrendDirection: result.tvTrendDirection,
+				tvTrendStrength: result.tvTrendStrength,
 			});
 		}
 
@@ -555,8 +1354,14 @@ async function runScanCycle(): Promise<void> {
 
 	try {
 		const symbols = Array.from(state.watchlist);
+		const tvBySymbol = await getTradingViewIndicatorMap(symbols);
 		for (const symbol of symbols) {
-			const result = await scanSymbol(symbol, DEFAULT_TIMEFRAME);
+			const upperSymbol = normalizeSymbol(symbol);
+			const result = await scanSymbol(
+				symbol,
+				DEFAULT_TIMEFRAME,
+				upperSymbol ? tvBySymbol.get(upperSymbol) : undefined,
+			);
 			if (result) {
 				state.results.set(result.symbol, result);
 			}

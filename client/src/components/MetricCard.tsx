@@ -316,6 +316,7 @@ import { useQuery } from "@tanstack/react-query";
 
 interface ScannerResult {
   lastIndex?: number;
+  scanTime?: number;
   compression?: {
     phase?: string;
     archStrength?: number;
@@ -329,6 +330,13 @@ interface ScannerResult {
   momentumStrength?: number;
   rsiValue?: number;
   volumeSpike?: number;
+  signalQuality?: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNRELIABLE';
+  warnings?: string[];
+  tvRsi?: number;
+  tvAdx?: number;
+  tvRecommendAll?: number;
+  tvTrendDirection?: 'bullish' | 'bearish' | 'neutral';
+  tvTrendStrength?: number;
   price?: number; // current price
   dailyVolume?: number;
   lastPrice?: number;
@@ -341,10 +349,24 @@ interface ScannerResult {
   optionPlays?: {
     score?: number;
     openInterest?: number;
+    oi?: number;
+    open_interest?: number;
     direction?: 'CALL' | 'PUT' | 'NEUTRAL';
     pt?: number;
+    target?: number;
+    takeProfit?: number;
+    targetPrice?: number;
     premium?: number;
+    entry?: number;
+    mark?: number;
+    mid?: number;
     stop?: number;
+    stopLoss?: number;
+    stopPrice?: number;
+    rr?: number;
+    riskReward?: number;
+    risk_reward?: number;
+    riskToReward?: number;
   }[];
   timeframeStack?: {
     primary?: string;
@@ -373,6 +395,33 @@ interface ScannerResult {
   };
 }
 
+interface PriceCardFusionSnapshot {
+  unifiedSignal?: {
+    unifiedDirection?: 'CALL' | 'PUT' | 'WAIT';
+    unifiedConfidence?: number;
+    confidence?: number;
+    setupGrade?: 'GOLD' | 'HOT' | 'READY' | 'BUILDING' | 'WAIT' | string;
+    state?: 'ACTIVE' | 'INACTIVE' | 'STALE' | string;
+    gatingScore?: number;
+    optionBQualified?: boolean;
+    notes?: string[];
+    recommendedAction?: string;
+    priceActionSafety?: {
+      contradiction?: boolean;
+      contradictionSeverity?: 'severe' | 'moderate' | 'mild' | string;
+      safetyAction?: 'force_wait' | 'reduce_confidence' | 'none' | string;
+      confidenceMultiplier?: number;
+      momentumStrength?: number;
+      momentumDirection?: string;
+    };
+  };
+  gatingState?: {
+    gatingScore?: number;
+    metaAllowed?: boolean;
+    reasons?: string[];
+  };
+}
+
 type AlertMode = 'TREND' | 'BALANCED' | 'CHOPPY';
 
 interface BreakoutThresholdConfig {
@@ -383,6 +432,112 @@ interface BreakoutThresholdConfig {
     BALANCED?: { setupScoreMin?: number; setupTraitsMin?: number; requireSweetSpotStack?: boolean };
     CHOPPY?: { setupScoreMin?: number; setupTraitsMin?: number; requireSweetSpotStack?: boolean };
   };
+}
+
+interface BreakoutLogEntry {
+  symbol?: string;
+  direction?: 'bullish' | 'bearish' | 'neutral' | string;
+  breakoutScore?: number;
+  priceAtCapture?: number;
+  stopLoss?: number;
+  targets?: number[];
+  outcome?: string;
+  timestamp?: number;
+}
+
+interface BreakoutLogResponse {
+  success?: boolean;
+  entries?: BreakoutLogEntry[];
+}
+
+interface SymbolLogStats {
+  total: number;
+  completed: number;
+  wins: number;
+  losses: number;
+  latest?: BreakoutLogEntry;
+  latestBullish?: BreakoutLogEntry;
+  latestBearish?: BreakoutLogEntry;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getOptionPlayOpenInterest(play: Record<string, unknown> | undefined): number {
+  const value =
+    toFiniteNumber(play?.openInterest) ??
+    toFiniteNumber(play?.oi) ??
+    toFiniteNumber(play?.open_interest) ??
+    toFiniteNumber(play?.openInt);
+  return value != null && value > 0 ? value : 0;
+}
+
+function getOptionPlayRiskRewardPercent(play: Record<string, unknown> | undefined): number | null {
+  const direct =
+    toFiniteNumber(play?.rr) ??
+    toFiniteNumber(play?.riskReward) ??
+    toFiniteNumber(play?.risk_reward) ??
+    toFiniteNumber(play?.riskToReward);
+  if (direct != null && direct > 0) {
+    return direct <= 20 ? direct * 100 : direct;
+  }
+
+  const target =
+    toFiniteNumber(play?.pt) ??
+    toFiniteNumber(play?.target) ??
+    toFiniteNumber(play?.takeProfit) ??
+    toFiniteNumber(play?.targetPrice);
+  const entry =
+    toFiniteNumber(play?.premium) ??
+    toFiniteNumber(play?.entry) ??
+    toFiniteNumber(play?.mark) ??
+    toFiniteNumber(play?.mid);
+  const stop =
+    toFiniteNumber(play?.stop) ??
+    toFiniteNumber(play?.stopLoss) ??
+    toFiniteNumber(play?.stopPrice);
+
+  if (target == null || entry == null || stop == null) return null;
+
+  const reward = target - entry;
+  const risk = entry - stop;
+  if (reward <= 0 || risk <= 0) return null;
+
+  const rrPct = (reward / risk) * 100;
+  return Number.isFinite(rrPct) ? rrPct : null;
+}
+
+function getAlertDirection(alert: ScannerResult): 'bullish' | 'bearish' {
+  if (alert.breakoutSignal === 'BREAKDOWN') return 'bearish';
+  if (alert.breakoutSignal === 'EXPANSION' && alert.expansionDirection === 'bearish') return 'bearish';
+  if (alert.breakoutSignal === 'MOMENTUM' && (alert.expansionDirection === 'bearish' || (alert.momentumStrength ?? 0) < 0)) return 'bearish';
+  if (alert.expansionDirection === 'bearish') return 'bearish';
+  return 'bullish';
+}
+
+function getStructuralRiskRewardPercent(entry: BreakoutLogEntry | undefined, direction: 'bullish' | 'bearish'): number | null {
+  if (!entry) return null;
+  const entryPrice = toFiniteNumber(entry.priceAtCapture);
+  const stopLoss = toFiniteNumber(entry.stopLoss);
+  const targetRaw = Array.isArray(entry.targets) ? entry.targets.find((target) => toFiniteNumber(target) != null) : null;
+  const targetPrice = toFiniteNumber(targetRaw);
+
+  if (entryPrice == null || stopLoss == null || targetPrice == null) return null;
+
+  const reward = direction === 'bullish' ? targetPrice - entryPrice : entryPrice - targetPrice;
+  const risk = direction === 'bullish' ? entryPrice - stopLoss : stopLoss - entryPrice;
+  if (reward <= 0 || risk <= 0) return null;
+
+  const rrPct = (reward / risk) * 100;
+  return Number.isFinite(rrPct) ? rrPct : null;
 }
 
 interface MetricCardProps {
@@ -1276,13 +1431,135 @@ export function PriceCard({
     staleTime: 10000,
   });
 
+  const { data: fusionSnapshot } = useQuery<PriceCardFusionSnapshot>({
+    queryKey: ["/api/fusion", symbol],
+    enabled: !!symbol,
+    refetchInterval: 30000,
+    staleTime: 10000,
+  });
+
+  const normalizePercentValue = (value: number | undefined | null): number | null => {
+    if (!Number.isFinite(value)) return null;
+    const numeric = value as number;
+    return Math.round(Math.abs(numeric) <= 1 ? numeric * 100 : numeric);
+  };
+
   const scannerSignal = scannerResults?.find(
     (result) => String(result.symbol ?? "").toUpperCase() === symbol.toUpperCase(),
   );
 
+  const unifiedSignal = fusionSnapshot?.unifiedSignal;
+  const unifiedDirectionRaw = String(unifiedSignal?.unifiedDirection ?? "WAIT").toUpperCase();
+  const unifiedDirection: "CALL" | "PUT" | "WAIT" =
+    unifiedDirectionRaw === "CALL" ? "CALL" : unifiedDirectionRaw === "PUT" ? "PUT" : "WAIT";
+  const unifiedConfidence = (() => {
+    const preferred = normalizePercentValue(unifiedSignal?.unifiedConfidence);
+    if (preferred != null) return Math.max(0, Math.min(100, preferred));
+    const fallback = normalizePercentValue(unifiedSignal?.confidence);
+    return fallback == null ? null : Math.max(0, Math.min(100, fallback));
+  })();
+  const unifiedStateRaw = String(unifiedSignal?.state ?? "").toUpperCase();
+  const unifiedState: "ACTIVE" | "STALE" | "INACTIVE" =
+    unifiedStateRaw === "ACTIVE"
+      ? "ACTIVE"
+      : unifiedStateRaw === "STALE"
+      ? "STALE"
+      : "INACTIVE";
+  const unifiedSetupGradeRaw = String(unifiedSignal?.setupGrade ?? "WAIT").toUpperCase();
+  const unifiedSetupGrade: "GOLD" | "HOT" | "READY" | "BUILDING" | "WAIT" =
+    unifiedSetupGradeRaw === "GOLD"
+      ? "GOLD"
+      : unifiedSetupGradeRaw === "HOT"
+      ? "HOT"
+      : unifiedSetupGradeRaw === "READY"
+      ? "READY"
+      : unifiedSetupGradeRaw === "BUILDING"
+      ? "BUILDING"
+      : "WAIT";
+  const unifiedGatingRaw = normalizePercentValue(
+    (unifiedSignal?.gatingScore as number | undefined) ?? fusionSnapshot?.gatingState?.gatingScore,
+  );
+  const unifiedGatingScore =
+    unifiedGatingRaw == null ? null : Math.max(0, Math.min(100, unifiedGatingRaw));
+  const unifiedNotes = Array.isArray(unifiedSignal?.notes) ? unifiedSignal.notes : [];
+  const unifiedActionText = String(unifiedSignal?.recommendedAction ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const unifiedSafety = unifiedSignal?.priceActionSafety;
+  const unifiedSafetyForceWait =
+    unifiedSafety?.safetyAction === "force_wait" ||
+    (unifiedSafety?.contradiction === true &&
+      String(unifiedSafety?.contradictionSeverity ?? "").toLowerCase() === "severe");
+  const unifiedSafetyMultiplier = Number.isFinite(unifiedSafety?.confidenceMultiplier)
+    ? Math.max(0.4, Math.min(1, unifiedSafety?.confidenceMultiplier ?? 1))
+    : 1;
+
   const scannerMomentumSigned = Number.isFinite(scannerSignal?.momentumStrength)
     ? (scannerSignal?.momentumStrength ?? 0)
     : 0;
+  const scannerMomentumAbs = Math.abs(scannerMomentumSigned);
+  const scannerBreakoutScore = Number.isFinite(scannerSignal?.breakoutScore)
+    ? (scannerSignal?.breakoutScore ?? 0)
+    : 0;
+  const scannerVolumeSpike = Number.isFinite(scannerSignal?.volumeSpike)
+    ? (scannerSignal?.volumeSpike ?? 1)
+    : 1;
+  const scannerSignalType = String(scannerSignal?.breakoutSignal ?? "").toUpperCase();
+  const scannerSignalQualityRaw = String(scannerSignal?.signalQuality ?? "LOW").toUpperCase();
+  const scannerSignalQuality: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE" =
+    scannerSignalQualityRaw === "HIGH"
+      ? "HIGH"
+      : scannerSignalQualityRaw === "MEDIUM"
+      ? "MEDIUM"
+      : scannerSignalQualityRaw === "UNRELIABLE"
+      ? "UNRELIABLE"
+      : "LOW";
+  const scannerWarnings = Array.isArray(scannerSignal?.warnings) ? scannerSignal.warnings : [];
+  const scannerWarningSet = new Set(
+    scannerWarnings.map((warning) => String(warning ?? "").toUpperCase()),
+  );
+  const scannerCriticalWarningCount = [
+    "TV_TREND_CONFLICT",
+    "TV_RECOMMEND_OPPOSE",
+    "TV_LOW_ADX",
+    "WEAK_DIRECTIONAL_MOMENTUM",
+    "CONFLICT_MOMENTUM",
+    "LOW_VOLUME",
+    "TREND_CONFLICT",
+    "WEAK_TIME_WINDOW",
+  ].filter((warning) => scannerWarningSet.has(warning)).length;
+  const scannerScanAgeSec = Number.isFinite(scannerSignal?.scanTime)
+    ? Math.max(0, Math.round((Date.now() - (scannerSignal?.scanTime ?? 0)) / 1000))
+    : null;
+  const scannerIsStale = scannerScanAgeSec != null && scannerScanAgeSec > 120;
+  const tvRsi = Number.isFinite(scannerSignal?.tvRsi) ? (scannerSignal?.tvRsi ?? 0) : null;
+  const tvAdx = Number.isFinite(scannerSignal?.tvAdx) ? (scannerSignal?.tvAdx ?? 0) : null;
+  const tvRecommendAll = Number.isFinite(scannerSignal?.tvRecommendAll)
+    ? (scannerSignal?.tvRecommendAll ?? 0)
+    : null;
+  const tvTrendDirection = String(scannerSignal?.tvTrendDirection ?? "neutral").toLowerCase();
+  const tvTrendStrength = Number.isFinite(scannerSignal?.tvTrendStrength)
+    ? Math.max(0, Math.min(100, scannerSignal?.tvTrendStrength ?? 0))
+    : 0;
+  const tvTrendBias =
+    tvTrendDirection === "bullish" ? 1 : tvTrendDirection === "bearish" ? -1 : 0;
+  const tvConflictActive =
+    scannerWarningSet.has("TV_TREND_CONFLICT") || scannerWarningSet.has("TV_RECOMMEND_OPPOSE");
+  const scannerDirectionalBreakout =
+    scannerSignalType === "BREAKOUT" ||
+    scannerSignalType === "BREAKDOWN" ||
+    scannerSignalType === "EXPANSION";
+  const scannerMomentumBreakout = scannerSignalType === "MOMENTUM" && scannerMomentumAbs >= 18;
+  const scannerSignalBoost =
+    scannerDirectionalBreakout
+      ? 1
+      : scannerMomentumBreakout
+      ? 0.8
+      : scannerSignalType === "BUILDING"
+      ? 0.45
+      : scannerSignalType === "SQUEEZE"
+      ? 0.35
+      : 0;
   
   // Use INTRADAY change for gauges (slope geometry, price action, sector pulse)
   // This ensures pre-market price gaps don't skew the intraday sentiment
@@ -1377,8 +1654,37 @@ export function PriceCard({
 
   const priceStrength = clamp01(0.5 + dayMovePct / 4);
   const liveMomentum = clamp01(0.5 + dayMovePct / 3.2);
+  const scannerBreakoutHeat = clamp01(scannerBreakoutScore / 100);
+  const scannerMomentumHeat = clamp01(scannerMomentumAbs / 45);
+  const scannerVolumeHeat = clamp01((scannerVolumeSpike - 0.85) / 1.2);
+  const scannerQualityHeat =
+    scannerSignalQuality === "HIGH"
+      ? 0.95
+      : scannerSignalQuality === "MEDIUM"
+      ? 0.72
+      : scannerSignalQuality === "LOW"
+      ? 0.48
+      : 0.2;
+  const fusionConfidenceHeat =
+    unifiedConfidence == null ? null : clamp01((unifiedConfidence - 8) / 92);
+  const fusionStateHeat =
+    unifiedState === "ACTIVE"
+      ? fusionConfidenceHeat ?? 0.65
+      : unifiedState === "STALE"
+      ? 0.38
+      : 0.14;
+  const warningRiskPenalty = clamp01(scannerCriticalWarningCount / 5);
+  const safetyRiskPenalty = unifiedSafetyForceWait ? 1 : unifiedSafety?.contradiction ? 0.68 : 0;
 
-  const marketStrengthInputs = [priceStrength, liveMomentum, sectorCompositeLive, breadthSync].filter(
+  const marketStrengthInputs = [
+    priceStrength,
+    liveMomentum,
+    sectorCompositeLive,
+    breadthSync,
+    scannerBreakoutHeat,
+    scannerQualityHeat,
+    fusionConfidenceHeat,
+  ].filter(
     (value): value is number => typeof value === "number",
   );
   const marketStrength =
@@ -1386,7 +1692,14 @@ export function PriceCard({
       ? clamp01(marketStrengthInputs.reduce((sum, value) => sum + value, 0) / marketStrengthInputs.length)
       : priceStrength;
 
-  const flowInputs = [liveMomentum, sectorCompositeLive, breadthSync].filter(
+  const flowInputs = [
+    liveMomentum,
+    sectorCompositeLive,
+    breadthSync,
+    scannerMomentumHeat,
+    scannerVolumeHeat,
+    unifiedState === "ACTIVE" ? fusionStateHeat : null,
+  ].filter(
     (value): value is number => typeof value === "number",
   );
   const flowEngine =
@@ -1394,7 +1707,13 @@ export function PriceCard({
       ? clamp01(flowInputs.reduce((sum, value) => sum + value, 0) / flowInputs.length)
       : liveMomentum;
 
-  const riskInputs = [normalizedMove, ...(typeof sectorDispersion === "number" ? [sectorDispersion] : [])];
+  const riskInputs = [
+    normalizedMove,
+    ...(typeof sectorDispersion === "number" ? [sectorDispersion] : []),
+    warningRiskPenalty,
+    safetyRiskPenalty,
+    scannerIsStale ? 0.35 : 0,
+  ];
   const riskPulse = clamp01(1 - riskInputs.reduce((sum, value) => sum + value, 0) / riskInputs.length);
   const breadthEngine = breadthSync ?? priceStrength;
 
@@ -1449,36 +1768,10 @@ export function PriceCard({
   const breadthEdge = breadthSync == null ? null : Math.abs(breadthSync - 0.5) * 2;
   const sectorAlignScore =
     typeof sectorDispersion === "number" ? clamp01(1 - sectorDispersion * 1.2) : null;
-  const scannerBreakoutScore = Number.isFinite(scannerSignal?.breakoutScore)
-    ? (scannerSignal?.breakoutScore ?? 0)
-    : 0;
-  const scannerMomentumAbs = Math.abs(scannerMomentumSigned);
-  const scannerVolumeSpike = Number.isFinite(scannerSignal?.volumeSpike)
-    ? (scannerSignal?.volumeSpike ?? 1)
-    : 1;
-  const scannerSignalType = String(scannerSignal?.breakoutSignal ?? "").toUpperCase();
-  const scannerDirectionalBreakout =
-    scannerSignalType === "BREAKOUT" ||
-    scannerSignalType === "BREAKDOWN" ||
-    scannerSignalType === "EXPANSION";
-  const scannerMomentumBreakout = scannerSignalType === "MOMENTUM" && scannerMomentumAbs >= 18;
-  const scannerSignalBoost =
-    scannerDirectionalBreakout
-      ? 1
-      : scannerMomentumBreakout
-      ? 0.8
-      : scannerSignalType === "BUILDING"
-      ? 0.45
-      : scannerSignalType === "SQUEEZE"
-      ? 0.35
-      : 0;
 
   const baseSurgeHeat = clamp01(
     normalizedMove * 0.45 + (breadthEdge ?? 0) * 0.35 + (slopeGeometryMagnitude / 100) * 0.20,
   );
-  const scannerBreakoutHeat = clamp01(scannerBreakoutScore / 100);
-  const scannerMomentumHeat = clamp01(scannerMomentumAbs / 45);
-  const scannerVolumeHeat = clamp01((scannerVolumeSpike - 0.85) / 1.2);
 
   let surgeHeat = clamp01(
     baseSurgeHeat * 0.62 +
@@ -1508,7 +1801,7 @@ export function PriceCard({
   // 2. Slope geometry (derived from intraday % — always real)
   cpRawScore += slopeBias === "up" ? 1.5 : slopeBias === "down" ? -1.5 : 0;
   // 2b. Scanner momentum adds short-horizon direction context.
-  if (Math.abs(scannerMomentumSigned) >= 8) {
+  if (scannerMomentumAbs >= 8) {
     cpRawScore += Math.max(-1.4, Math.min(1.4, scannerMomentumSigned / 22));
   }
   // 3. Sector composite (only when live sectors are available)
@@ -1519,6 +1812,52 @@ export function PriceCard({
   if (breadthSync != null) {
     cpRawScore += breadthSync >= 0.65 ? 1 : breadthSync <= 0.35 ? -1 : 0;
   }
+
+  // 5. Scanner quality and warnings (reflects calibrated breakout reliability)
+  const scannerQualityBias =
+    scannerSignalQuality === "HIGH"
+      ? 1
+      : scannerSignalQuality === "MEDIUM"
+      ? 0.45
+      : scannerSignalQuality === "UNRELIABLE"
+      ? -1.35
+      : 0;
+  cpRawScore += scannerQualityBias;
+  cpRawScore -= Math.min(1.8, scannerCriticalWarningCount * 0.48);
+  if (scannerIsStale) cpRawScore *= 0.82;
+
+  // 6. TradingView trend context (EMA/MACD/ADX/RSI/recommendation)
+  if (tvTrendBias !== 0) {
+    cpRawScore += tvTrendBias * Math.max(0.28, clamp01(tvTrendStrength / 100) * 1.25);
+  }
+  if (tvRecommendAll != null) {
+    cpRawScore += Math.max(-0.9, Math.min(0.9, tvRecommendAll * 0.95));
+  }
+  if (tvAdx != null) {
+    if (tvAdx < 16) cpRawScore -= 0.8;
+    else if (tvAdx >= 24) cpRawScore += 0.35;
+  }
+  if (tvRsi != null) {
+    if (priceActionBias === "buy" && tvRsi >= 72) cpRawScore -= 0.55;
+    else if (priceActionBias === "sell" && tvRsi <= 28) cpRawScore -= 0.55;
+  }
+
+  // 7. Unified fusion state/confidence (audit-calibrated in backend)
+  if (unifiedDirection === "CALL" || unifiedDirection === "PUT") {
+    const fusionBias = unifiedDirection === "CALL" ? 1 : -1;
+    const fusionEdge = clamp01(((unifiedConfidence ?? 0) - 42) / 42);
+    cpRawScore += fusionBias * fusionEdge * 2.1;
+  }
+  if (unifiedState === "INACTIVE") {
+    cpRawScore *= 0.58;
+  } else if (unifiedState === "STALE") {
+    cpRawScore *= 0.8;
+  }
+  if (unifiedGatingScore != null) {
+    if (unifiedGatingScore >= 75) cpRawScore *= 1.08;
+    else if (unifiedGatingScore <= 40) cpRawScore *= 0.84;
+  }
+
   // Prevent false bullish/bearish bias when momentum strongly disagrees with aggregate drivers.
   if (scannerMomentumSigned <= -16 && cpRawScore > 0) {
     cpRawScore *= 0.45;
@@ -1526,23 +1865,109 @@ export function PriceCard({
     cpRawScore *= 0.45;
   }
   // Surge amplifier — explosive conditions sharpen the signal
-  if (isSurging) cpRawScore *= 1.25;
-  const hasMomentumSignal = Math.abs(scannerMomentumSigned) >= 8;
+  if (isSurging && !unifiedSafetyForceWait) cpRawScore *= 1.2;
+  if (unifiedSafetyMultiplier < 1) cpRawScore *= unifiedSafetyMultiplier;
+  if (unifiedSafetyForceWait) cpRawScore *= 0.45;
+
+  const hasMomentumSignal = scannerMomentumAbs >= 8;
+  const hasFusionBias = unifiedDirection === "CALL" || unifiedDirection === "PUT";
   const cpMaxScore = sectorCompositeLive != null && breadthSync != null
     ? hasMomentumSignal
-      ? 7.4
-      : 6
+      ? hasFusionBias
+        ? 10.2
+        : 8.6
+      : hasFusionBias
+      ? 9
+      : 7.2
     : hasMomentumSignal
-    ? 4.9
-    : 3.5;
+    ? hasFusionBias
+      ? 7.2
+      : 5.6
+    : hasFusionBias
+    ? 6.1
+    : 4.2;
   const callPutScore = Math.max(-100, Math.min(100, Math.round((cpRawScore / cpMaxScore) * 100)));
-  const callPutSignal: "CALL" | "PUT" | "NO TRADE" =
-    callPutScore >= 55 ? "CALL" : callPutScore <= -55 ? "PUT" : "NO TRADE";
-  const cpStrength = Math.abs(callPutScore) >= 65 ? "HIGH" : Math.abs(callPutScore) >= 35 ? "MOD" : "LOW";
+  const qualityThresholdOffset =
+    scannerSignalQuality === "HIGH"
+      ? -5
+      : scannerSignalQuality === "MEDIUM"
+      ? -1
+      : scannerSignalQuality === "LOW"
+      ? 4
+      : 10;
+  const warningThresholdOffset = Math.min(12, scannerCriticalWarningCount * 3);
+  const unifiedThresholdOffset =
+    unifiedState === "ACTIVE" && (unifiedConfidence ?? 0) >= 72
+      ? -6
+      : unifiedState === "STALE"
+      ? 7
+      : unifiedState === "INACTIVE"
+      ? 13
+      : 0;
+  const dynamicThreshold = Math.max(
+    46,
+    Math.min(78, 55 + qualityThresholdOffset + warningThresholdOffset + unifiedThresholdOffset),
+  );
+  let callPutSignal: "CALL" | "PUT" | "NO TRADE" =
+    callPutScore >= dynamicThreshold
+      ? "CALL"
+      : callPutScore <= -dynamicThreshold
+      ? "PUT"
+      : "NO TRADE";
+  const hardFusionConflict =
+    (callPutSignal === "CALL" && unifiedDirection === "PUT" && (unifiedConfidence ?? 0) >= 65) ||
+    (callPutSignal === "PUT" && unifiedDirection === "CALL" && (unifiedConfidence ?? 0) >= 65);
+  if (hardFusionConflict) callPutSignal = "NO TRADE";
+  if (unifiedSafetyForceWait && Math.abs(callPutScore) < 88) callPutSignal = "NO TRADE";
+  if (scannerSignalQuality === "UNRELIABLE" && Math.abs(callPutScore) < 85) callPutSignal = "NO TRADE";
+  const absCpScore = Math.abs(callPutScore);
+  const cpStrength =
+    absCpScore >= Math.max(72, dynamicThreshold + 14)
+      ? "HIGH"
+      : absCpScore >= Math.max(42, dynamicThreshold - 8)
+      ? "MOD"
+      : "LOW";
   const callPutColor = callPutSignal === "CALL" ? "#10b981" : callPutSignal === "PUT" ? "#ef4444" : "#f59e0b";
   const cpBorder = callPutSignal === "CALL" ? "border-emerald-400/55" : callPutSignal === "PUT" ? "border-red-400/55" : "border-amber-400/45";
   const cpBg = callPutSignal === "CALL" ? "#020f06" : callPutSignal === "PUT" ? "#0f0202" : "#0b0905";
   const cpTopBar = callPutSignal === "CALL" ? "from-emerald-600 via-teal-400 to-cyan-500" : callPutSignal === "PUT" ? "from-red-700 via-rose-500 to-orange-400" : "from-amber-600 via-orange-400 to-yellow-400";
+  const fusionDirectionColor =
+    unifiedDirection === "CALL"
+      ? "#10b981"
+      : unifiedDirection === "PUT"
+      ? "#ef4444"
+      : "#38bdf8";
+  const fusionStateColor =
+    unifiedState === "ACTIVE" ? "#10b981" : unifiedState === "STALE" ? "#f59e0b" : "#ef4444";
+  const setupGradeColor =
+    unifiedSetupGrade === "GOLD"
+      ? "#facc15"
+      : unifiedSetupGrade === "HOT"
+      ? "#f97316"
+      : unifiedSetupGrade === "READY"
+      ? "#22d3ee"
+      : unifiedSetupGrade === "BUILDING"
+      ? "#94a3b8"
+      : "#64748b";
+  const scannerQualityColor =
+    scannerSignalQuality === "HIGH"
+      ? "#10b981"
+      : scannerSignalQuality === "MEDIUM"
+      ? "#f59e0b"
+      : scannerSignalQuality === "LOW"
+      ? "#fb7185"
+      : "#ef4444";
+  const tvTrendLabel = tvTrendBias > 0 ? "BULL" : tvTrendBias < 0 ? "BEAR" : "NEUT";
+  const tvToneColor = tvTrendBias > 0 ? "#10b981" : tvTrendBias < 0 ? "#ef4444" : "#38bdf8";
+  const scannerWarningSummary = scannerWarnings.slice(0, 2).join(" | ");
+  const decisionIntel = unifiedActionText || unifiedNotes.slice(0, 2).join(" | ");
+  const scannerWarningText =
+    scannerWarningSummary.length > 88
+      ? `${scannerWarningSummary.slice(0, 85)}...`
+      : scannerWarningSummary;
+  const decisionIntelText =
+    decisionIntel.length > 132 ? `${decisionIntel.slice(0, 129)}...` : decisionIntel;
+  const optionBQualified = unifiedSignal?.optionBQualified === true;
 
   const activeEngines = [
     { label: "Trend Core", value: marketStrength },
@@ -1669,6 +2094,14 @@ export function PriceCard({
                     <span className="text-[8px] font-black tracking-widest uppercase" style={{ color: callPutColor + "aa" }}>{cpStrength}</span>
                     <span className="text-[8px] font-mono" style={{ color: callPutColor + "66" }}>·</span>
                     <span className="text-[8px] font-mono" style={{ color: callPutColor + "88" }}>{callPutScore > 0 ? "+" : ""}{callPutScore}</span>
+                    <span className="text-[8px] font-mono" style={{ color: callPutColor + "66" }}>·</span>
+                    <span className="text-[8px] font-mono" style={{ color: callPutColor + "88" }}>T{dynamicThreshold}</span>
+                    {unifiedConfidence != null && (
+                      <>
+                        <span className="text-[8px] font-mono" style={{ color: callPutColor + "66" }}>·</span>
+                        <span className="text-[8px] font-mono" style={{ color: callPutColor + "88" }}>F{unifiedConfidence}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1790,6 +2223,74 @@ export function PriceCard({
                 style={{ color: callPutColor, borderColor: callPutColor + "45", backgroundColor: callPutColor + "15", textShadow: `0 0 10px ${callPutColor}55` }}>
                 {Math.round(marketStrength * 100)}%
               </span>
+            </div>
+
+            <div className="relative z-20 mb-1.5 grid grid-cols-1 xl:grid-cols-3 gap-1.5">
+              <div className="rounded-lg border px-2 py-1" style={{ borderColor: fusionDirectionColor + "45", background: fusionDirectionColor + "10" }}>
+                <div className="flex items-center justify-between text-[7px] font-bold tracking-[0.16em] uppercase" style={{ color: fusionDirectionColor + "cc" }}>
+                  <span>Fusion</span>
+                  <span>{unifiedState}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className="text-[11px] font-black font-mono tracking-wider" style={{ color: fusionDirectionColor }}>
+                    {unifiedDirection}
+                  </span>
+                  {unifiedConfidence != null && (
+                    <span className="text-[9px] font-mono" style={{ color: fusionDirectionColor + "cc" }}>
+                      {unifiedConfidence}%
+                    </span>
+                  )}
+                  <span className="ml-auto rounded border px-1.5 py-0.5 text-[8px] font-black tracking-widest"
+                    style={{ borderColor: setupGradeColor + "55", color: setupGradeColor, backgroundColor: setupGradeColor + "18" }}>
+                    {unifiedSetupGrade}
+                  </span>
+                  {optionBQualified && (
+                    <span className="rounded border px-1 py-0.5 text-[7px] font-black tracking-wider border-cyan-400/45 text-cyan-200 bg-cyan-500/14">
+                      OPTION B
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border px-2 py-1" style={{ borderColor: scannerQualityColor + "45", background: scannerQualityColor + "10" }}>
+                <div className="flex items-center justify-between text-[7px] font-bold tracking-[0.16em] uppercase" style={{ color: scannerQualityColor + "cc" }}>
+                  <span>Scanner</span>
+                  <span>{scannerSignalType || "IDLE"}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className="text-[11px] font-black font-mono" style={{ color: scannerQualityColor }}>
+                    {scannerSignalQuality}
+                  </span>
+                  <span className="text-[8px] font-mono" style={{ color: scannerQualityColor + "cc" }}>
+                    W{scannerCriticalWarningCount}
+                  </span>
+                  <span className="ml-auto text-[8px] font-mono" style={{ color: scannerQualityColor + "aa" }}>
+                    {scannerScanAgeSec == null
+                      ? "LIVE"
+                      : scannerIsStale
+                      ? `STALE ${scannerScanAgeSec}s`
+                      : `${scannerScanAgeSec}s`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border px-2 py-1" style={{ borderColor: tvToneColor + "45", background: tvToneColor + "10" }}>
+                <div className="flex items-center justify-between text-[7px] font-bold tracking-[0.16em] uppercase" style={{ color: tvToneColor + "cc" }}>
+                  <span>TradingView</span>
+                  <span>{tvConflictActive ? "CONFLICT" : "ALIGNED"}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className="text-[11px] font-black font-mono" style={{ color: tvToneColor }}>
+                    {tvTrendLabel}
+                  </span>
+                  <span className="text-[8px] font-mono" style={{ color: tvToneColor + "cc" }}>
+                    ADX {tvAdx == null ? "--" : Math.round(tvAdx)}
+                  </span>
+                  <span className="ml-auto text-[8px] font-mono" style={{ color: tvToneColor + "cc" }}>
+                    REC {tvRecommendAll == null ? "--" : tvRecommendAll.toFixed(2)}
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* ── EXPLOSION ALERT BANNER (compact, top of engine, when surging) ── */}
@@ -2100,7 +2601,7 @@ export function PriceCard({
                           label: "Surge Heat",
                           value: surgeHeat,
                           desc: scannerDirectionalBreakout
-                            ? `${scannerSignalType} confirmed`
+                            ? `${scannerSignalType} • ${scannerSignalQuality}`
                             : scannerMomentumBreakout
                             ? "Momentum breakout"
                             : normalizedMove >= 0.5
@@ -2113,6 +2614,8 @@ export function PriceCard({
                           desc:
                             sectorAlignScore == null
                               ? "Awaiting live sectors"
+                              : unifiedState !== "ACTIVE"
+                              ? `Fusion ${unifiedState.toLowerCase()}`
                               : sectorAlignScore >= 0.7
                               ? "Sectors in sync"
                               : "Diverging",
@@ -2159,6 +2662,37 @@ export function PriceCard({
                     </div>
                   </div>
 
+                  {(decisionIntelText || scannerWarningText) && (
+                    <div
+                      className="relative overflow-hidden rounded-xl border px-2.5 py-1.5"
+                      style={{
+                        borderColor: callPutColor + "45",
+                        background: `linear-gradient(135deg,${callPutColor}12,rgba(2,8,20,0.82))`,
+                        boxShadow: `inset 0 0 16px ${callPutColor}18`,
+                      }}
+                    >
+                      <div className="mb-1 flex items-center gap-1.5 text-[7px] font-black tracking-[0.18em] uppercase" style={{ color: callPutColor + "bb" }}>
+                        <Shield className="w-3 h-3" />
+                        Decision Feed
+                        {unifiedGatingScore != null && (
+                          <span className="ml-auto text-[8px] font-mono" style={{ color: callPutColor + "bb" }}>
+                            GATE {unifiedGatingScore}%
+                          </span>
+                        )}
+                      </div>
+                      {decisionIntelText && (
+                        <div className="text-[8px] leading-snug" style={{ color: callPutColor + "cc" }}>
+                          {decisionIntelText}
+                        </div>
+                      )}
+                      {scannerWarningText && (
+                        <div className="mt-0.5 text-[7px] font-mono text-rose-200/75">
+                          WARN: {scannerWarningText}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
 
                 </div>
               </div>
@@ -2187,6 +2721,52 @@ export function BreakoutAlertBar({
     refetchInterval: 15 * 60 * 1000,
     staleTime: 5 * 60 * 1000,
   });
+
+  const { data: breakoutLog } = useQuery<BreakoutLogResponse>({
+    queryKey: ["/api/scanner/breakout-log?hours=24&limit=1500"],
+    refetchInterval: 60 * 1000,
+    staleTime: 30 * 1000,
+  });
+
+  const symbolLogStats = (() => {
+    const entries = Array.isArray(breakoutLog?.entries) ? breakoutLog.entries : [];
+    const map = new Map<string, SymbolLogStats>();
+
+    for (const row of entries) {
+      const symbol = String(row.symbol ?? '').trim().toUpperCase();
+      if (!symbol) continue;
+
+      let stats = map.get(symbol);
+      if (!stats) {
+        stats = { total: 0, completed: 0, wins: 0, losses: 0 };
+        map.set(symbol, stats);
+      }
+
+      stats.total += 1;
+
+      const outcome = String(row.outcome ?? '').toLowerCase();
+      if (outcome && outcome !== 'pending' && outcome !== 'open') {
+        stats.completed += 1;
+        if (outcome.startsWith('win')) stats.wins += 1;
+        else if (outcome === 'loss') stats.losses += 1;
+      }
+
+      const rowTs = toFiniteNumber(row.timestamp) ?? 0;
+      const latestTs = toFiniteNumber(stats.latest?.timestamp) ?? -1;
+      if (rowTs >= latestTs) stats.latest = row;
+
+      const direction = String(row.direction ?? '').toLowerCase();
+      if (direction === 'bullish') {
+        const latestBullishTs = toFiniteNumber(stats.latestBullish?.timestamp) ?? -1;
+        if (rowTs >= latestBullishTs) stats.latestBullish = row;
+      } else if (direction === 'bearish') {
+        const latestBearishTs = toFiniteNumber(stats.latestBearish?.timestamp) ?? -1;
+        if (rowTs >= latestBearishTs) stats.latestBearish = row;
+      }
+    }
+
+    return map;
+  })();
 
   type AlertTuning = {
     mode: AlertMode;
@@ -2309,9 +2889,9 @@ export function BreakoutAlertBar({
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
     const breakoutScore = alert.breakoutScore ?? 0;
-    const bestPlay = alert.optionPlays?.[0];
-    const optionScore = bestPlay?.score ?? 0;
-    const optionOi = bestPlay?.openInterest ?? 0;
+    const bestPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+    const optionScore = toFiniteNumber(bestPlay?.score) ?? 0;
+    const optionOi = getOptionPlayOpenInterest(bestPlay);
 
     const expansionSignal =
       signal === 'BREAKOUT' ||
@@ -2330,7 +2910,7 @@ export function BreakoutAlertBar({
     const setupPhase = phase === 'PREPARE' || phase === 'READY';
 
     // Option data is optional — don't gate on it when unavailable
-    const hasOptionData = !!bestPlay;
+    const hasOptionData = !!bestPlay && (optionScore > 0 || optionOi > 0);
     const optionGate = !hasOptionData || (optionScore >= 50 && optionOi >= 100);
 
     return (
@@ -2414,7 +2994,7 @@ export function BreakoutAlertBar({
     return structureOk && compressionOk && volumeOk;
   };
 
-  // Only show cards if there is at least one valid option play
+  // Show cards for structural signals; enforce option quality only when option data is present.
   function isActionablePlay(alert: ScannerResult) {
     const signal = alert.breakoutSignal;
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
@@ -2458,10 +3038,12 @@ export function BreakoutAlertBar({
     if (strongMoveOverride) return true;
 
     // --- 0DTE/2DTE Enhanced Logic ---
-    const bestPlay = alert.optionPlays?.[0];
-    const bestPlayScore = bestPlay?.score ?? 0;
-    const bestPlayOpenInterest = bestPlay?.openInterest ?? 0;
-    if (!bestPlay || bestPlayScore < tuning.optionScoreMin || bestPlayOpenInterest < tuning.optionOiMin) return false;
+    const bestPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+    const bestPlayScore = toFiniteNumber(bestPlay?.score) ?? 0;
+    const bestPlayOpenInterest = getOptionPlayOpenInterest(bestPlay);
+    const bestPlayDirection = String(bestPlay?.direction ?? '').toUpperCase();
+    const hasOptionData = !!bestPlay && (bestPlayScore > 0 || bestPlayOpenInterest > 0 || bestPlayDirection.length > 0);
+    if (hasOptionData && (bestPlayScore < tuning.optionScoreMin || bestPlayOpenInterest < tuning.optionOiMin)) return false;
 
     const stackAggregateScore = alert.timeframeStack?.aggregateScore ?? 0;
 
@@ -2477,9 +3059,10 @@ export function BreakoutAlertBar({
     }
 
     const stackDirectionalConflict =
+      hasOptionData &&
       stackAgreement >= 55 && (
-        (stackBias === 'bullish' && bestPlay.direction === 'PUT') ||
-        (stackBias === 'bearish' && bestPlay.direction === 'CALL')
+        (stackBias === 'bullish' && bestPlayDirection === 'PUT') ||
+        (stackBias === 'bearish' && bestPlayDirection === 'CALL')
       );
     if (stackDirectionalConflict) return false;
 
@@ -2515,16 +3098,17 @@ export function BreakoutAlertBar({
 
     // No major conflict (e.g., bearish pattern on bullish alert)
     const hasConflict = alert.patterns?.some(
-      (p: { type?: string }) => (p.type === 'bearish' && bestPlay.direction === 'CALL') || (p.type === 'bullish' && bestPlay.direction === 'PUT')
+      (p: { type?: string }) => (p.type === 'bearish' && bestPlayDirection === 'CALL') || (p.type === 'bullish' && bestPlayDirection === 'PUT')
     );
     if (hasConflict) return false;
 
     // Risk/reward filter: PT/Stop must be at least 1.5:1
-    const rrNumerator = (bestPlay.pt ?? 0) - (bestPlay.premium ?? 0);
-    const rrDenominator = (bestPlay.premium ?? 0) - (bestPlay.stop ?? 0);
-    if (rrNumerator <= 0 || rrDenominator <= 0) return false;
-    const rrRatio = rrNumerator / rrDenominator;
-    if (!Number.isFinite(rrRatio) || rrRatio < tuning.rrMin) return false;
+    if (hasOptionData) {
+      const rrPct = getOptionPlayRiskRewardPercent(bestPlay);
+      if (rrPct == null) return false;
+      const rrRatio = rrPct / 100;
+      if (!Number.isFinite(rrRatio) || rrRatio < tuning.rrMin) return false;
+    }
 
     // Show alert for compression/squeeze if MACD is flat and RSI is oversold/overbought
     const macdFlat = Math.abs(alert.momentumStrength ?? 0) < 8;
@@ -2534,22 +3118,112 @@ export function BreakoutAlertBar({
     }
     return true;
   }
-  const MIN_ALERT_CARD_SCORE = 60;
+  const getSignalQualityRank = (quality: ScannerResult['signalQuality']): 0 | 1 | 2 | 3 => {
+    if (quality === 'HIGH') return 3;
+    if (quality === 'MEDIUM') return 2;
+    if (quality === 'LOW') return 1;
+    return 0;
+  };
+
+  const getSymbolEdge = (alert: ScannerResult): { winRate: number | null; sample: number } => {
+    const stats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
+    if (!stats || stats.completed <= 0) return { winRate: null, sample: 0 };
+    return {
+      winRate: stats.wins / stats.completed,
+      sample: stats.completed,
+    };
+  };
+
+  const getSetupOdds = (alert: ScannerResult): number => {
+    const breakoutScore = Math.max(0, Math.min(100, alert.breakoutScore ?? 0));
+    const momentumAbs = Math.max(0, Math.min(100, Math.abs(alert.momentumStrength ?? 0)));
+    const volumeEdge = Math.max(0, Math.min(100, ((alert.volumeSpike ?? 1) - 0.85) * 100));
+    const compressionStrength = Number.isFinite(alert.compression?.archStrength)
+      ? (alert.compression?.archStrength as number)
+      : Number.isFinite(alert.compression?.sparkScore)
+        ? (alert.compression?.sparkScore as number)
+        : 0;
+
+    const qualityRank = getSignalQualityRank(alert.signalQuality);
+    const qualityBoost =
+      qualityRank === 3
+        ? 9
+        : qualityRank === 2
+          ? 2
+          : qualityRank === 1
+            ? -10
+            : -18;
+
+    const { winRate, sample } = getSymbolEdge(alert);
+    const edgeBoost =
+      winRate == null || sample < 20
+        ? 0
+        : Math.max(-8, Math.min(8, Math.round((winRate - 0.54) * 45)));
+
+    const stagePenalty = getSetupStage(alert) === 'SETUP DEVELOPING' ? 4 : 0;
+
+    const raw =
+      breakoutScore * 0.52 +
+      momentumAbs * 0.23 +
+      volumeEdge * 0.15 +
+      Math.max(0, Math.min(100, compressionStrength)) * 0.10 +
+      qualityBoost +
+      edgeBoost -
+      stagePenalty;
+
+    return Math.max(0, Math.min(100, Math.round(raw)));
+  };
+
+  const isHighChanceSetup = (alert: ScannerResult, setupOdds: number): boolean => {
+    const qualityRank = getSignalQualityRank(alert.signalQuality);
+    if (qualityRank < 2) return false;
+
+    const stage = getSetupStage(alert);
+    const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
+    const volumeSpike = alert.volumeSpike ?? 1;
+    const breakoutScore = alert.breakoutScore ?? 0;
+    const { winRate, sample } = getSymbolEdge(alert);
+
+    const baseOddsMin = stage === 'READY' ? 68 : 74;
+    const edgePenalty = sample >= 28 && winRate != null && winRate < 0.5 ? 6 : 0;
+    if (setupOdds < baseOddsMin + edgePenalty) return false;
+
+    if (stage === 'READY') {
+      if (breakoutScore < 64 && momentumAbs < 24) return false;
+      if (volumeSpike < (marketPushMode ? 0.95 : 1.05) && momentumAbs < 30) return false;
+    } else {
+      if (breakoutScore < 66) return false;
+      if (momentumAbs < 18) return false;
+      if (volumeSpike < 1.05) return false;
+    }
+
+    return true;
+  };
+
+  const MIN_ALERT_CARD_SCORE = 62;
+  const MAX_VISIBLE_ALERTS = 3;
   const monitoredAlerts = (results || [])
-    .filter((alert) => (alert.breakoutScore ?? 0) >= MIN_ALERT_CARD_SCORE)
-    .filter((alert) => (isSetupStartingTight(alert) && isActionablePlay(alert)) || (isExpansionDetected(alert) && isLegitExpansionPlay(alert)))
+    .map((alert) => ({ alert, setupOdds: getSetupOdds(alert) }))
+    .filter(({ alert }) => (alert.breakoutScore ?? 0) >= MIN_ALERT_CARD_SCORE)
+    .filter(({ alert }) =>
+      (isSetupStartingTight(alert) && isActionablePlay(alert)) ||
+      (isExpansionDetected(alert) && isLegitExpansionPlay(alert))
+    )
+    .filter(({ alert, setupOdds }) => isHighChanceSetup(alert, setupOdds))
     .slice()
     .sort((a, b) => {
-    const stageA = getSetupStage(a);
-    const stageB = getSetupStage(b);
-    if (stageA !== stageB) return stageA === 'READY' ? -1 : 1;
-    return (b.breakoutScore || 0) - (a.breakoutScore || 0);
-  });
+      const stageA = getSetupStage(a.alert);
+      const stageB = getSetupStage(b.alert);
+      if (stageA !== stageB) return stageA === 'READY' ? -1 : 1;
+      if (b.setupOdds !== a.setupOdds) return b.setupOdds - a.setupOdds;
+      return (b.alert.breakoutScore || 0) - (a.alert.breakoutScore || 0);
+    })
+    .slice(0, MAX_VISIBLE_ALERTS);
 
   if (monitoredAlerts.length > 0) {
     return (
       <div className="flex flex-wrap gap-2 mb-3">
-        {monitoredAlerts.map((alert) => {
+        {monitoredAlerts.map(({ alert, setupOdds }) => {
           const momentumStrength = alert.momentumStrength ?? 0;
           const isBearish =
             alert.breakoutSignal === 'BREAKDOWN' ||
@@ -2572,6 +3246,27 @@ export function BreakoutAlertBar({
               : 0;
           const volumeValue = alert.dailyVolume ?? alert.volume;
           const volumeElevated = (alert.volumeSpike ?? 0) > 1.2;
+          const topPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+          const optionOpenInterest = getOptionPlayOpenInterest(topPlay);
+          const optionRrPct = getOptionPlayRiskRewardPercent(topPlay);
+          const symbolStats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
+          const symbolWinRatePct =
+            symbolStats && symbolStats.completed > 0
+              ? (symbolStats.wins / symbolStats.completed) * 100
+              : null;
+          const alertDirection = getAlertDirection(alert);
+          const latestDirectionalLog =
+            alertDirection === 'bearish'
+              ? (symbolStats?.latestBearish ?? symbolStats?.latest)
+              : (symbolStats?.latestBullish ?? symbolStats?.latest);
+          const structuralRrPct = getStructuralRiskRewardPercent(latestDirectionalLog, alertDirection);
+          const oiGaugeValue = optionOpenInterest > 0 ? optionOpenInterest : (symbolWinRatePct ?? 0);
+          const oiGaugeMax = optionOpenInterest > 0 ? 5000 : 100;
+          const oiGaugeLabel = optionOpenInterest > 0 ? 'OI' : 'WR';
+          const rrGaugeValue = optionRrPct ?? structuralRrPct ?? 0;
+          const rrGaugeLabel = optionRrPct != null ? 'R/R' : structuralRrPct != null ? 'S/R' : 'R/R';
+          const rrGaugeColor = optionRrPct != null ? '#22d3ee' : structuralRrPct != null ? '#38bdf8' : '#64748b';
+          const symbolSampleCount = symbolStats?.completed ?? 0;
 
           // Reasoning logic for user-friendly explanation
           let reasoning = '';
@@ -2679,7 +3374,10 @@ export function BreakoutAlertBar({
                   {signalTag}
                 </span>
                 <span className="text-[10px] font-mono text-amber-300/95 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-500/10">
-                  {Math.round(alert.breakoutScore ?? 0)}
+                  B {Math.round(alert.breakoutScore ?? 0)}
+                </span>
+                <span className="text-[10px] font-mono text-sky-200/95 px-1.5 py-0.5 rounded border border-sky-400/30 bg-sky-500/10">
+                  ODDS {setupOdds}%
                 </span>
               </div>
 
@@ -2708,13 +3406,13 @@ export function BreakoutAlertBar({
                   <div className="text-[12px] text-cyan-200 font-mono mt-1 text-center neon-text">
                     SETUP DEVELOPING: monitoring compression and waiting for expansion trigger.
                   </div>
-                ) : isActionablePlay(alert) ? (
+                ) : setupOdds >= 70 ? (
                   <div className="text-[12px] text-emerald-200 font-mono mt-1 text-center neon-text">
-                    READY: expansion detected with options alignment.
+                    READY: high-probability expansion setup validated.
                   </div>
                 ) : (
                   <div className="text-[12px] text-amber-300 font-mono mt-1 text-center neon-text">
-                    READY market structure, but options quality filters are below threshold.
+                    READY market structure, waiting for stronger confluence.
                   </div>
                 )}
                 {/* Holographic overlay */}
@@ -2784,29 +3482,21 @@ export function BreakoutAlertBar({
                 />
                 {/* New: OI Gauge */}
                 <RadialGauge
-                  value={alert.optionPlays?.[0]?.openInterest || 0}
+                  value={oiGaugeValue}
                   min={0}
-                  max={5000}
-                  label="OI"
-                  color="#22d3ee"
+                  max={oiGaugeMax}
+                  label={oiGaugeLabel}
+                  color={optionOpenInterest > 0 ? "#22d3ee" : "#38bdf8"}
                   bg="#0f172a"
                   size={38}
                 />
                 {/* New: RR Gauge */}
                 <RadialGauge
-                  value={(() => {
-                    const topPlay = alert.optionPlays?.[0];
-                    if (!topPlay) return 0;
-                    const rrTop = (topPlay.pt ?? 0) - (topPlay.premium ?? 0);
-                    const rrBottom = (topPlay.premium ?? 0) - (topPlay.stop ?? 0);
-                    if (rrTop <= 0 || rrBottom <= 0) return 0;
-                    const rrPct = (rrTop / rrBottom) * 100;
-                    return Number.isFinite(rrPct) ? rrPct : 0;
-                  })()}
+                  value={rrGaugeValue}
                   min={0}
                   max={400}
-                  label="R/R"
-                  color="#22d3ee"
+                  label={rrGaugeLabel}
+                  color={rrGaugeColor}
                   bg="#0f172a"
                   size={38}
                 />
@@ -2824,6 +3514,21 @@ export function BreakoutAlertBar({
               {/* Option Play Recommendation (always visible if present) */}
               {/* Option Play Dropdown (only visible on click) */}
               <OptionPlayDropdown optionPlays={alert.optionPlays || []} />
+
+              {(symbolWinRatePct != null || structuralRrPct != null) && (
+                <div
+                  className="mb-1 mt-1 flex items-center justify-between rounded-lg border px-2 py-1 text-[9px] font-mono"
+                  style={{ borderColor: alertColor + '2e', backgroundColor: 'rgba(8,12,20,0.52)' }}
+                >
+                  <span className="text-slate-200/80">
+                    24h WR <span className="font-black text-cyan-200">{symbolWinRatePct != null ? `${Math.round(symbolWinRatePct)}%` : '--'}</span>
+                  </span>
+                  <span className="text-slate-300/80">N {symbolSampleCount}</span>
+                  <span className="text-slate-200/80">
+                    S/R <span className="font-black text-sky-200">{structuralRrPct != null ? `${(structuralRrPct / 100).toFixed(2)}x` : '--'}</span>
+                  </span>
+                </div>
+              )}
 
               {/* Momentum Meter — segmented Tactical-style HUD */}
               <MomentumHudMeter value={alert.momentumStrength ?? 0} rsiValue={alert.rsiValue} />

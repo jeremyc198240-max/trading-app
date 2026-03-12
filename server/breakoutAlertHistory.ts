@@ -37,6 +37,11 @@ export interface BreakoutAlertInput {
   healthGrade?: string;
   signalQuality?: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE";
   expansionDirection?: "bullish" | "bearish" | null;
+  tvRsi?: number;
+  tvAdx?: number;
+  tvRecommendAll?: number;
+  tvTrendDirection?: "bullish" | "bearish" | "neutral";
+  tvTrendStrength?: number;
   warnings?: string[];
   compression?: BreakoutCompressionSnapshot;
 }
@@ -55,6 +60,11 @@ export interface BreakoutAlertSnapshot {
   healthScore: number;
   healthGrade: string;
   signalQuality: "HIGH" | "MEDIUM" | "LOW" | "UNRELIABLE";
+  tvRsi?: number;
+  tvAdx?: number;
+  tvRecommendAll?: number;
+  tvTrendDirection?: "bullish" | "bearish" | "neutral";
+  tvTrendStrength?: number;
   warnings: string[];
   compression: {
     sparkScore: number;
@@ -297,6 +307,17 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
   const entryPrice = input.lastPrice;
   const levels = buildLevels(entryPrice, direction);
   const compression = input.compression || {};
+  const tvRsi = Number.isFinite(input.tvRsi as number) ? parseNum(input.tvRsi) : undefined;
+  const tvAdx = Number.isFinite(input.tvAdx as number) ? parseNum(input.tvAdx) : undefined;
+  const tvRecommendAll = Number.isFinite(input.tvRecommendAll as number)
+    ? parseNum(input.tvRecommendAll)
+    : undefined;
+  const tvTrendStrength = Number.isFinite(input.tvTrendStrength as number)
+    ? parseNum(input.tvTrendStrength)
+    : undefined;
+  const tvTrendDirection = input.tvTrendDirection === "bullish" || input.tvTrendDirection === "bearish" || input.tvTrendDirection === "neutral"
+    ? input.tvTrendDirection
+    : undefined;
   const id = `${input.symbol}-${now}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 
   const snapshot: BreakoutAlertSnapshot = {
@@ -313,6 +334,11 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
     healthScore: parseNum(input.healthScore, 50),
     healthGrade: String(input.healthGrade || "C"),
     signalQuality: input.signalQuality || "LOW",
+    tvRsi,
+    tvAdx,
+    tvRecommendAll,
+    tvTrendDirection,
+    tvTrendStrength,
     warnings: Array.isArray(input.warnings) ? input.warnings.slice(0, 10) : [],
     compression: {
       sparkScore: parseNum(compression.sparkScore, 0),
