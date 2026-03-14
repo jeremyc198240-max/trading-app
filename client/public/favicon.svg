@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Trading icon">
+  <defs>
+    <pattern id="grid" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M 8 0 L 0 0 0 8" fill="none" stroke="#0d1230" stroke-width="0.5" />
+    </pattern>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="64" height="64" fill="#04050d" />
+  <rect width="64" height="64" fill="url(#grid)" opacity="0.45" />
+
+  <g stroke="#9d36ff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M 32 10 L 34.4 18 L 34.4 46 L 32 54 L 29.6 46 L 29.6 18 Z" />
+    <rect x="22" y="24" width="4.4" height="14" />
+    <rect x="37.6" y="24" width="4.4" height="14" />
+    <line x1="17" y1="31" x2="19.2" y2="31" />
+    <line x1="44.8" y1="31" x2="47" y2="31" />
+  </g>
+</svg>
