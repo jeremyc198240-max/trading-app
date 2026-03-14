@@ -1,5 +1,6 @@
 import { computeMetaEngine, type SessionSplit } from "./metaEngine";
 import { computeMarketHealth, type MarketHealthIndicators } from './indicators';
+import { getSignalMetrics, type SignalMetrics } from './signalHistory';
 
 type Grade = 'A' | 'B' | 'C' | 'D' | 'F';
 
@@ -108,6 +109,29 @@ interface TacticalOtm {
   rationale?: string;
 }
 
+interface TacticalHistoryCalibration {
+  sampleSize: number;
+  decisiveWinRate: number;
+  avgR: number;
+  edge: 'positive' | 'neutral' | 'negative';
+  confidenceAdjustment: number;
+}
+
+interface TacticalTradePlan {
+  entry: number;
+  entryZoneLow: number;
+  entryZoneHigh: number;
+  stop: number;
+  targets: number[];
+  rrLadder: number[];
+  riskRewardLabel: string;
+  confidencePct: number;
+  confidenceLabel: 'low' | 'medium' | 'high';
+  confidenceReasons: string[];
+  positionSizing: string;
+  timeline: string;
+}
+
 interface TacticalAdvice {
   strategy: string;
   bias: 'bullish' | 'bearish' | 'neutral';
@@ -122,6 +146,8 @@ interface TacticalAdvice {
   keyLevel?: number;
   atrValue?: number;
   otm?: TacticalOtm;
+  historyCalibration?: TacticalHistoryCalibration;
+  tradePlan?: TacticalTradePlan;
 }
 
 const CONFIG = {
@@ -138,6 +164,8 @@ const CONFIG = {
   },
   SWEEP_BUFFER_PCT: 0.001
 };
+
+const clampNum = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 export function assignGrade(overall: number, trendConfidence: number, volumeConfidence: number, patternConfidence: number, marketConfidence: number, signals: any) {
   const roundedOverall = Math.round(overall);
@@ -537,7 +565,8 @@ export function computeTactical(
   vwapLast?: number,
   liquiditySweep?: LiquiditySweep,
   divergenceWarning?: DivergenceWarning,
-  marketHealth?: MarketHealthIndicators
+  marketHealth?: MarketHealthIndicators,
+  historicalMetrics?: SignalMetrics
 ): TacticalAdvice {
   const notes: string[] = [];
   let strategy = "NEUTRAL";
@@ -673,7 +702,40 @@ export function computeTactical(
   }
 
   const absScore = Math.abs(directionScore);
-  const confRaw = Math.min(1, (absScore / 30) * 0.5 + (marketConfidence / 100) * 0.3 + (candleStrength.score / 100) * 0.2);
+  let confRaw = Math.min(1, (absScore / 30) * 0.5 + (marketConfidence / 100) * 0.3 + (candleStrength.score / 100) * 0.2);
+
+  const historySampleSize = historicalMetrics?.sample?.completedSignals ?? 0;
+  let historyCalibration: TacticalHistoryCalibration | undefined;
+  if (historySampleSize >= 12) {
+    const decisiveWinRate = Number(historicalMetrics?.rates?.decisiveWinRate ?? 0);
+    const avgR = Number(historicalMetrics?.expectancy?.avgR ?? 0);
+    const reliability = clampNum(historySampleSize / 80, 0, 1);
+    const winEdge = (decisiveWinRate - 50) / 50;
+    const rEdge = clampNum(avgR / 2, -1, 1);
+    const adjustment = clampNum((winEdge * 0.12 + rEdge * 0.08) * reliability, -0.14, 0.14);
+    confRaw = clampNum(confRaw + adjustment, 0.05, 0.95);
+
+    let edge: 'positive' | 'neutral' | 'negative' = 'neutral';
+    if (decisiveWinRate >= 54 && avgR >= 0) edge = 'positive';
+    else if (decisiveWinRate <= 47 || avgR < 0) edge = 'negative';
+
+    historyCalibration = {
+      sampleSize: historySampleSize,
+      decisiveWinRate: Number(decisiveWinRate.toFixed(1)),
+      avgR: Number(avgR.toFixed(2)),
+      edge,
+      confidenceAdjustment: Math.round(adjustment * 100),
+    };
+
+    if (Math.abs(adjustment) >= 0.02) {
+      notes.push(
+        adjustment > 0
+          ? `History calibration boosted confidence (${decisiveWinRate.toFixed(1)}% decisive wins, ${historySampleSize} samples)`
+          : `History calibration reduced confidence (${decisiveWinRate.toFixed(1)}% decisive wins, ${historySampleSize} samples)`
+      );
+    }
+  }
+
   if (confRaw >= 0.7) confidence = 'high';
   else if (confRaw >= 0.4) confidence = 'medium';
   else confidence = 'low';
@@ -686,9 +748,8 @@ export function computeTactical(
   ];
   const finalNotes = Array.from(new Set(prioritized)).slice(0, 3);
 
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
   const roundedScore = Math.round(directionScore);
-  const directionMeter = clamp(Math.round(((roundedScore + 30) / 60) * 100), 0, 100);
+  const directionMeter = clampNum(Math.round(((roundedScore + 30) / 60) * 100), 0, 100);
 
   const trendMeter = emaCloud
     ? emaCloud.trend === 'bullish'
@@ -698,11 +759,11 @@ export function computeTactical(
         : 50
     : 50;
 
-  const fallbackMomentum = clamp(Math.round(50 + roundedScore * 1.4), 0, 100);
-  const fallbackRsi = clamp(Math.round(50 + roundedScore * 0.9), 0, 100);
-  const fallbackMacd = clamp(Math.round(50 + (roundedScore / 12) * 16), 0, 100);
-  const fallbackBollinger = clamp(Math.round(50 + roundedScore * 0.8), 0, 100);
-  const fallbackAdx = clamp(Math.round(28 + Math.abs(roundedScore) * 1.8), 0, 100);
+  const fallbackMomentum = clampNum(Math.round(50 + roundedScore * 1.4), 0, 100);
+  const fallbackRsi = clampNum(Math.round(50 + roundedScore * 0.9), 0, 100);
+  const fallbackMacd = clampNum(Math.round(50 + (roundedScore / 12) * 16), 0, 100);
+  const fallbackBollinger = clampNum(Math.round(50 + roundedScore * 0.8), 0, 100);
+  const fallbackAdx = clampNum(Math.round(28 + Math.abs(roundedScore) * 1.8), 0, 100);
 
   let contributors: TacticalContributor[] = [
     { name: 'Momentum', value: fallbackMomentum, strength: fallbackMomentum },
@@ -718,7 +779,7 @@ export function computeTactical(
     const rsiValue = marketHealth.rsi.value;
     const macdTrend = marketHealth.macd.trend;
     const bbPercentB = marketHealth.bollingerBands.percentB;
-    const momentumScore = clamp(
+    const momentumScore = clampNum(
       Math.round(
         50 +
         marketHealth.macd.histogram * 18 +
@@ -762,10 +823,10 @@ export function computeTactical(
 
     contributors = [
       { name: 'Momentum', value: momentumScore, strength: momentumScore },
-      { name: 'RSI', value: Math.round(rsiValue), strength: clamp(Math.round(rsiValue), 0, 100) },
-      { name: 'MACD', value: clamp(Math.round(50 + marketHealth.macd.histogram * 16), 0, 100), strength: clamp(Math.round(50 + marketHealth.macd.histogram * 16), 0, 100) },
-      { name: 'Bollinger', value: Math.round(bbPercentB), strength: clamp(Math.round(bbPercentB), 0, 100) },
-      { name: 'ADX', value: Math.round(marketHealth.adx.value), strength: clamp(Math.round(marketHealth.adx.value), 0, 100) },
+      { name: 'RSI', value: Math.round(rsiValue), strength: clampNum(Math.round(rsiValue), 0, 100) },
+      { name: 'MACD', value: clampNum(Math.round(50 + marketHealth.macd.histogram * 16), 0, 100), strength: clampNum(Math.round(50 + marketHealth.macd.histogram * 16), 0, 100) },
+      { name: 'Bollinger', value: Math.round(bbPercentB), strength: clampNum(Math.round(bbPercentB), 0, 100) },
+      { name: 'ADX', value: Math.round(marketHealth.adx.value), strength: clampNum(Math.round(marketHealth.adx.value), 0, 100) },
       { name: 'Direction', value: directionMeter, strength: directionMeter },
     ];
 
@@ -835,7 +896,12 @@ export function computeTactical(
   if (typeof lastPrice === 'number' && atrValue && bias !== 'neutral') {
     const strikeBase = bias === 'bullish' ? lastPrice + atrValue * 0.6 : lastPrice - atrValue * 0.6;
     const strike = Number(strikeBase.toFixed(2));
-    const itmProb = confidence === 'high' ? 62 : confidence === 'medium' ? 56 : 50;
+    const baseItmProb = confidence === 'high' ? 62 : confidence === 'medium' ? 56 : 50;
+    let itmProb = baseItmProb;
+    if (historyCalibration) {
+      const calibrated = clampNum(Math.round(historyCalibration.decisiveWinRate), 42, 72);
+      itmProb = clampNum(Math.round(baseItmProb * 0.45 + calibrated * 0.55), 40, 74);
+    }
     const targetPrice = Number((bias === 'bullish' ? lastPrice + atrValue * 1.2 : lastPrice - atrValue * 1.2).toFixed(2));
     const stopPrice = Number((bias === 'bullish' ? lastPrice - atrValue * 0.8 : lastPrice + atrValue * 0.8).toFixed(2));
     otm = {
@@ -849,6 +915,62 @@ export function computeTactical(
       rationale: bias === 'bullish'
         ? 'Momentum + confirmation stack supports an intraday upside continuation setup.'
         : 'Momentum + confirmation stack supports an intraday downside continuation setup.',
+    };
+  }
+
+  let tradePlan: TacticalTradePlan | undefined;
+  if (typeof lastPrice === 'number' && lastPrice > 0 && bias !== 'neutral') {
+    const atrBase = atrValue ?? Math.max(lastPrice * 0.003, 0.6);
+    const stopDistance = Math.max(
+      atrBase * (volRegime === 'elevated' ? 0.95 : 0.8),
+      lastPrice * 0.0018,
+    );
+    const entry = Number(lastPrice.toFixed(2));
+    const stop = Number((bias === 'bullish' ? entry - stopDistance : entry + stopDistance).toFixed(2));
+    const target1 = Number((bias === 'bullish' ? entry + stopDistance * 1.2 : entry - stopDistance * 1.2).toFixed(2));
+    const target2 = Number((bias === 'bullish' ? entry + stopDistance * 1.9 : entry - stopDistance * 1.9).toFixed(2));
+    const target3 = Number((bias === 'bullish' ? entry + stopDistance * 2.7 : entry - stopDistance * 2.7).toFixed(2));
+    const riskPerPoint = Math.max(Math.abs(entry - stop), 0.01);
+    const rrLadder = [target1, target2, target3].map((target) =>
+      Number((Math.abs(target - entry) / riskPerPoint).toFixed(2)),
+    );
+    const confidencePct = clampNum(Math.round(confRaw * 100), 35, 95);
+    const confidenceReasons: string[] = [
+      `Directional score ${roundedScore >= 0 ? '+' : ''}${roundedScore} with ${indicators?.agreementPct ?? 50}% indicator agreement`,
+      `${volRegime === 'elevated' ? 'Elevated' : 'Normal'} volatility regime with ATR ${atrBase.toFixed(2)}`,
+      historyCalibration
+        ? `Recent decisive win rate ${historyCalibration.decisiveWinRate.toFixed(1)}% on ${historyCalibration.sampleSize} resolved signals`
+        : 'Limited recent history, confidence based on live setup quality only',
+    ];
+    if (divergenceWarning && divergenceWarning.type !== 'none') {
+      confidenceReasons.push(`Protection flag: ${divergenceWarning.description}`);
+    }
+
+    const positionSizing = confidence === 'high'
+      ? 'Beginner sizing: risk up to 1.0% account value, split fills into 2 entries, move stop to breakeven after target 1.'
+      : confidence === 'medium'
+        ? 'Beginner sizing: risk 0.5%-0.75% account value, take partial at target 1, avoid adding if spread widens.'
+        : 'Beginner sizing: risk 0.25%-0.5% account value or paper trade; wait for a second confirmation candle before entry.';
+
+    const timeline = confidence === 'high'
+      ? 'Primary move expectation: next 15-90 minutes.'
+      : confidence === 'medium'
+        ? 'Primary move expectation: next 30-120 minutes.'
+        : 'Primary move expectation: wait for confirmation; avoid forcing same-candle entries.';
+
+    tradePlan = {
+      entry,
+      entryZoneLow: Number((entry - Math.max(0.2, stopDistance * 0.35)).toFixed(2)),
+      entryZoneHigh: Number((entry + Math.max(0.2, stopDistance * 0.35)).toFixed(2)),
+      stop,
+      targets: [target1, target2, target3],
+      rrLadder,
+      riskRewardLabel: `T1 ${rrLadder[0]}R • T2 ${rrLadder[1]}R • T3 ${rrLadder[2]}R`,
+      confidencePct,
+      confidenceLabel: confidence,
+      confidenceReasons: confidenceReasons.slice(0, 4),
+      positionSizing,
+      timeline,
     };
   }
 
@@ -866,6 +988,8 @@ export function computeTactical(
     keyLevel,
     atrValue,
     otm,
+    historyCalibration,
+    tradePlan,
   };
 }
 
@@ -873,9 +997,13 @@ export function analyzeSymbol(
   symbol: string,
   ohlc: OHLC[],
   gammaSummary: { maxAbsGammaStrike: number | null } = { maxAbsGammaStrike: null },
-  sessionSplit?: SessionSplit
+  sessionSplit?: SessionSplit,
+  currentPrice?: number
 ) {
-  const lastPrice = ohlc.length > 0 ? ohlc[ohlc.length - 1].close : 0;
+  const lastPrice =
+    Number.isFinite(currentPrice as number) && (currentPrice as number) > 0
+      ? Number(currentPrice)
+      : (ohlc.length > 0 ? ohlc[ohlc.length - 1].close : 0);
   
   const vwapSeries = computeVWAPSeries(ohlc);
   const momDiv = detectMomentumDivergence(lastPrice, vwapSeries);
@@ -886,7 +1014,7 @@ export function analyzeSymbol(
   const candleStrength = computeCandleStrength(ohlc);
   const liquiditySweep = detectLiquiditySweep(ohlc);
   const emaCloud = computeEMACloud(ohlc);
-  const marketHealth = computeMarketHealth(ohlc, vwapSeries);
+  const marketHealth = computeMarketHealth(ohlc, vwapSeries, lastPrice);
 
   const marketConfidence = marketHealth.overallHealth;
   const trendConfidence = Math.round((marketHealth.adx.value / 100) * 100);
@@ -895,6 +1023,13 @@ export function analyzeSymbol(
 
   // Analyze divergence risk for protection warnings
   const divergenceWarning = analyzeDivergenceRisk(ohlc, vwapSeries, momDiv, volSpike, exhaustion);
+
+  let historicalMetrics: SignalMetrics | undefined;
+  try {
+    historicalMetrics = getSignalMetrics(symbol, 96);
+  } catch {
+    historicalMetrics = undefined;
+  }
 
   const tactical = computeTactical(
     bullishPower,
@@ -910,7 +1045,8 @@ export function analyzeSymbol(
     vwapSeries.length ? vwapSeries[vwapSeries.length - 1] : undefined,
     liquiditySweep,
     divergenceWarning,
-    marketHealth
+    marketHealth,
+    historicalMetrics
   );
 
   const overall = (bullishPower.meter + candleStrength.score + marketConfidence) / 3;
@@ -928,7 +1064,8 @@ export function analyzeSymbol(
     emaCloud,
     gammaForMeta,
     tactical,
-    sessionSplit
+    sessionSplit,
+    lastPrice
   );
 
   return {

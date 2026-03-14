@@ -1,0 +1,888 @@
+{
+  "baseline": {
+    "n": 1588,
+    "wins": 894,
+    "losses": 693,
+    "missed": 1,
+    "decisive": 1587,
+    "winRate": 0.5633,
+    "actionWin": 0.563
+  },
+  "topRules": [
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1427,
+      "lift": 0.1426,
+      "actionLift": 0.1429,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 85,
+      "wins": 60,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 85,
+      "winRate": 0.7059,
+      "actionWin": 0.7059
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1392,
+      "lift": 0.1391,
+      "actionLift": 0.1394,
+      "sf": 80,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "LOW_VOLUME"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 84,
+      "wins": 59,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 84,
+      "winRate": 0.7024,
+      "actionWin": 0.7024
+    },
+    {
+      "score": 0.1368,
+      "lift": 0.1367,
+      "actionLift": 0.137,
+      "sf": 60,
+      "mf": 40,
+      "vf": 1.4,
+      "qf": 0,
+      "warns": [
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKOUT",
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "WAIT",
+        "NOW"
+      ],
+      "n": 80,
+      "wins": 56,
+      "losses": 24,
+      "missed": 0,
+      "decisive": 80,
+      "winRate": 0.7,
+      "actionWin": 0.7
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TREND_CONFLICT",
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 72,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 2,
+      "warns": [
+        "TREND_CONFLICT",
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    },
+    {
+      "score": 0.1356,
+      "lift": 0.1355,
+      "actionLift": 0.1358,
+      "sf": 76,
+      "mf": 40,
+      "vf": 1.5,
+      "qf": 0,
+      "warns": [
+        "TREND_CONFLICT",
+        "TV_TREND_CONFLICT"
+      ],
+      "sigs": [
+        "BREAKDOWN"
+      ],
+      "phases": [
+        "READY",
+        "NOW"
+      ],
+      "n": 83,
+      "wins": 58,
+      "losses": 25,
+      "missed": 0,
+      "decisive": 83,
+      "winRate": 0.6988,
+      "actionWin": 0.6988
+    }
+  ],
+  "bySignal": [
+    {
+      "key": "BREAKDOWN",
+      "n": 573,
+      "wins": 324,
+      "losses": 249,
+      "missed": 0,
+      "decisive": 573,
+      "winRate": 0.5654,
+      "actionWin": 0.5654
+    },
+    {
+      "key": "EXPANSION",
+      "n": 544,
+      "wins": 314,
+      "losses": 229,
+      "missed": 1,
+      "decisive": 543,
+      "winRate": 0.5783,
+      "actionWin": 0.5772
+    },
+    {
+      "key": "BREAKOUT",
+      "n": 455,
+      "wins": 249,
+      "losses": 206,
+      "missed": 0,
+      "decisive": 455,
+      "winRate": 0.5473,
+      "actionWin": 0.5473
+    },
+    {
+      "key": "MOMENTUM",
+      "n": 16,
+      "wins": 7,
+      "losses": 9,
+      "missed": 0,
+      "decisive": 16,
+      "winRate": 0.4375,
+      "actionWin": 0.4375
+    }
+  ],
+  "byPhase": [
+    {
+      "key": "NOW",
+      "n": 523,
+      "wins": 277,
+      "losses": 245,
+      "missed": 1,
+      "decisive": 522,
+      "winRate": 0.5307,
+      "actionWin": 0.5296
+    },
+    {
+      "key": "WAIT",
+      "n": 389,
+      "wins": 241,
+      "losses": 148,
+      "missed": 0,
+      "decisive": 389,
+      "winRate": 0.6195,
+      "actionWin": 0.6195
+    },
+    {
+      "key": "READY",
+      "n": 383,
+      "wins": 217,
+      "losses": 166,
+      "missed": 0,
+      "decisive": 383,
+      "winRate": 0.5666,
+      "actionWin": 0.5666
+    },
+    {
+      "key": "PREPARE",
+      "n": 293,
+      "wins": 159,
+      "losses": 134,
+      "missed": 0,
+      "decisive": 293,
+      "winRate": 0.5427,
+      "actionWin": 0.5427
+    }
+  ],
+  "byQuality": [
+    {
+      "key": "MEDIUM",
+      "n": 739,
+      "wins": 432,
+      "losses": 307,
+      "missed": 0,
+      "decisive": 739,
+      "winRate": 0.5846,
+      "actionWin": 0.5846
+    },
+    {
+      "key": "HIGH",
+      "n": 528,
+      "wins": 293,
+      "losses": 234,
+      "missed": 1,
+      "decisive": 527,
+      "winRate": 0.556,
+      "actionWin": 0.5549
+    },
+    {
+      "key": "LOW",
+      "n": 273,
+      "wins": 139,
+      "losses": 134,
+      "missed": 0,
+      "decisive": 273,
+      "winRate": 0.5092,
+      "actionWin": 0.5092
+    },
+    {
+      "key": "UNRELIABLE",
+      "n": 48,
+      "wins": 30,
+      "losses": 18,
+      "missed": 0,
+      "decisive": 48,
+      "winRate": 0.625,
+      "actionWin": 0.625
+    }
+  ],
+  "warningImpact": [
+    {
+      "flag": "TREND_CONFLICT",
+      "has": {
+        "n": 63,
+        "wins": 29,
+        "losses": 34,
+        "missed": 0,
+        "decisive": 63,
+        "winRate": 0.4603,
+        "actionWin": 0.4603
+      },
+      "not": {
+        "n": 1525,
+        "wins": 865,
+        "losses": 659,
+        "missed": 1,
+        "decisive": 1524,
+        "winRate": 0.5676,
+        "actionWin": 0.5672
+      }
+    },
+    {
+      "flag": "TV_TREND_CONFLICT",
+      "has": {
+        "n": 544,
+        "wins": 297,
+        "losses": 247,
+        "missed": 0,
+        "decisive": 544,
+        "winRate": 0.546,
+        "actionWin": 0.546
+      },
+      "not": {
+        "n": 1044,
+        "wins": 597,
+        "losses": 446,
+        "missed": 1,
+        "decisive": 1043,
+        "winRate": 0.5724,
+        "actionWin": 0.5718
+      }
+    },
+    {
+      "flag": "TV_LOW_ADX",
+      "has": {
+        "n": 203,
+        "wins": 111,
+        "losses": 92,
+        "missed": 0,
+        "decisive": 203,
+        "winRate": 0.5468,
+        "actionWin": 0.5468
+      },
+      "not": {
+        "n": 1385,
+        "wins": 783,
+        "losses": 601,
+        "missed": 1,
+        "decisive": 1384,
+        "winRate": 0.5658,
+        "actionWin": 0.5653
+      }
+    },
+    {
+      "flag": "LOW_VOLUME",
+      "has": {
+        "n": 214,
+        "wins": 124,
+        "losses": 90,
+        "missed": 0,
+        "decisive": 214,
+        "winRate": 0.5794,
+        "actionWin": 0.5794
+      },
+      "not": {
+        "n": 1374,
+        "wins": 770,
+        "losses": 603,
+        "missed": 1,
+        "decisive": 1373,
+        "winRate": 0.5608,
+        "actionWin": 0.5604
+      }
+    },
+    {
+      "flag": "WEAK_TIME_WINDOW",
+      "has": {
+        "n": 132,
+        "wins": 83,
+        "losses": 49,
+        "missed": 0,
+        "decisive": 132,
+        "winRate": 0.6288,
+        "actionWin": 0.6288
+      },
+      "not": {
+        "n": 1456,
+        "wins": 811,
+        "losses": 644,
+        "missed": 1,
+        "decisive": 1455,
+        "winRate": 0.5574,
+        "actionWin": 0.557
+      }
+    }
+  ]
+}

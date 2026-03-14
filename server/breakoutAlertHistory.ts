@@ -54,6 +54,7 @@ export interface BreakoutAlertSnapshot {
   signal: Exclude<BreakoutSignal, null>;
   direction: BreakoutDirection;
   breakoutScore: number;
+  priceChangePercent?: number;
   momentumStrength: number;
   volumeSpike: number;
   rsiValue: number;
@@ -121,6 +122,8 @@ const PROJECT_ROOT = process.cwd();
 const STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "breakout_alert_history.json");
 const RETENTION_MS = 48 * 60 * 60 * 1000;
 const MIN_RECORD_INTERVAL_MINS = 6;
+const MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS = 2;
+const MIN_RECORD_INTERVAL_DRIFT_MINS = 3;
 const MIN_BREAKOUT_SCORE = 60;
 const OUTCOME_TIMEOUT_MINS = 180;
 const OUTCOME_TIMEOUT_MOVE_PCT = 0.2;
@@ -247,10 +250,28 @@ function isCardCandidate(input: BreakoutAlertInput): boolean {
   const breakoutScore = parseNum(input.breakoutScore, 0);
   if (breakoutScore < MIN_BREAKOUT_SCORE) return false;
 
+  const quality = String(input.signalQuality ?? "LOW").toUpperCase();
+  if (quality === "UNRELIABLE") return false;
+
   const momentumAbs = Math.abs(parseNum(input.momentumStrength, 0));
-  if ((signal === "BREAKOUT" || signal === "BREAKDOWN" || signal === "EXPANSION" || signal === "MOMENTUM") && momentumAbs < 10) {
+  if ((signal === "BREAKOUT" || signal === "BREAKDOWN" || signal === "EXPANSION") && momentumAbs < 12) {
     return false;
   }
+
+  if (signal === "MOMENTUM") {
+    if (quality !== "HIGH") return false;
+    if (breakoutScore < 68) return false;
+    if (momentumAbs < 26) return false;
+  }
+
+  if ((signal === "BREAKOUT" || signal === "BREAKDOWN" || signal === "EXPANSION") && quality === "LOW" && breakoutScore < 72) {
+    return false;
+  }
+
+  const warnings = new Set((input.warnings ?? []).map((warning) => String(warning).toUpperCase()));
+  const hasTrendConflict = warnings.has("TREND_CONFLICT") || warnings.has("TV_TREND_CONFLICT");
+  if (hasTrendConflict && breakoutScore < 74) return false;
+  if (warnings.has("LATE_PHASE_UNCONFIRMED") && breakoutScore < 76) return false;
 
   return true;
 }
@@ -277,17 +298,41 @@ function buildLevels(entryPrice: number, direction: BreakoutDirection): { stopLo
 
 function shouldRecord(input: BreakoutAlertInput, direction: BreakoutDirection): boolean {
   const now = input.timestamp;
+  const signal = String(input.breakoutSignal ?? "").toUpperCase();
+  const isDirectionalSignal =
+    signal === "BREAKOUT" ||
+    signal === "BREAKDOWN" ||
+    signal === "EXPANSION" ||
+    signal === "MOMENTUM";
+
   for (let i = breakoutHistory.length - 1; i >= 0; i--) {
     const last = breakoutHistory[i];
     if (last.symbol !== input.symbol) continue;
 
     const minsSince = (now - last.timestamp) / 60000;
     const signalChanged = last.signal !== String(input.breakoutSignal).toUpperCase();
-    const directionChanged = last.direction !== direction;
+    const directionChanged =
+      last.direction !== direction &&
+      last.direction !== "neutral" &&
+      direction !== "neutral";
     const scoreChanged = Math.abs(last.breakoutScore - parseNum(input.breakoutScore, 0)) >= 8;
     const momentumChanged = Math.abs(last.momentumStrength - parseNum(input.momentumStrength, 0)) >= 12;
 
-    return minsSince >= MIN_RECORD_INTERVAL_MINS || signalChanged || directionChanged || scoreChanged || momentumChanged;
+    if (minsSince >= MIN_RECORD_INTERVAL_MINS) return true;
+
+    if (signalChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
+      return true;
+    }
+
+    if (isDirectionalSignal && directionChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
+      return true;
+    }
+
+    if ((scoreChanged || momentumChanged) && minsSince >= MIN_RECORD_INTERVAL_DRIFT_MINS) {
+      return true;
+    }
+
+    return false;
   }
 
   return true;
@@ -318,6 +363,9 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
   const tvTrendDirection = input.tvTrendDirection === "bullish" || input.tvTrendDirection === "bearish" || input.tvTrendDirection === "neutral"
     ? input.tvTrendDirection
     : undefined;
+  const priceChangePercent = Number.isFinite(input.priceChangePercent as number)
+    ? parseNum(input.priceChangePercent)
+    : undefined;
   const id = `${input.symbol}-${now}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 
   const snapshot: BreakoutAlertSnapshot = {
@@ -328,6 +376,7 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
     signal,
     direction,
     breakoutScore: parseNum(input.breakoutScore, 0),
+    priceChangePercent,
     momentumStrength: parseNum(input.momentumStrength, 0),
     volumeSpike: parseNum(input.volumeSpike, 1),
     rsiValue: parseNum(input.rsiValue, 50),
@@ -459,16 +508,23 @@ export function updateBreakoutAlertOutcomes(
   }
 }
 
-export function getBreakoutAlertLog(limit: number = 200, symbol?: string): BreakoutAlertSnapshot[] {
+export function getBreakoutAlertLog(limit: number = 200, symbol?: string, lookbackHours?: number): BreakoutAlertSnapshot[] {
   pruneOld(Date.now());
 
   const bounded = Number.isFinite(limit) && limit > 0 ? Math.min(2000, Math.floor(limit)) : 200;
+  const boundedHours = Number.isFinite(lookbackHours) && (lookbackHours as number) > 0
+    ? Math.min(48, Math.floor(lookbackHours as number))
+    : null;
+  const cutoff = boundedHours != null ? Date.now() - boundedHours * 60 * 60 * 1000 : null;
   const sym = symbol ? symbol.toUpperCase() : null;
   const scoped = sym
     ? breakoutHistory.filter((row) => row.symbol === sym)
     : breakoutHistory;
+  const filtered = cutoff != null
+    ? scoped.filter((row) => row.timestamp >= cutoff)
+    : scoped;
 
-  return scoped.slice(-bounded).reverse();
+  return filtered.slice(-bounded).reverse();
 }
 
 function summarizeRows(rows: BreakoutAlertSnapshot[]): {

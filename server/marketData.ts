@@ -1,9 +1,11 @@
-// marketData.ts - Multi-source market data (Finnhub primary, Yahoo fallback)
+// marketData.ts - Multi-source market data (Yahoo primary, Finnhub fallback)
 
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY || '';
 const FINNHUB_COOLDOWN_MS = 30 * 1000;
 let finnhubGlobalCooldownUntil = 0;
 let finnhubCooldownLogAt = 0;
+let finnhubCandlesDisabled = false;
+let finnhubCandlesDisabledLogged = false;
 
 let yahooFinanceInstance: any | null = null;
 
@@ -17,6 +19,16 @@ interface FinnhubQuote {
   o: number;  // Open price of the day
   pc: number; // Previous close price
   t: number;  // Timestamp
+}
+
+interface FinnhubCandlesResponse {
+  c?: number[];
+  h?: number[];
+  l?: number[];
+  o?: number[];
+  s?: string;
+  t?: number[];
+  v?: number[];
 }
 
 // Fetch real-time quote from Finnhub
@@ -237,6 +249,26 @@ const INTERVAL_MAP: Record<string, '5m' | '15m' | '30m' | '1h' | '1d'> = {
   '1D': '1d',
 };
 
+function getFinnhubResolution(timeframe: string): string | null {
+  switch (timeframe) {
+    case '5m':
+      return '5';
+    case '15m':
+      return '15';
+    case '30m':
+      return '30';
+    case '1h':
+    case '2h':
+    case '4h':
+      return '60';
+    case '1d':
+    case '1D':
+      return 'D';
+    default:
+      return null;
+  }
+}
+
 function getDateRange(timeframe: string): { period1: Date; period2: Date } {
   const now = new Date();
   const period2 = now;
@@ -247,7 +279,7 @@ function getDateRange(timeframe: string): { period1: Date; period2: Date } {
       period1 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       break;
     case '15m':
-      period1 = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      period1 = new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000);
       break;
     case '30m':
       period1 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -273,8 +305,9 @@ function getDateRange(timeframe: string): { period1: Date; period2: Date } {
 }
 
 function toEST(date: Date): Date {
-  const offsetMs = 5 * 60 * 60 * 1000;
-  return new Date(date.getTime() - offsetMs);
+  // Use America/New_York conversion so DST transitions do not skew session logic.
+  const eastern = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return Number.isFinite(eastern.getTime()) ? eastern : date;
 }
 
 function isRthEst(date: Date): boolean {
@@ -401,6 +434,95 @@ function sanitizeOhlcWicks(candles: OHLC[]): OHLC[] {
   return result;
 }
 
+async function fetchFinnhubCandles(
+  symbol: string,
+  timeframe: string,
+  period1: Date,
+  period2: Date,
+): Promise<OHLC[] | null> {
+  if (finnhubCandlesDisabled) return null;
+  if (!FINNHUB_API_KEY) return null;
+  if (Date.now() < finnhubGlobalCooldownUntil) return null;
+
+  const resolution = getFinnhubResolution(timeframe);
+  if (!resolution) return null;
+
+  const from = Math.max(0, Math.floor(period1.getTime() / 1000));
+  const to = Math.max(from + 60, Math.floor(period2.getTime() / 1000));
+
+  try {
+    const url = `https://finnhub.io/api/v1/stock/candle?symbol=${symbol.toUpperCase()}&resolution=${resolution}&from=${from}&to=${to}&token=${FINNHUB_API_KEY}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        finnhubCandlesDisabled = true;
+        if (!finnhubCandlesDisabledLogged) {
+          console.warn(`[Finnhub] OHLC candle endpoint unavailable (${response.status}); disabling candle fallback.`);
+          finnhubCandlesDisabledLogged = true;
+        }
+        return null;
+      }
+      if (response.status === 429) {
+        finnhubGlobalCooldownUntil = Math.max(finnhubGlobalCooldownUntil, Date.now() + FINNHUB_COOLDOWN_MS);
+      }
+      console.warn(`[Finnhub] OHLC HTTP ${response.status} for ${symbol}/${timeframe}`);
+      return null;
+    }
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      console.warn(`[Finnhub] OHLC non-JSON response for ${symbol}/${timeframe}`);
+      return null;
+    }
+
+    const data = await response.json() as FinnhubCandlesResponse;
+    if (!data || data.s !== 'ok' || !Array.isArray(data.t) || data.t.length === 0) {
+      return null;
+    }
+
+    const open = Array.isArray(data.o) ? data.o : [];
+    const high = Array.isArray(data.h) ? data.h : [];
+    const low = Array.isArray(data.l) ? data.l : [];
+    const close = Array.isArray(data.c) ? data.c : [];
+    const volume = Array.isArray(data.v) ? data.v : [];
+    const len = Math.min(data.t.length, open.length, high.length, low.length, close.length, volume.length);
+    if (len <= 0) return null;
+
+    const candles: OHLC[] = [];
+    for (let i = 0; i < len; i++) {
+      const timeSec = Number(data.t[i]);
+      const o = Number(open[i]);
+      const h = Number(high[i]);
+      const l = Number(low[i]);
+      const c = Number(close[i]);
+      const v = Number(volume[i]);
+
+      if (!Number.isFinite(timeSec) || timeSec <= 0) continue;
+      if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+
+      candles.push({
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: Number.isFinite(v) ? Math.max(0, v) : 0,
+        time: Math.floor(timeSec),
+        timeMs: Math.floor(timeSec) * 1000,
+      });
+    }
+
+    if (candles.length === 0) return null;
+    if (process.env.DEBUG_SIGNALS === '1') {
+      console.log(`[Finnhub] OHLC fallback for ${symbol}/${timeframe}: ${candles.length} candles`);
+    }
+    return candles;
+  } catch (error) {
+    console.warn(`[Finnhub] OHLC error for ${symbol}/${timeframe}:`, error);
+    return null;
+  }
+}
+
 // ----------------------
 // CANDLES (historical)
 // ----------------------
@@ -430,6 +552,40 @@ export async function fetchLiveOHLC(
     return { data, rth, overnight, prevDayRth, isLive: true };
   }
 
+  const tryFinnhubFallback = async (reason: string) => {
+    const finnhubRaw = await fetchFinnhubCandles(symbol, timeframe, period1, period2);
+    if (!finnhubRaw || finnhubRaw.length === 0) return null;
+
+    const finnhubOhlc = sanitizeOhlcWicks(finnhubRaw);
+    if (finnhubOhlc.length === 0) return null;
+
+    const rawSplit = splitSessions(finnhubOhlc);
+    const aggFactor = getAggregationFactor(timeframe);
+    const split = aggFactor > 1 ? {
+      full: aggregateCandles(rawSplit.full, aggFactor),
+      rth: aggregateCandles(rawSplit.rth, aggFactor),
+      overnight: aggregateCandles(rawSplit.overnight, aggFactor),
+      prevDayRth: aggregateCandles(rawSplit.prevDayRth, aggFactor),
+    } : rawSplit;
+
+    lastKnownData.set(lastKnownKey, split);
+    setCache(symbol, timeframe, session, period1, period2, split);
+
+    const data =
+      session === 'RTH' ? split.rth :
+      session === 'OVERNIGHT' ? split.overnight :
+      split.full;
+
+    return {
+      data,
+      rth: split.rth,
+      overnight: split.overnight,
+      prevDayRth: split.prevDayRth,
+      isLive: true,
+      error: `Using Finnhub candles (${reason})`,
+    };
+  };
+
   // Global cooldown after Yahoo 429s to avoid hammering every symbol in scanner loops.
   if (Date.now() < yahooOhlcGlobalCooldownUntil) {
     const remainingMs = yahooOhlcGlobalCooldownUntil - Date.now();
@@ -456,6 +612,9 @@ export async function fetchLiveOHLC(
         error: `Yahoo cooldown active (${remainingSec}s), using cached data`,
       };
     }
+
+    const finnhubFallback = await tryFinnhubFallback(`Yahoo cooldown ${remainingSec}s`);
+    if (finnhubFallback) return finnhubFallback;
 
     return {
       data: [],
@@ -518,6 +677,10 @@ export async function fetchLiveOHLC(
           error: 'Using cached data (no new data available)',
         };
       }
+
+      const finnhubFallback = await tryFinnhubFallback('Yahoo returned no candles');
+      if (finnhubFallback) return finnhubFallback;
+
       return {
         data: [],
         rth: [],
@@ -564,6 +727,10 @@ export async function fetchLiveOHLC(
           error: 'Using cached data (no valid OHLC)',
         };
       }
+
+      const finnhubFallback = await tryFinnhubFallback('Yahoo produced invalid OHLC');
+      if (finnhubFallback) return finnhubFallback;
+
       return {
         data: [],
         rth: [],
@@ -640,6 +807,9 @@ export async function fetchLiveOHLC(
         error: `Using cached data (${effectiveMessage})`,
       };
     }
+
+    const finnhubFallback = await tryFinnhubFallback(effectiveMessage);
+    if (finnhubFallback) return finnhubFallback;
     
     return {
       data: [],
@@ -653,7 +823,7 @@ export async function fetchLiveOHLC(
 }
 
 // ----------------------
-// LIVE SPOT (Finnhub primary, Yahoo fallback)
+// LIVE SPOT (Yahoo primary, Finnhub fallback)
 // With 5-second caching for rate limit protection
 // ----------------------
 export async function fetchLiveSpot(symbol: string): Promise<{
@@ -682,6 +852,16 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       return Number.isFinite(ms) ? ms : null;
     }
     return null;
+  };
+
+  const sanitizeTimestampMs = (rawMs: number | null): number | null => {
+    if (!Number.isFinite(rawMs as number)) return null;
+    const now = Date.now();
+    const ms = Number(rawMs);
+    if (ms <= 0) return null;
+    // Some vendor fields can resolve slightly in the future due clock or TZ quirks.
+    if (ms > now + 2 * 60 * 1000) return now;
+    return ms;
   };
 
   const parseStooqTimestampMs = (datePart: string, timePart: string): number | null => {
@@ -734,7 +914,8 @@ export async function fetchLiveSpot(symbol: string): Promise<{
           ? open
           : cached?.data.prevClose ?? close;
 
-        const timestampMs = parseStooqTimestampMs(cols[1] ?? '', cols[2] ?? '') ?? Date.now();
+        const timestampMs =
+          sanitizeTimestampMs(parseStooqTimestampMs(cols[1] ?? '', cols[2] ?? '')) ?? Date.now();
 
         return {
           symbol: upperSymbol,
@@ -797,12 +978,6 @@ export async function fetchLiveSpot(symbol: string): Promise<{
   // Global cooldown after Yahoo 429s to avoid quote hammering loops.
   if (Date.now() < yahooSpotGlobalCooldownUntil) {
     const remainingSec = Math.max(1, Math.ceil((yahooSpotGlobalCooldownUntil - Date.now()) / 1000));
-    const finnhubFallback = await resolveFinnhubFallback();
-    if (finnhubFallback) {
-      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
-      return finnhubFallback;
-    }
-
     const intradayFallback = await resolveIntradayFallback();
     if (intradayFallback) {
       const intradayResult: SpotCache['data'] = {
@@ -815,6 +990,12 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       };
       spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
       return intradayResult;
+    }
+
+    const finnhubFallback = await resolveFinnhubFallback();
+    if (finnhubFallback) {
+      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+      return finnhubFallback;
     }
 
     if (cached && Date.now() - cached.timestamp <= MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS) {
@@ -849,6 +1030,32 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     const quote = await yahooFinance.quote(upperSymbol);
 
     if (!quote || quote.regularMarketPrice == null) {
+      const intradayFallback = await resolveIntradayFallback();
+      if (intradayFallback) {
+        const intradayResult: SpotCache['data'] = {
+          symbol: upperSymbol,
+          spot: intradayFallback.price,
+          prevClose: cached?.data.prevClose ?? intradayFallback.price,
+          marketState: cached?.data.marketState ?? 'REGULAR',
+          timestamp: new Date(intradayFallback.timestampMs).toISOString(),
+          source: 'yahoo',
+        };
+        spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
+        return intradayResult;
+      }
+
+      const stooqFallback = await resolveStooqFallback();
+      const finnhubFallback = await resolveFinnhubFallback();
+      if (finnhubFallback) {
+        spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+        return finnhubFallback;
+      }
+
+      if (stooqFallback) {
+        spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
+        return stooqFallback;
+      }
+
       // GAP PROTECTION: Return last known spot if available
       if (cached) {
         console.warn(`[Spot] No quote for ${symbol}, using last known: $${cached.data.spot.toFixed(2)}`);
@@ -862,10 +1069,11 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     const preMarketPrice = (quote as any).preMarketPrice;
     const postMarketPrice = (quote as any).postMarketPrice;
     const quotePrevClose = (quote as any).regularMarketPreviousClose || regularPrice;
-    const regularMarketTimeMs = toMs((quote as any).regularMarketTime);
-    const postMarketTimeMs = toMs((quote as any).postMarketTime);
-    const preMarketTimeMs = toMs((quote as any).preMarketTime);
-    const quoteTimeMs = regularMarketTimeMs ?? postMarketTimeMs ?? preMarketTimeMs ?? Date.now();
+    const regularMarketTimeMs = sanitizeTimestampMs(toMs((quote as any).regularMarketTime));
+    const postMarketTimeMs = sanitizeTimestampMs(toMs((quote as any).postMarketTime));
+    const preMarketTimeMs = sanitizeTimestampMs(toMs((quote as any).preMarketTime));
+    const quoteTimeMs =
+      sanitizeTimestampMs(regularMarketTimeMs ?? postMarketTimeMs ?? preMarketTimeMs) ?? Date.now();
 
     const nowEt = toEST(new Date());
     const day = nowEt.getDay();
@@ -932,21 +1140,14 @@ export async function fetchLiveSpot(symbol: string): Promise<{
             console.warn(`[Spot] Yahoo extended-hours quote stale for ${symbol}; using intraday fallback ${spot.toFixed(2)}.`);
           }
         } else {
-          const finnhubQuote = await fetchFinnhubQuote(upperSymbol);
-          const finnhubTsMs = finnhubQuote?.t ? finnhubQuote.t * 1000 : 0;
-          const finnhubIsFresh = finnhubTsMs > 0 && (Date.now() - finnhubTsMs) <= FINNHUB_MAX_STALENESS_MS;
-          if (finnhubQuote && Number.isFinite(finnhubQuote.c) && finnhubQuote.c > 0) {
-            const finnhubDeltaPct = spot > 0 ? Math.abs(finnhubQuote.c - spot) / spot : 0;
-            if (finnhubIsFresh || finnhubDeltaPct >= 0.0002) {
-              spot = finnhubQuote.c;
-              prevClose = Number.isFinite(finnhubQuote.pc) && finnhubQuote.pc > 0 ? finnhubQuote.pc : quotePrevClose;
-              timestampMs = finnhubIsFresh ? finnhubTsMs : Date.now();
-              source = 'finnhub';
-              if (process.env.DEBUG_SIGNALS === '1') {
-                console.warn(
-                  `[Spot] Yahoo extended-hours quote stale for ${symbol}; using ${finnhubIsFresh ? 'fresh' : 'delta-matched'} Finnhub tick ${spot.toFixed(2)}.`
-                );
-              }
+          const finnhubFallback = await resolveFinnhubFallback();
+          if (finnhubFallback) {
+            spot = finnhubFallback.spot;
+            prevClose = finnhubFallback.prevClose;
+            timestampMs = sanitizeTimestampMs(toMs(finnhubFallback.timestamp)) ?? Date.now();
+            source = 'finnhub';
+            if (process.env.DEBUG_SIGNALS === '1') {
+              console.warn(`[Spot] Yahoo extended-hours quote stale for ${symbol}; using fresh Finnhub fallback ${spot.toFixed(2)}.`);
             }
           }
         }
@@ -964,66 +1165,36 @@ export async function fetchLiveSpot(symbol: string): Promise<{
         source,
       };
     } else {
-      // During regular hours, try Finnhub for real-time data
-      const finnhubQuote = await fetchFinnhubQuote(symbol);
-      const finnhubTsMs = finnhubQuote?.t ? finnhubQuote.t * 1000 : 0;
-      const finnhubIsFresh = finnhubTsMs > 0 && (Date.now() - finnhubTsMs) <= FINNHUB_MAX_STALENESS_MS;
+      // During regular hours, prefer Yahoo and only fall back if stale.
+      let spot = regularPrice;
+      let prevClose = quotePrevClose;
+      let timestampMs = quoteTimeMs;
+      let source: 'finnhub' | 'yahoo' = 'yahoo';
 
-      if (finnhubQuote && finnhubIsFresh) {
-        result = {
-          symbol: upperSymbol,
-          spot: finnhubQuote.c,
-          prevClose: finnhubQuote.pc,
-          marketState: 'REGULAR',
-          timestamp: new Date(finnhubQuote.t * 1000).toISOString(),
-          source: 'finnhub',
-        };
-      } else {
-        if (finnhubQuote && !finnhubIsFresh && process.env.DEBUG_SIGNALS === '1') {
-          console.warn(`[Spot] Finnhub stale tick for ${symbol}: ${(Date.now() - finnhubTsMs)}ms old. Using Yahoo.`);
-        }
-        // Fallback to Yahoo regular market price
-        let spot = regularPrice;
-        let prevClose = quotePrevClose;
-        let timestampMs = quoteTimeMs;
-        let source: 'finnhub' | 'yahoo' = 'yahoo';
-
-        if (finnhubQuote && Number.isFinite(finnhubQuote.c) && finnhubQuote.c > 0 && !finnhubIsFresh) {
-          const finnhubDeltaPct = regularPrice > 0 ? Math.abs(finnhubQuote.c - regularPrice) / regularPrice : 0;
-          if (finnhubDeltaPct >= 0.0002) {
-            spot = finnhubQuote.c;
-            prevClose = Number.isFinite(finnhubQuote.pc) && finnhubQuote.pc > 0 ? finnhubQuote.pc : quotePrevClose;
-            timestampMs = Date.now();
-            source = 'finnhub';
-            if (process.env.DEBUG_SIGNALS === '1') {
-              console.warn(`[Spot] Using delta-matched stale Finnhub price for ${symbol}: ${spot.toFixed(2)}.`);
-            }
+      if (Date.now() - timestampMs > YAHOO_MAX_STALENESS_MS) {
+        const intradayFallback = await resolveIntradayFallback();
+        if (intradayFallback) {
+          spot = intradayFallback.price;
+          timestampMs = intradayFallback.timestampMs;
+          if (process.env.DEBUG_SIGNALS === '1') {
+            console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using intraday fallback ${spot.toFixed(2)}.`);
           }
+        } else if (process.env.DEBUG_SIGNALS === '1') {
+          console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; keeping Yahoo quote to avoid cross-provider drift.`);
         }
-
-        if (source === 'yahoo' && Date.now() - timestampMs > YAHOO_MAX_STALENESS_MS) {
-          const intradayFallback = await resolveIntradayFallback();
-          if (intradayFallback) {
-            spot = intradayFallback.price;
-            timestampMs = intradayFallback.timestampMs;
-            if (process.env.DEBUG_SIGNALS === '1') {
-              console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using intraday fallback ${spot.toFixed(2)}.`);
-            }
-          }
-        }
-
-        if (process.env.DEBUG_SIGNALS === '1') {
-          console.log(`[Spot] Regular hours quote for ${symbol}: $${spot.toFixed(2)} from ${source}`);
-        }
-        result = {
-          symbol: upperSymbol,
-          spot,
-          prevClose,
-          marketState,
-          timestamp: new Date(timestampMs).toISOString(),
-          source,
-        };
       }
+
+      if (process.env.DEBUG_SIGNALS === '1') {
+        console.log(`[Spot] Regular hours quote for ${symbol}: $${spot.toFixed(2)} from ${source}`);
+      }
+      result = {
+        symbol: upperSymbol,
+        spot,
+        prevClose,
+        marketState,
+        timestamp: new Date(timestampMs).toISOString(),
+        source,
+      };
     }
 
     // Cache the result
@@ -1042,13 +1213,7 @@ export async function fetchLiveSpot(symbol: string): Promise<{
         yahooSpotCooldownLogAt = Date.now();
       }
 
-      // For Yahoo 429s, try fresh fallbacks before using stale cache.
-      const finnhubFallback = await resolveFinnhubFallback();
-      if (finnhubFallback) {
-        spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
-        return finnhubFallback;
-      }
-
+      // For Yahoo 429s, prefer Yahoo-compatible fallbacks before cross-provider quotes.
       const intradayFallback = await resolveIntradayFallback();
       if (intradayFallback) {
         const intradayResult: SpotCache['data'] = {
@@ -1063,11 +1228,23 @@ export async function fetchLiveSpot(symbol: string): Promise<{
         return intradayResult;
       }
 
+      const finnhubFallback = await resolveFinnhubFallback();
+      if (finnhubFallback) {
+        spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+        return finnhubFallback;
+      }
+
       const stooqFallback = await resolveStooqFallback();
       if (stooqFallback) {
         spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
         return stooqFallback;
       }
+    }
+
+    const finnhubFallback = await resolveFinnhubFallback();
+    if (finnhubFallback) {
+      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+      return finnhubFallback;
     }
 
     const stooqFallback = await resolveStooqFallback();

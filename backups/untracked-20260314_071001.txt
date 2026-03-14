@@ -1,0 +1,5 @@
+﻿backups/git-status-20260314_071001.txt
+backups/screen-20260314_071001.png
+backups/staged-20260314_071001.patch
+backups/working-tree-20260314_071001.patch
+logs/breakout_rule_scan.json

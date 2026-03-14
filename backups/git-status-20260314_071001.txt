@@ -1,0 +1,16 @@
+﻿M  client/index.html
+A  client/public/favicon.svg
+ M client/src/components/PriceChart.tsx
+ M client/src/components/TacticalAdvicePanel.tsx
+MM logs/breakout_alert_history.json
+ M logs/signal_history.json
+ M server/breakoutAlertHistory.ts
+ M server/finance.ts
+ M server/marketData.ts
+ M server/metaEngine.ts
+ M server/monsterOtmEngine.ts
+ M server/routes.ts
+ M server/scanner.ts
+ M shared/schema.ts
+?? backups/screen-20260314_071001.png
+?? logs/breakout_rule_scan.json

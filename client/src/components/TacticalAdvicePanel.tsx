@@ -296,6 +296,8 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
         { name: "ADX", value: ind.adx.value, strength: ind.adx.value },
       ];
 
+  const historyCalibration = tactical.historyCalibration;
+  const tradePlan = tactical.tradePlan;
   const otm = tactical.otm;
   const otmTarget = otm
     ? (typeof (otm as any).targetPrice === "number"
@@ -314,6 +316,16 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
   const agreeColor = agree >= 67 ? "#10b981" : agree >= 34 ? "#f59e0b" : "#ef4444";
   const expansionScore = clamp01(Math.round((ind.momentum.score * 0.35) + (ind.adx.value * 0.25) + (ind.bb.squeeze ? 88 : ind.bb.percentB * 0.18) + ((100 - Math.min(100, ind.atr.percent * 25)) * 0.22)));
   const expansionState = expansionScore >= 70 ? "READY" : expansionScore >= 45 ? "BUILDING" : "WAIT";
+  const planConfidenceColor = tradePlan?.confidenceLabel === "high"
+    ? "text-emerald-400"
+    : tradePlan?.confidenceLabel === "medium"
+      ? "text-amber-400"
+      : "text-red-400";
+  const historyEdgeColor = historyCalibration?.edge === "positive"
+    ? "text-emerald-400"
+    : historyCalibration?.edge === "negative"
+      ? "text-red-400"
+      : "text-amber-400";
 
   return (
     <>
@@ -443,6 +455,20 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
             )}
           </div>
 
+          {/* Smart plan preview */}
+          {tradePlan && (
+            <div className="rounded-lg border p-2.5 space-y-1.5" style={{ borderColor: theme.hex + "22", background: theme.hex + "06" }}>
+              <div className="flex items-center justify-between">
+                <span className="text-[8px] text-white/22 font-black uppercase tracking-widest">Smart Plan</span>
+                <span className={cn("text-[8px] font-black uppercase tracking-widest", planConfidenceColor)}>{tradePlan.confidencePct}% {tradePlan.confidenceLabel}</span>
+              </div>
+              <div className="text-[9px] text-white/42 font-medium">
+                Entry ${tradePlan.entry.toFixed(2)} • Stop ${tradePlan.stop.toFixed(2)} • T1 {tradePlan.targets[0] !== undefined ? `$${tradePlan.targets[0].toFixed(2)}` : "-"}
+              </div>
+              <div className="text-[8px] font-bold" style={{ color: theme.hex }}>{tradePlan.riskRewardLabel}</div>
+            </div>
+          )}
+
           {/* OTM quick preview */}
           {otm && (
             <div className="rounded-lg border p-2.5 flex items-center gap-3" style={{ borderColor: theme.hex + "22", background: theme.hex + "06" }}>
@@ -569,6 +595,63 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
                     ))}
                   </div>
                 </Section>
+
+                {/* ── SMART INTRADAY PLAN ── */}
+                {tradePlan && (
+                  <Section label="Smart Intraday Plan" icon={Target} hex={theme.hex}>
+                    <div className="rounded-2xl border p-3.5 space-y-3" style={{ borderColor: theme.hex + "26", background: theme.hex + "08" }}>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                        {[
+                          { label: "Entry", value: `$${tradePlan.entry.toFixed(2)}` },
+                          { label: "Stop", value: `$${tradePlan.stop.toFixed(2)}` },
+                          { label: "Target 1", value: tradePlan.targets[0] !== undefined ? `$${tradePlan.targets[0].toFixed(2)}` : "-" },
+                          { label: "Target 2", value: tradePlan.targets[1] !== undefined ? `$${tradePlan.targets[1].toFixed(2)}` : "-" },
+                          { label: "Target 3", value: tradePlan.targets[2] !== undefined ? `$${tradePlan.targets[2].toFixed(2)}` : "-" },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="rounded-xl border px-2.5 py-2 text-center" style={{ borderColor: theme.hex + "20", background: "rgba(0,0,0,0.16)" }}>
+                            <div className="text-[7px] font-black tracking-widest text-white/22 uppercase">{label}</div>
+                            <div className="text-[12px] font-black font-mono mt-0.5" style={{ color: theme.hex }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="rounded-xl border px-3 py-2" style={{ borderColor: theme.hex + "16", background: "rgba(0,0,0,0.18)" }}>
+                          <div className="text-[7px] font-black tracking-widest text-white/20 uppercase">Entry Zone</div>
+                          <div className="text-[11px] font-black mt-0.5" style={{ color: theme.hex }}>
+                            ${tradePlan.entryZoneLow.toFixed(2)} to ${tradePlan.entryZoneHigh.toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border px-3 py-2" style={{ borderColor: theme.hex + "16", background: "rgba(0,0,0,0.18)" }}>
+                          <div className="text-[7px] font-black tracking-widest text-white/20 uppercase">Risk Reward Ladder</div>
+                          <div className="text-[11px] font-black mt-0.5" style={{ color: theme.hex }}>{tradePlan.riskRewardLabel}</div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border px-3 py-3 space-y-1.5" style={{ borderColor: theme.hex + "18", background: "rgba(0,0,0,0.18)" }}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[8px] font-black tracking-widest text-white/22 uppercase">Execution Confidence</span>
+                          <span className={cn("text-[10px] font-black uppercase tracking-wider", planConfidenceColor)}>
+                            {tradePlan.confidencePct}% {tradePlan.confidenceLabel}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-white/48">{tradePlan.timeline}</div>
+                        <div className="text-[10px] text-white/58 leading-relaxed">{tradePlan.positionSizing}</div>
+                      </div>
+
+                      {tradePlan.confidenceReasons.length > 0 && (
+                        <ul className="space-y-1.5">
+                          {tradePlan.confidenceReasons.slice(0, 4).map((reason, idx) => (
+                            <li key={idx} className="flex items-start gap-2 text-[10px] text-white/50 leading-relaxed">
+                              <span className="mt-1 w-1.5 h-1.5 rounded-full" style={{ background: theme.hex }} />
+                              {reason}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </Section>
+                )}
 
                 {/* ── OTM STRIKE PICKER ── */}
                 {otm && (
@@ -709,6 +792,37 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
                     </div>
                   </div>
                 </Section>
+
+                    {/* ── HISTORY CALIBRATION ── */}
+                    {historyCalibration && (
+                      <Section label="History Calibration" icon={Activity} hex={theme.hex}>
+                        <div className="rounded-xl border p-3 space-y-2.5" style={{ borderColor: theme.hex + "16", background: theme.hex + "05" }}>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            {[
+                              { label: "Samples", value: `${historyCalibration.sampleSize}` },
+                              { label: "Decisive Win", value: `${historyCalibration.decisiveWinRate.toFixed(1)}%` },
+                              { label: "Avg R", value: historyCalibration.avgR >= 0 ? `+${historyCalibration.avgR.toFixed(2)}R` : `${historyCalibration.avgR.toFixed(2)}R` },
+                              {
+                                label: "Conf Adj",
+                                value: `${historyCalibration.confidenceAdjustment >= 0 ? "+" : ""}${historyCalibration.confidenceAdjustment}`,
+                              },
+                            ].map(({ label, value }) => (
+                              <div key={label} className="rounded-lg border p-2 text-center" style={{ borderColor: theme.hex + "14", background: "rgba(0,0,0,0.14)" }}>
+                                <div className="text-[7px] font-black tracking-widest text-white/22 uppercase">{label}</div>
+                                <div className="text-[11px] font-black mt-1" style={{ color: theme.hex }}>{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-white/34">Current historical edge</span>
+                            <span className={cn("font-black uppercase tracking-widest", historyEdgeColor)}>{historyCalibration.edge}</span>
+                          </div>
+                          <div className="text-[10px] text-white/44 leading-relaxed">
+                            Confidence is slightly adjusted by recent resolved outcomes so beginner guidance does not overstate weak setups.
+                          </div>
+                        </div>
+                      </Section>
+                    )}
 
                 {/* ── ACTIVE SIGNALS ── */}
                 {tactical.notes.length > 0 && (

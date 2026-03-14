@@ -256,6 +256,9 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const selectedPattern = selectedPatternId !== null
     ? adjustedPatterns.find(p => p.id === selectedPatternId) ?? null
     : null;
+  const effectiveLivePrice = Number.isFinite(liveSpotPrice as number)
+    ? Number(liveSpotPrice)
+    : null;
 
   const priceRange = useMemo(() => {
     if (rangeOhlc.length === 0) return { min: 0, max: 1 };
@@ -265,6 +268,11 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
       min = Math.min(min, c.low);
       max = Math.max(max, c.high);
     });
+
+    if (effectiveLivePrice != null) {
+      min = Math.min(min, effectiveLivePrice);
+      max = Math.max(max, effectiveLivePrice);
+    }
 
     const candleRange = max - min;
     const maxExpansion = candleRange * 0.35;
@@ -288,7 +296,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
     const range = max - min;
     const pad = Math.max(range * 0.08, 0.5);
     return { min: min - pad, max: max + pad };
-  }, [rangeOhlc, adjustedPatterns, selectedPattern]);
+  }, [rangeOhlc, adjustedPatterns, selectedPattern, effectiveLivePrice]);
 
   const maxVolume = useMemo(() => {
     return Math.max(1, ...visibleOhlc.map((c) => c.volume || 0));
@@ -345,8 +353,8 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const lastCandle = normalizedOhlc.length > 0 ? normalizedOhlc[normalizedOhlc.length - 1] : null;
   const displayCandleRaw = hoveredIndex !== null ? normalizedOhlc[hoveredIndex] : (normalizedOhlc.length > 0 ? normalizedOhlc[normalizedOhlc.length - 1] : null);
   const displayCandle = displayCandleRaw || hoveredCandle || lastCandle;
-  const displayClose = Number.isFinite(liveSpotPrice as number)
-    ? (liveSpotPrice as number)
+  const displayClose = effectiveLivePrice != null
+    ? effectiveLivePrice
     : (displayCandle?.close ?? 0);
   const displayOpen = displayCandle?.open ?? displayClose;
   const closeIsBull = displayClose >= displayOpen;
@@ -418,7 +426,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
                 <span className={closeIsBull ? "text-cyan-300 font-bold" : "text-red-300 font-bold"}>
                   {formatPrice(displayClose)}
                 </span>
-                {Number.isFinite(liveSpotPrice as number) && (
+                {effectiveLivePrice != null && (
                   <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-300/80">LIVE</span>
                 )}
                 {currentVwap && (
@@ -902,28 +910,28 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
               </>
             )}
 
-            {lastCandle && hoveredIndex === null && (
+            {displayCandle && hoveredIndex === null && (
               <>
                 <rect
                   x={margin.left + chartWidth}
-                  y={yForPrice(lastCandle.close) - 8}
+                  y={yForPrice(displayClose) - 8}
                   width={55}
                   height={16}
-                  fill={lastCandle.close >= lastCandle.open ? BULL_COLOR : BEAR_COLOR}
+                  fill={closeIsBull ? BULL_COLOR : BEAR_COLOR}
                   rx={3}
                   opacity={0.86}
-                  style={{ filter: `drop-shadow(0 0 2px ${lastCandle.close >= lastCandle.open ? BULL_COLOR : BEAR_COLOR})` }}
+                  style={{ filter: `drop-shadow(0 0 2px ${closeIsBull ? BULL_COLOR : BEAR_COLOR})` }}
                 />
                 <text
                   x={margin.left + chartWidth + 27}
-                  y={yForPrice(lastCandle.close) + 3}
+                  y={yForPrice(displayClose) + 3}
                   textAnchor="middle"
                   fill="white"
                   fontSize={9}
                   fontWeight={700}
                   fontFamily="JetBrains Mono, monospace"
                 >
-                  {formatPrice(lastCandle.close)}
+                  {formatPrice(displayClose)}
                 </text>
               </>
             )}

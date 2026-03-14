@@ -1,0 +1,13 @@
+﻿TimestampLocal: 2026-03-14 07:18:36 -05:00
+TimestampUTC:   2026-03-14 12:18:36Z
+Workspace:      C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th
+Screenshot:     C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\screen-20260314_071001.png
+ScreenshotOK:   True
+ZipBackup:      C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\workspace-backup-20260314_071001.zip
+InGitRepo:      True
+GitHead:        49bfb9d244df05a439b5e4a89a9a29b14618c106
+GitBundle:      C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\repo-backup-20260314_071001.bundle
+GitStatus:      C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\git-status-20260314_071001.txt
+GitDiff:        C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\working-tree-20260314_071001.patch
+GitDiffStaged:  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\staged-20260314_071001.patch
+GitUntracked:   C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\untracked-20260314_071001.txt

@@ -474,6 +474,15 @@ export async function refreshBreakoutThresholdConfig(force = false): Promise<Bre
       if (!force && !isStale(current)) return current;
 
       const fitted = await computeAutoFitConfig();
+      const hasMeaningfulSample =
+        (fitted.stats?.symbolsLoaded ?? 0) >= 3 &&
+        (fitted.stats?.candidateBars ?? 0) >= 200;
+
+      if (!hasMeaningfulSample) {
+        // Keep the last known config when provider throttling prevents a real fit.
+        return current;
+      }
+
       cachedConfig = fitted;
       await writeConfigToDisk(fitted);
       return fitted;

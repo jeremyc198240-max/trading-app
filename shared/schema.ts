@@ -169,6 +169,33 @@ export const tacticalOtmSchema = z.object({
 
 export type TacticalOtm = z.infer<typeof tacticalOtmSchema>;
 
+export const tacticalHistoryCalibrationSchema = z.object({
+  sampleSize: z.number(),
+  decisiveWinRate: z.number(),
+  avgR: z.number(),
+  edge: z.enum(['positive', 'neutral', 'negative']),
+  confidenceAdjustment: z.number(),
+});
+
+export type TacticalHistoryCalibration = z.infer<typeof tacticalHistoryCalibrationSchema>;
+
+export const tacticalTradePlanSchema = z.object({
+  entry: z.number(),
+  entryZoneLow: z.number(),
+  entryZoneHigh: z.number(),
+  stop: z.number(),
+  targets: z.array(z.number()),
+  rrLadder: z.array(z.number()),
+  riskRewardLabel: z.string(),
+  confidencePct: z.number(),
+  confidenceLabel: z.enum(['low', 'medium', 'high']),
+  confidenceReasons: z.array(z.string()),
+  positionSizing: z.string(),
+  timeline: z.string(),
+});
+
+export type TacticalTradePlan = z.infer<typeof tacticalTradePlanSchema>;
+
 // Tactical advice
 export const tacticalAdviceSchema = z.object({
   strategy: z.string(),
@@ -184,6 +211,8 @@ export const tacticalAdviceSchema = z.object({
   keyLevel: z.number().optional(),
   atrValue: z.number().optional(),
   otm: tacticalOtmSchema.optional(),
+  historyCalibration: tacticalHistoryCalibrationSchema.optional(),
+  tradePlan: tacticalTradePlanSchema.optional(),
 });
 
 export type TacticalAdvice = z.infer<typeof tacticalAdviceSchema>;

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "generatedAt": "2026-03-14T16:10:04.478Z",
+  "source": "auto-fit",
+  "modes": {
+    "TREND": {
+      "setupScoreMin": 68,
+      "setupTraitsMin": 4,
+      "requireSweetSpotStack": false
+    },
+    "BALANCED": {
+      "setupScoreMin": 78,
+      "setupTraitsMin": 5,
+      "requireSweetSpotStack": true
+    },
+    "CHOPPY": {
+      "setupScoreMin": 76,
+      "setupTraitsMin": 5,
+      "requireSweetSpotStack": true
+    }
+  },
+  "stats": {
+    "symbolsLoaded": 0,
+    "candidateBars": 0,
+    "positiveLabels": 0,
+    "labelRate": 0
+  }
+}

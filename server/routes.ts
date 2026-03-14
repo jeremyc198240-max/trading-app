@@ -49,6 +49,10 @@ import {
 } from "./signalHistory";
 import { runTuningAnalysis, formatTuningReport } from "./signalTuning";
 import { clearBreakoutAlertLog, getBreakoutAlertLog, getBreakoutAlertSummary } from "./breakoutAlertHistory";
+import {
+  getBreakoutThresholdConfig,
+  refreshBreakoutThresholdConfig,
+} from "./breakoutThresholds";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -73,7 +77,12 @@ export async function registerRoutes(
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
-  const analyzePayloadCache = new Map<string, { payload: any; timestamp: number; isSimulated: boolean }>();
+  const analyzePayloadCache = new Map<string, {
+    payload: any;
+    timestamp: number;
+    isSimulated: boolean;
+    sessionSplit: { rth: any[]; overnight: any[]; prevDayRth: any[] };
+  }>();
 
   const timeframeMs = (timeframe: string): number | null => {
     const tf = String(timeframe ?? '').toLowerCase();
@@ -248,9 +257,56 @@ export async function registerRoutes(
               ? "cached-simulated-analysis"
               : "cached-analysis";
 
+            if (spotPrice == null) {
+              spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
+            }
+
+            const cachedOhlc = Array.isArray(cachedPayload?.ohlc) ? cachedPayload.ohlc : [];
+            const cachedSessionSplit = cachedAnalyze.sessionSplit ?? {
+              rth: cachedOhlc,
+              overnight: [],
+              prevDayRth: [],
+            };
+
+            let refreshedPayload = cachedPayload;
+            if (cachedOhlc.length > 0) {
+              const refreshedAnalysis = analyzeSymbol(
+                upperSymbol,
+                cachedOhlc,
+                { maxAbsGammaStrike: null },
+                cachedSessionSplit,
+                spotPrice
+              );
+
+              const now = new Date();
+              const nowMinutes = now.getHours() * 60 + now.getMinutes();
+              const refreshedMonster = runMonsterOTMEngine(
+                cachedOhlc,
+                refreshedAnalysis.marketHealth,
+                refreshedAnalysis.liquiditySweep,
+                refreshedAnalysis.failedVwapReclaim,
+                refreshedAnalysis.trendExhaustion,
+                refreshedAnalysis.candleStrength,
+                refreshedAnalysis.bullishPower,
+                refreshedAnalysis.emaCloud,
+                refreshedAnalysis.tactical,
+                [],
+                nowMinutes,
+                cachedSessionSplit,
+                spotPrice ?? refreshedAnalysis.lastPrice
+              );
+
+              refreshedPayload = {
+                ...cachedPayload,
+                ...refreshedAnalysis,
+                lastPrice: spotPrice ?? refreshedAnalysis.lastPrice,
+                monsterOTM: refreshedMonster,
+              };
+            }
+
             return res.json({
-              ...cachedPayload,
-              lastPrice: spotPrice ?? cachedPayload.lastPrice,
+              ...refreshedPayload,
+              lastPrice: spotPrice ?? refreshedPayload.lastPrice,
               isLive: false,
               dataSource: liveResult.error
                 ? `${cacheSourceLabel} (${liveResult.error})`
@@ -273,7 +329,8 @@ export async function registerRoutes(
         upperSymbol,
         ohlc,
         { maxAbsGammaStrike: null },
-        sessionSplit
+        sessionSplit,
+        spotPrice
       );
       
       const engineOutput = analyzeMarket(ohlc);
@@ -297,7 +354,8 @@ export async function registerRoutes(
         analysis.tactical,
         [],
         nowMinutes,
-        sessionSplit
+        sessionSplit,
+        finalPrice
       );
       
       const patternCandles = getStablePatternCandles(ohlc, tf);
@@ -361,6 +419,7 @@ export async function registerRoutes(
           payload,
           timestamp: Date.now(),
           isSimulated: isSimulatedData,
+          sessionSplit,
         });
       }
 
@@ -968,15 +1027,36 @@ export async function registerRoutes(
     res.json(getScannerResults());
   });
 
+  app.get("/api/scanner/breakout-thresholds", async (req, res) => {
+    try {
+      const refreshRequested =
+        req.query.refresh === "1" ||
+        String(req.query.refresh ?? "").toLowerCase() === "true";
+
+      const config = refreshRequested
+        ? await refreshBreakoutThresholdConfig(true)
+        : await getBreakoutThresholdConfig();
+
+      res.json(config);
+    } catch (error) {
+      console.error("Breakout thresholds error:", error);
+      res.status(500).json({ error: "Failed to load breakout thresholds" });
+    }
+  });
+
   app.get("/api/scanner/breakout-log", (req, res) => {
     const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+    const requestedHours = Number(req.query.hours);
+    const lookbackHours = Number.isFinite(requestedHours) && requestedHours > 0
+      ? Math.min(48, requestedHours)
+      : undefined;
     const requested = Number(req.query.limit);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(2000, requested) : 200;
 
     res.json({
       success: true,
       symbol: symbol?.toUpperCase() || null,
-      entries: getBreakoutAlertLog(limit, symbol),
+      entries: getBreakoutAlertLog(limit, symbol, lookbackHours),
       timestamp: Date.now(),
     });
   });
@@ -1088,7 +1168,8 @@ export async function registerRoutes(
         upperSymbol,
         ohlc,
         { maxAbsGammaStrike: null },
-        sessionSplit
+        sessionSplit,
+        liveSpotPrice
       );
       
       const now = new Date();
@@ -1106,7 +1187,8 @@ export async function registerRoutes(
         analysis.tactical,
         [],
         nowMinutes,
-        sessionSplit
+        sessionSplit,
+        liveSpotPrice ?? analysis.lastPrice
       );
 
       // Use live spot price if available, otherwise fall back to candle close
@@ -1355,7 +1437,7 @@ export async function registerRoutes(
         rth: primaryOhlc, 
         overnight: [], 
         prevDayRth: [] 
-      });
+      }, lastPrice);
 
       // Build market health indicators for Fusion Engine
       const mh = analysis.marketHealth;
@@ -1402,6 +1484,13 @@ export async function registerRoutes(
       const finalLastPrice = lastPrice ?? 
         (ohlcByTF['5m']?.[ohlcByTF['5m'].length - 1]?.close ?? 100);
 
+      const unifiedSignalWithPrice = snapshot.unifiedSignal
+        ? {
+            ...snapshot.unifiedSignal,
+            currentPrice: (snapshot.unifiedSignal as any).currentPrice ?? finalLastPrice,
+          }
+        : snapshot.unifiedSignal;
+
       // Record signal to history for tracking
       if (snapshot.unifiedSignal) {
         recordSignal(
@@ -1418,7 +1507,10 @@ export async function registerRoutes(
       // It already contains unifiedDirection, unifiedConfidence, unifiedPlay
       // computed by computeUnifiedSignal with weighted fusion
       res.json({
-        ...snapshot
+        ...snapshot,
+        currentPrice: finalLastPrice,
+        lastPrice: finalLastPrice,
+        unifiedSignal: unifiedSignalWithPrice,
         // unifiedSignal is already part of snapshot from computeFusionSnapshot
       });
     } catch (error) {

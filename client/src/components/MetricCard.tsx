@@ -313,6 +313,7 @@ import { OptionPlayDropdown } from "./OptionPlayDropdown";
 import { cn } from "@/lib/utils";
 import type { DrawablePattern } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 interface ScannerResult {
   lastIndex?: number;
@@ -392,6 +393,7 @@ interface ScannerResult {
     preCloseLocation?: number;
     preNearSessionHigh?: boolean;
     preAboveVwap?: boolean;
+    etaMinutes?: number;
   };
 }
 
@@ -1630,7 +1632,7 @@ export function PriceCard({
     liveSectorCount > 0
       ? clamp01(liveSectorStates.reduce((sum, sector) => sum + sector.value, 0) / liveSectorCount)
       : null;
-  const sectorCompositeForViz = sectorCompositeLive ?? 0;
+  const sectorCompositeForViz = sectorCompositeLive ?? 0.5;
 
   const bullishSectorCount = liveSectorStates.filter((sector) => sector.liveChangePct >= 0).length;
   const bearishSectorCount = liveSectorStates.filter((sector) => sector.liveChangePct < 0).length;
@@ -1769,26 +1771,97 @@ export function PriceCard({
   const sectorAlignScore =
     typeof sectorDispersion === "number" ? clamp01(1 - sectorDispersion * 1.2) : null;
 
-  const baseSurgeHeat = clamp01(
-    normalizedMove * 0.45 + (breadthEdge ?? 0) * 0.35 + (slopeGeometryMagnitude / 100) * 0.20,
+  const scannerDirectionBias =
+    scannerSignalType === "BREAKOUT"
+      ? 1
+      : scannerSignalType === "BREAKDOWN"
+      ? -1
+      : scannerSignalType === "EXPANSION"
+      ? scannerSignal?.expansionDirection === "bullish"
+        ? 1
+        : scannerSignal?.expansionDirection === "bearish"
+        ? -1
+        : 0
+      : scannerMomentumSigned >= 8
+      ? 1
+      : scannerMomentumSigned <= -8
+      ? -1
+      : 0;
+  const fusionDirectionBias =
+    unifiedDirection === "CALL" ? 1 : unifiedDirection === "PUT" ? -1 : 0;
+  const directionalAgreement =
+    scannerDirectionBias === 0 || fusionDirectionBias === 0
+      ? 0.52
+      : scannerDirectionBias === fusionDirectionBias
+      ? 1
+      : 0.12;
+  const tvDirectionalAgreement =
+    scannerDirectionBias === 0 || tvTrendBias === 0
+      ? 0.5
+      : scannerDirectionBias === tvTrendBias
+      ? 1
+      : 0.18;
+
+  const triggerPulse = clamp01(
+    normalizedMove * 0.32 +
+      scannerBreakoutHeat * 0.27 +
+      scannerMomentumHeat * 0.18 +
+      scannerVolumeHeat * 0.11 +
+      scannerSignalBoost * 0.12,
+  );
+
+  const participationPulse = clamp01(
+    (breadthEdge ?? 0.36) * 0.46 +
+      (sectorAlignScore ?? 0.42) * 0.34 +
+      (hasLiveSectorFeed ? clamp01(liveSectorCount / totalSectorCount) : 0.15) * 0.2,
+  );
+
+  const confirmationPulse = clamp01(
+    scannerQualityHeat * 0.4 +
+      directionalAgreement * 0.24 +
+      tvDirectionalAgreement * 0.18 +
+      (unifiedState === "ACTIVE" ? 0.88 : unifiedState === "STALE" ? 0.55 : 0.22) * 0.18,
+  );
+
+  const explosionPenalty = clamp01(
+    warningRiskPenalty * 0.46 +
+      safetyRiskPenalty * 0.34 +
+      (scannerIsStale ? 0.16 : 0) +
+      (tvConflictActive ? 0.1 : 0),
   );
 
   let surgeHeat = clamp01(
-    baseSurgeHeat * 0.62 +
-      scannerBreakoutHeat * 0.22 +
-      scannerMomentumHeat * 0.10 +
-      scannerVolumeHeat * 0.06 +
-      scannerSignalBoost * 0.08,
+    triggerPulse * 0.44 +
+      participationPulse * 0.26 +
+      confirmationPulse * 0.22 +
+      directionalAgreement * 0.08 -
+      explosionPenalty * 0.32,
   );
 
-  if ((scannerDirectionalBreakout || scannerMomentumBreakout) && scannerBreakoutScore >= 60 && scannerMomentumAbs >= 16) {
-    surgeHeat = Math.max(surgeHeat, 0.72);
-  } else if ((scannerDirectionalBreakout || scannerMomentumBreakout || scannerSignalType === "BUILDING") && scannerBreakoutScore >= 46 && scannerMomentumAbs >= 12) {
-    surgeHeat = Math.max(surgeHeat, 0.52);
+  if (
+    (scannerDirectionalBreakout || scannerMomentumBreakout) &&
+    scannerBreakoutScore >= 62 &&
+    scannerMomentumAbs >= 16 &&
+    confirmationPulse >= 0.46
+  ) {
+    surgeHeat = Math.max(surgeHeat, 0.76);
+  } else if (
+    (scannerDirectionalBreakout || scannerMomentumBreakout || scannerSignalType === "BUILDING") &&
+    scannerBreakoutScore >= 48 &&
+    scannerMomentumAbs >= 12
+  ) {
+    surgeHeat = Math.max(surgeHeat, 0.56);
   }
 
-  const surgeThreshold = scannerDirectionalBreakout || scannerMomentumBreakout ? 0.66 : 0.7;
-  const buildingThreshold = scannerDirectionalBreakout || scannerSignalType === "BUILDING" ? 0.4 : 0.45;
+  if (unifiedSafetyForceWait && surgeHeat < 0.9) {
+    surgeHeat *= 0.84;
+  }
+
+  const surgeThreshold = Math.max(
+    0.6,
+    Math.min(0.78, 0.69 + explosionPenalty * 0.08 - confirmationPulse * 0.06),
+  );
+  const buildingThreshold = Math.max(0.38, surgeThreshold - 0.2);
   const surgeColor = surgeHeat >= surgeThreshold ? "#f43f5e" : surgeHeat >= buildingThreshold ? "#f59e0b" : "#22d3ee";
   const surgeLabel = surgeHeat >= surgeThreshold ? "SURGE" : surgeHeat >= buildingThreshold ? "BUILDING" : "CALM";
   const isSurging = surgeHeat >= surgeThreshold;
@@ -1988,6 +2061,10 @@ export function PriceCard({
   const arc = Math.PI * r;
   const dotX = startX + (endX - startX) * marketStrength;
   const dotY = cy - Math.sqrt(Math.max(0, r * r - Math.pow(dotX - 80, 2)));
+  const meterPanelScanline =
+    "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)";
+  const meterPanelBaseBg =
+    `linear-gradient(160deg,${callPutColor}12,rgba(4,9,18,0.95) 52%,rgba(3,7,14,0.96) 100%)`;
 
   const renderMiniGauge = (engine: { label: string; value: number }) => {
     const mc = neonMiniColor(engine.value);
@@ -2015,8 +2092,20 @@ export function PriceCard({
       `M ${sz - bs_g - pb_g} ${sz - pb_g} L ${sz - pb_g} ${sz - pb_g} L ${sz - pb_g} ${sz - bs_g - pb_g}`,
     ];
     return (
-      <div key={engine.label} className="flex flex-col items-center gap-0.5">
-        <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`}>
+      <div
+        key={engine.label}
+        className="relative w-[84px] overflow-hidden rounded-lg border px-1 py-1"
+        style={{
+          borderColor: mc + "56",
+          background: `linear-gradient(158deg,${callPutColor}10,${mc}0f,rgba(3,7,14,0.95))`,
+          boxShadow: `inset 0 0 18px ${callPutColor}16, inset 0 0 14px ${mc}14, 0 0 16px ${mc}20`,
+        }}
+      >
+        <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: meterPanelScanline }} />
+        <div className="pointer-events-none absolute inset-x-2 top-1 h-px" style={{ background: `linear-gradient(90deg,transparent,${mc}66,transparent)` }} />
+        <div className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "58" }} />
+        <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "3a" }} />
+        <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} className="relative z-10 mx-auto">
           {bkts_g.map((d, i) => <path key={i} d={d} fill="none" stroke={mc + "55"} strokeWidth="1.2" strokeLinecap="square" />)}
           <circle cx={cx_g} cy={cy_g} r={outerR_g - 1} fill="none" stroke={mc + "18"} strokeWidth="0.5" />
           {gTicks.map(({ x1, y1, x2, y2, active }, i) => (
@@ -2041,7 +2130,9 @@ export function PriceCard({
             {v >= 65 ? "BULL" : v <= 35 ? "BEAR" : "NEUT"}
           </text>
         </svg>
-        <span className="text-[7px] font-black tracking-widest uppercase text-white/25">{engine.label}</span>
+        <div className="relative z-10 mt-0.5 text-center text-[7px] font-black tracking-widest uppercase" style={{ color: mc + "bb" }}>
+          {engine.label}
+        </div>
       </div>
     );
   };
@@ -2063,7 +2154,7 @@ export function PriceCard({
           <div className="pointer-events-none absolute left-1.5 top-1.5 h-3 w-3 border-l border-t" style={{ borderColor: callPutColor + "55" }} />
           <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-3 w-3 border-r border-b" style={{ borderColor: callPutColor + "35" }} />
 
-          <div className="grid grid-cols-1 xl:grid-cols-[auto_160px_auto] items-start gap-2">
+          <div className="grid grid-cols-1 xl:grid-cols-[auto_178px_auto] items-start gap-2">
             {/* Symbol + CALL/PUT badge */}
             <div className="xl:justify-self-start rounded-lg border px-2 py-1.5" style={{ borderColor: callPutColor + "30", background: callPutColor + "08" }}>
               <div className="flex items-center gap-2.5">
@@ -2107,11 +2198,11 @@ export function PriceCard({
               </div>
             </div>
 
-            <div className="relative overflow-hidden rounded-lg border px-1.5 py-1" style={{ borderColor: callPutColor + "55", background: callPutColor + "08", boxShadow: `inset 0 0 22px ${callPutColor}0f` }}>
+            <div className="relative overflow-hidden rounded-lg border px-2 py-1.5" style={{ borderColor: callPutColor + "55", background: callPutColor + "08", boxShadow: `inset 0 0 22px ${callPutColor}0f` }}>
               {/* ArcDial-style 260° gauge matching TacticalAdvicePanel */}
               {(() => {
                 const v_ms = marketStrength * 100;
-                const sz_ms = 80; const r_ms = 29; const outerR_ms = 36; const cx_ms = 40; const cy_ms = 40;
+                const sz_ms = 92; const r_ms = 33; const outerR_ms = 41; const cx_ms = 46; const cy_ms = 46;
                 const toR_ms = (d: number) => (d * Math.PI) / 180;
                 const ap_ms = (s: number, e: number, ra: number) => {
                   const sr = toR_ms(s); const er = toR_ms(e);
@@ -2126,7 +2217,7 @@ export function PriceCard({
                   const rad = toR_ms(deg);
                   return { x1: cx_ms + (outerR_ms - 4) * Math.cos(rad), y1: cy_ms + (outerR_ms - 4) * Math.sin(rad), x2: cx_ms + outerR_ms * Math.cos(rad), y2: cy_ms + outerR_ms * Math.sin(rad), active: deg <= fillEnd_ms };
                 });
-                const bs_ms = 7; const pb_ms = 2;
+                const bs_ms = 8; const pb_ms = 2;
                 const bkts_ms = [
                   `M ${bs_ms + pb_ms} ${pb_ms} L ${pb_ms} ${pb_ms} L ${pb_ms} ${bs_ms + pb_ms}`,
                   `M ${sz_ms - bs_ms - pb_ms} ${pb_ms} L ${sz_ms - pb_ms} ${pb_ms} L ${sz_ms - pb_ms} ${bs_ms + pb_ms}`,
@@ -2152,10 +2243,10 @@ export function PriceCard({
                     <circle cx={cx_ms} cy={cy_ms} r={r_ms - 9} fill={neonMainColor + "08"} />
                     <circle cx={cx_ms} cy={cy_ms} r={r_ms - 9} fill="none" stroke={neonMainColor + "25"} strokeWidth="0.5" />
                     <text x={cx_ms} y={cy_ms - 3} textAnchor="middle" dominantBaseline="middle" fill={neonMainColor}
-                      fontSize="15" fontWeight="900" fontFamily="monospace"
+                      fontSize="17" fontWeight="900" fontFamily="monospace"
                       style={{ filter: `drop-shadow(0 0 8px ${neonMainColor}99)` }}>{Math.round(v_ms)}</text>
-                    <text x={cx_ms} y={cy_ms + 10} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.32)"
-                      fontSize="5.5" fontWeight="700" letterSpacing="1.5">
+                    <text x={cx_ms} y={cy_ms + 11.5} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.32)"
+                      fontSize="6" fontWeight="700" letterSpacing="1.5">
                       {v_ms >= 65 ? "BULL" : v_ms <= 35 ? "BEAR" : "NEUT"}
                     </text>
                   </svg>
@@ -2363,11 +2454,11 @@ export function PriceCard({
                 </div>
 
                 <div className="relative z-10 space-y-1.5">
-                  <div className="grid grid-cols-1 xl:grid-cols-[82px_auto_82px] gap-1.5 items-center">
+                  <div className="grid grid-cols-1 xl:grid-cols-[88px_auto_88px] gap-1.5 items-center">
                     <div className="flex flex-col items-center gap-1.5">{leftEngineStack.map(renderMiniGauge)}</div>
 
                     <div className="flex justify-center">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5 items-stretch">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-stretch">
                         {(() => {
                           const toRsp = (d: number) => d * Math.PI / 180;
                           const arsp = (s: number, e: number, r: number) => {
@@ -2392,12 +2483,19 @@ export function PriceCard({
                           });
                           const spBkts = [`M 10 3 L 3 3 L 3 10`, `M 142 3 L 149 3 L 149 10`, `M 10 107 L 3 107 L 3 100`, `M 142 107 L 149 107 L 149 100`];
                           return (
-                            <div className="relative overflow-hidden rounded-lg px-1.5 py-0.5"
-                              style={{ border: `1px solid ${sectorPulseColor}50`, backgroundColor: "#03080e", boxShadow: `inset 0 0 22px ${sectorPulseColor}10, 0 0 28px ${sectorPulseColor}22` }}>
+                            <div className="relative overflow-hidden rounded-lg px-2 py-1"
+                              style={{
+                                border: `1px solid ${sectorPulseColor}56`,
+                                background: meterPanelBaseBg,
+                                boxShadow: `inset 0 0 22px ${callPutColor}14, inset 0 0 18px ${sectorPulseColor}12, 0 0 24px ${sectorPulseColor}22`,
+                              }}>
+                              <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: meterPanelScanline }} />
+                              <div className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "58" }} />
+                              <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "3a" }} />
                               <div className="pointer-events-none absolute inset-x-2 top-1 h-px" style={{ background: `linear-gradient(90deg,transparent,${sectorPulseColor}55,transparent)` }} />
                               <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-[32%]" style={{ background: `linear-gradient(0deg,${sectorPulseColor}07,transparent)` }} />
-                              <div className="mb-0.5 text-center text-[7px] font-mono uppercase tracking-[0.18em]" style={{ color: sectorPulseColor + "99" }}>Sector Pulse</div>
-                              <svg width="130" height="94" viewBox="0 0 152 110" className="mx-auto">
+                              <div className="mb-0.5 text-center text-[8px] font-mono uppercase tracking-[0.18em]" style={{ color: sectorPulseColor + "99" }}>Sector Pulse</div>
+                              <svg width="146" height="106" viewBox="0 0 152 110" className="mx-auto">
                                 {spBkts.map((d, i) => <path key={i} d={d} fill="none" stroke={sectorPulseColor + "50"} strokeWidth="1.3" strokeLinecap="square" />)}
                                 <circle cx="76" cy="68" r="56" fill="none" stroke={sectorPulseColor + "10"} strokeWidth="0.6" />
                                 {spTicks.map(({ x1, y1, x2, y2, active }, ti) => (
@@ -2414,11 +2512,11 @@ export function PriceCard({
                                 <circle cx="76" cy="68" r="37" fill={sectorPulseColor + "07"} />
                                 <circle cx="76" cy="68" r="37" fill="none" stroke={sectorPulseColor + "22"} strokeWidth="0.6" />
                                 <text x="76" y="63" textAnchor="middle" dominantBaseline="middle" fill={sectorPulseColor}
-                                  fontSize="19" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${sectorPulseColor}99)` }}>
+                                  fontSize="21" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${sectorPulseColor}99)` }}>
                                   {sectorPulsePct == null ? "--" : sectorPulsePct}
                                 </text>
                                 <text x="76" y="76" textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.28)"
-                                  fontSize="7" fontWeight="700" letterSpacing="1.5">
+                                  fontSize="7.8" fontWeight="700" letterSpacing="1.5">
                                   {hasSpData
                                     ? sectorPulseBias === "bullish"
                                       ? "BULL"
@@ -2451,12 +2549,19 @@ export function PriceCard({
                           const paNum = priceActionBias === "buy" ? `+${priceActionMagnitude}` : priceActionBias === "sell" ? `-${priceActionMagnitude}` : "0";
                           const paDir = priceActionBias === "buy" ? "BUY" : priceActionBias === "sell" ? "SELL" : "NEUT";
                           return (
-                            <div className="relative overflow-hidden rounded-lg px-1.5 py-0.5"
-                              style={{ border: `1px solid ${priceActionColor}50`, backgroundColor: "#03080d", boxShadow: `inset 0 0 22px ${priceActionColor}10, 0 0 28px ${priceActionColor}22` }}>
+                            <div className="relative overflow-hidden rounded-lg px-2 py-1"
+                              style={{
+                                border: `1px solid ${priceActionColor}56`,
+                                background: meterPanelBaseBg,
+                                boxShadow: `inset 0 0 22px ${callPutColor}14, inset 0 0 18px ${priceActionColor}12, 0 0 24px ${priceActionColor}22`,
+                              }}>
+                              <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: meterPanelScanline }} />
+                              <div className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "58" }} />
+                              <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "3a" }} />
                               <div className="pointer-events-none absolute inset-x-2 top-1 h-px" style={{ background: `linear-gradient(90deg,transparent,${priceActionColor}55,transparent)` }} />
                               <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-[32%]" style={{ background: `linear-gradient(0deg,${priceActionColor}07,transparent)` }} />
-                              <div className="mb-0.5 text-center text-[7px] font-mono uppercase tracking-[0.18em]" style={{ color: priceActionColor + "99" }}>Price Action</div>
-                              <svg width="130" height="94" viewBox="0 0 152 110" className="mx-auto">
+                              <div className="mb-0.5 text-center text-[8px] font-mono uppercase tracking-[0.18em]" style={{ color: priceActionColor + "99" }}>Price Action</div>
+                              <svg width="146" height="106" viewBox="0 0 152 110" className="mx-auto">
                                 {paBkts.map((d, i) => <path key={i} d={d} fill="none" stroke={priceActionColor + "50"} strokeWidth="1.3" strokeLinecap="square" />)}
                                 <circle cx="76" cy="68" r="56" fill="none" stroke={priceActionColor + "10"} strokeWidth="0.6" />
                                 {paTicks.map(({ x1, y1, x2, y2, active }, ti) => (
@@ -2473,11 +2578,11 @@ export function PriceCard({
                                 <circle cx="76" cy="68" r="37" fill={priceActionColor + "07"} />
                                 <circle cx="76" cy="68" r="37" fill="none" stroke={priceActionColor + "22"} strokeWidth="0.6" />
                                 <text x="76" y="63" textAnchor="middle" dominantBaseline="middle" fill={priceActionColor}
-                                  fontSize="19" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${priceActionColor}99)` }}>
+                                  fontSize="21" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${priceActionColor}99)` }}>
                                   {paNum}
                                 </text>
                                 <text x="76" y="76" textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.28)"
-                                  fontSize="7" fontWeight="700" letterSpacing="1.5">
+                                  fontSize="7.8" fontWeight="700" letterSpacing="1.5">
                                   {paDir}
                                 </text>
                               </svg>
@@ -2503,17 +2608,24 @@ export function PriceCard({
                           const sgBkts = [`M 10 3 L 3 3 L 3 10`, `M 142 3 L 149 3 L 149 10`, `M 10 107 L 3 107 L 3 100`, `M 142 107 L 149 107 L 149 100`];
                           const sgDir = slopeBias === "up" ? "UP" : slopeBias === "down" ? "DOWN" : "FLAT";
                           return (
-                            <div className="relative overflow-hidden rounded-lg px-1.5 py-0.5"
-                              style={{ border: `1px solid ${slopeColor}50`, backgroundColor: "#03080c", boxShadow: `inset 0 0 22px ${slopeColor}10, 0 0 28px ${slopeColor}22` }}>
+                            <div className="relative overflow-hidden rounded-lg px-2 py-1"
+                              style={{
+                                border: `1px solid ${slopeColor}56`,
+                                background: meterPanelBaseBg,
+                                boxShadow: `inset 0 0 22px ${callPutColor}14, inset 0 0 18px ${slopeColor}12, 0 0 24px ${slopeColor}22`,
+                              }}>
+                              <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: meterPanelScanline }} />
+                              <div className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "58" }} />
+                              <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "3a" }} />
                               <div className="pointer-events-none absolute inset-x-2 top-1 h-px" style={{ background: `linear-gradient(90deg,transparent,${slopeColor}55,transparent)` }} />
                               <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-[32%]" style={{ background: `linear-gradient(0deg,${slopeColor}07,transparent)` }} />
-                              <div className="mb-0.5 flex items-center justify-between text-[7px] font-mono uppercase tracking-[0.14em]">
+                              <div className="mb-0.5 flex items-center justify-between text-[8px] font-mono uppercase tracking-[0.14em]">
                                 <span style={{ color: slopeColor + "99" }}>Slope Geo</span>
                                 <span className="font-black rounded border px-1 py-0.5 text-[9px]" style={{ color: slopeColor, borderColor: slopeColor + "40", backgroundColor: slopeColor + "15" }}>
                                   {slopeAngle > 0 ? "+" : ""}{slopeAngle}°
                                 </span>
                               </div>
-                              <svg width="130" height="94" viewBox="0 0 152 110" className="mx-auto">
+                              <svg width="146" height="106" viewBox="0 0 152 110" className="mx-auto">
                                 {sgBkts.map((d, i) => <path key={i} d={d} fill="none" stroke={slopeColor + "50"} strokeWidth="1.3" strokeLinecap="square" />)}
                                 <circle cx="76" cy="68" r="56" fill="none" stroke={slopeColor + "10"} strokeWidth="0.6" />
                                 {sgTicks.map(({ x1, y1, x2, y2, active }, ti) => (
@@ -2530,11 +2642,11 @@ export function PriceCard({
                                 <circle cx="76" cy="68" r="37" fill={slopeColor + "07"} />
                                 <circle cx="76" cy="68" r="37" fill="none" stroke={slopeColor + "22"} strokeWidth="0.6" />
                                 <text x="76" y="63" textAnchor="middle" dominantBaseline="middle" fill={slopeColor}
-                                  fontSize="19" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${slopeColor}99)` }}>
+                                  fontSize="21" fontWeight="900" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 10px ${slopeColor}99)` }}>
                                   {slopeGeometryMagnitude}%
                                 </text>
                                 <text x="76" y="76" textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.28)"
-                                  fontSize="7" fontWeight="700" letterSpacing="1.5">
+                                  fontSize="7.8" fontWeight="700" letterSpacing="1.5">
                                   {sgDir}
                                 </text>
                               </svg>
@@ -2581,10 +2693,18 @@ export function PriceCard({
                   )}
 
                   {/* ── EXPLOSION DETECTOR ── */}
-                  <div className="relative overflow-hidden rounded-xl border border-rose-500/25 bg-rose-950/15 px-3 py-2"
-                    style={{ boxShadow: surgeHeat >= 0.7 ? `0 0 20px rgba(244,63,94,0.28), inset 0 0 14px rgba(244,63,94,0.10)` : "none" }}>
+                  <div className="relative overflow-hidden rounded-xl border px-3 py-2"
+                    style={{
+                      borderColor: surgeColor + "4d",
+                      background: `linear-gradient(150deg,${surgeColor}16,rgba(4,9,18,0.96) 58%,rgba(3,7,14,0.97) 100%)`,
+                      boxShadow: surgeHeat >= surgeThreshold
+                        ? `0 0 22px ${surgeColor}40, inset 0 0 16px ${callPutColor}14, inset 0 0 14px ${surgeColor}12`
+                        : `inset 0 0 14px ${callPutColor}12`,
+                    }}>
                     <div className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-px" style={{ background: "linear-gradient(90deg,transparent,rgba(244,63,94,0.35),transparent)" }} />
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-px" style={{ background: `linear-gradient(90deg,transparent,${surgeColor}55,transparent)` }} />
+                    <div className="pointer-events-none absolute left-1.5 top-1.5 h-2.5 w-2.5 border-l border-t" style={{ borderColor: callPutColor + "58" }} />
+                    <div className="pointer-events-none absolute right-1.5 bottom-1.5 h-2.5 w-2.5 border-r border-b" style={{ borderColor: callPutColor + "3a" }} />
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[8px] font-black tracking-[0.2em] uppercase" style={{ color: surgeColor }}>
                         ⚡ Explosion Detector
@@ -2595,53 +2715,72 @@ export function PriceCard({
                         {surgeLabel}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
                       {[
                         {
-                          label: "Surge Heat",
-                          value: surgeHeat,
-                          desc: scannerDirectionalBreakout
-                            ? `${scannerSignalType} • ${scannerSignalQuality}`
-                            : scannerMomentumBreakout
-                            ? "Momentum breakout"
-                            : normalizedMove >= 0.5
-                            ? "Vol elevated"
-                            : "Vol calm",
+                          label: "Trigger Stack",
+                          value: triggerPulse,
+                          desc:
+                            scannerDirectionalBreakout
+                              ? `${scannerSignalType} stack armed`
+                              : scannerMomentumBreakout
+                              ? "Momentum trigger armed"
+                              : normalizedMove >= 0.45
+                              ? "Range expansion rising"
+                              : "Awaiting trigger",
                         },
                         {
-                          label: "Sector Align",
-                          value: sectorAlignScore,
+                          label: "Participation",
+                          value: participationPulse,
                           desc:
-                            sectorAlignScore == null
+                            !hasLiveSectorFeed
                               ? "Awaiting live sectors"
-                              : unifiedState !== "ACTIVE"
-                              ? `Fusion ${unifiedState.toLowerCase()}`
-                              : sectorAlignScore >= 0.7
-                              ? "Sectors in sync"
-                              : "Diverging",
+                              : participationPulse >= 0.68
+                              ? "Breadth and sectors expanding"
+                              : "Participation mixed",
                         },
                         {
-                          label: "Breadth Edge",
-                          value: breadthEdge,
+                          label: "Confirmation",
+                          value: confirmationPulse,
                           desc:
-                            breadthEdge == null
-                              ? "Awaiting live breadth"
-                              : breadthEdge >= 0.5
-                              ? `${bullishSectorCount > bearishSectorCount ? "Bull" : "Bear"} extreme`
-                              : "Balanced",
+                            confirmationPulse >= 0.68
+                              ? "Scanner/Fusion/TV aligned"
+                              : tvConflictActive
+                              ? "Trend conflict in stack"
+                              : `Fusion ${unifiedState.toLowerCase()}`,
+                        },
+                        {
+                          label: "Risk Drag",
+                          value: explosionPenalty,
+                          desc:
+                            explosionPenalty >= 0.55
+                              ? "Warnings constraining release"
+                              : explosionPenalty >= 0.3
+                              ? "Minor drag active"
+                              : "Low drag",
                         },
                       ].map(({ label, value, desc }) => {
                         const metricValue = value ?? 0;
                         const barColor = metricValue >= 0.7 ? "#f43f5e" : metricValue >= 0.45 ? "#f59e0b" : "#22d3ee";
-                        const segs = 14;
+                        const segs = 16;
                         const filled = Math.round(metricValue * segs);
                         return (
-                          <div key={label} className="space-y-1">
-                            <div className="flex justify-between text-[7px] font-bold uppercase tracking-wider">
+                          <div
+                            key={label}
+                            className="relative space-y-1 overflow-hidden rounded-md border px-1.5 py-1"
+                            style={{
+                              borderColor: barColor + "45",
+                              background: `linear-gradient(145deg,${callPutColor}16,rgba(2,8,18,0.9))`,
+                              boxShadow: `inset 0 0 12px ${barColor}16`,
+                            }}
+                          >
+                            <div className="pointer-events-none absolute inset-0 opacity-[0.09]" style={{ backgroundImage: meterPanelScanline }} />
+                            <div className="pointer-events-none absolute inset-x-1.5 top-0.5 h-px" style={{ background: `linear-gradient(90deg,transparent,${barColor}55,transparent)` }} />
+                            <div className="relative z-10 flex justify-between text-[7px] font-bold uppercase tracking-wider">
                               <span className="text-white/35">{label}</span>
                               <span style={{ color: barColor }}>{value == null ? "--" : Math.round(metricValue * 100)}</span>
                             </div>
-                            <div className="flex gap-[1.5px] h-[7px]">
+                            <div className="relative z-10 flex gap-[1.5px] h-[8px]">
                               {Array.from({ length: segs }).map((_, i) => {
                                 const active = i < filled;
                                 const isLast = active && i === filled - 1;
@@ -2655,7 +2794,7 @@ export function PriceCard({
                                 );
                               })}
                             </div>
-                            <div className="text-[7px] text-white/22" style={{ color: barColor + "aa" }}>{desc}</div>
+                            <div className="relative z-10 min-h-[20px] text-[7px] leading-tight text-white/22" style={{ color: barColor + "aa" }}>{desc}</div>
                           </div>
                         );
                       })}
@@ -2710,6 +2849,10 @@ export function BreakoutAlertBar({
   drawablePatterns?: DrawablePattern[];
   marketHealth?: any;
 }) {
+  const cardHoldRef = useRef<Map<string, { until: number; direction: 'bullish' | 'bearish' | 'neutral' }>>(new Map());
+  const lastVisibleSymbolsRef = useRef<Set<string>>(new Set());
+  const directionLockRef = useRef<Map<string, { until: number; direction: 'bullish' | 'bearish' | 'neutral' }>>(new Map());
+
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
     refetchInterval: 30000,
@@ -2870,13 +3013,39 @@ export function BreakoutAlertBar({
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
     const phase = String(alert.compression?.phase || '').toUpperCase();
+    const setupScore = alert.preBreakoutSetup?.score ?? 0;
+    const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+    const setupTraits = alert.preBreakoutSetup?.traits ?? [];
+    const hasRepeatPattern =
+      setupTraits.includes('REPEAT_PATTERN_3W') ||
+      setupTraits.includes('REPEAT_PATTERN_MATCH');
+    const isTvDerivedFallback = (alert.warnings ?? []).includes('TV_DERIVED_NO_OHLC');
+    const setupSignal = signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING';
+    const softSignal = signal === 'EXPANSION' || signal === 'MOMENTUM';
+
+    const imminentLeadSetup =
+      etaMinutes != null &&
+      etaMinutes <= 5 &&
+      (signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING');
+
+    if (
+      !imminentLeadSetup &&
+      (
+        (hasRepeatPattern && (setupSignal || softSignal)) ||
+        (isTvDerivedFallback && (setupSignal || softSignal))
+      )
+    ) {
+      return 'SETUP DEVELOPING';
+    }
 
     const expandingNow =
       signal === 'EXPANSION' ||
       signal === 'BREAKOUT' ||
       signal === 'BREAKDOWN' ||
       (signal === 'MOMENTUM' && momentumAbs >= 20) ||
-      (volumeSpike >= 1.2 && momentumAbs >= 20 && phase !== 'WAIT');
+      (volumeSpike >= 1.2 && momentumAbs >= 20 && phase !== 'WAIT') ||
+      imminentLeadSetup ||
+      (setupScore >= 76 && momentumAbs >= 14 && volumeSpike >= 1.0 && (phase === 'PREPARE' || phase === 'READY' || phase === 'NOW'));
 
     return expandingNow ? 'READY' : 'SETUP DEVELOPING';
   };
@@ -2886,6 +3055,7 @@ export function BreakoutAlertBar({
     const phase = String(alert.compression?.phase || '').toUpperCase();
     const setupScore = alert.preBreakoutSetup?.score ?? 0;
     const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
+    const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
     const breakoutScore = alert.breakoutScore ?? 0;
@@ -2912,12 +3082,15 @@ export function BreakoutAlertBar({
     // Option data is optional — don't gate on it when unavailable
     const hasOptionData = !!bestPlay && (optionScore > 0 || optionOi > 0);
     const optionGate = !hasOptionData || (optionScore >= 50 && optionOi >= 100);
+    const hasSetupModel = !!alert.preBreakoutSetup;
+    const etaGate = etaMinutes == null || etaMinutes <= 10;
 
     return (
       getSetupStage(alert) === 'SETUP DEVELOPING' &&
       (setupSignal || setupPhase) &&
-      (setupScore >= 62 || !alert.preBreakoutSetup) &&
-      (setupTraits >= 3 || !alert.preBreakoutSetup) &&
+      (setupScore >= 62 || !hasSetupModel) &&
+      (setupTraits >= 3 || !hasSetupModel) &&
+      etaGate &&
       momentumAbs >= 10 &&
       momentumAbs <= 32 &&
       volumeSpike >= 1.0 &&
@@ -3200,44 +3373,340 @@ export function BreakoutAlertBar({
     return true;
   };
 
-  const MIN_ALERT_CARD_SCORE = 62;
+  const getLegacyCardDirection = (alert: ScannerResult): 'bullish' | 'bearish' | 'neutral' => {
+    const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+    if (signal === 'BREAKOUT') return 'bullish';
+    if (signal === 'BREAKDOWN') return 'bearish';
+    if (signal === 'EXPANSION' || signal === 'MOMENTUM' || signal === 'BUILDING') {
+      if (alert.expansionDirection === 'bullish') return 'bullish';
+      if (alert.expansionDirection === 'bearish') return 'bearish';
+      const momentum = alert.momentumStrength ?? 0;
+      if (momentum >= 0) return 'bullish';
+      return 'bearish';
+    }
+    return 'neutral';
+  };
+
+  const getLegacyCardScore = (alert: ScannerResult): number => {
+    const breakoutScore = Math.max(0, Math.min(100, alert.breakoutScore ?? 0));
+    const momentumAbs = Math.max(0, Math.min(100, Math.abs(alert.momentumStrength ?? 0)));
+    const volumeSpike = Math.max(0, alert.volumeSpike ?? 1);
+    const dayMoveAbsPct = Math.abs(alert.priceChangePercent ?? 0);
+    const rsi = alert.rsiValue ?? 50;
+    const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+
+    let score =
+      breakoutScore * 0.58 +
+      momentumAbs * 0.24 +
+      Math.max(0, (volumeSpike - 1) * 28) +
+      Math.min(12, dayMoveAbsPct * 12);
+
+    if (signal === 'BREAKOUT' || signal === 'BREAKDOWN') score += 8;
+    if (signal === 'EXPANSION') score += 10;
+    if (signal === 'MOMENTUM') score += 6;
+    if ((signal === 'BREAKOUT' || signal === 'BREAKDOWN' || signal === 'EXPANSION') && (rsi >= 60 || rsi <= 40)) {
+      score += 4;
+    }
+
+    const qualityRank = getSignalQualityRank(alert.signalQuality);
+    if (qualityRank === 3) score += 6;
+    else if (qualityRank === 2) score += 2;
+    else if (qualityRank === 1) score -= 8;
+    else score -= 14;
+
+    return Math.max(0, Math.min(100, Math.round(score)));
+  };
+
+  const isLegacyBreakoutCard = (alert: ScannerResult, legacyScore: number): boolean => {
+    const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+    const qualityRank = getSignalQualityRank(alert.signalQuality);
+    const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
+    const volumeSpike = alert.volumeSpike ?? 1;
+    const breakoutScore = alert.breakoutScore ?? 0;
+    const dayMove = alert.priceChangePercent ?? 0;
+    const direction = getLegacyCardDirection(alert);
+    const warningSet = new Set((alert.warnings ?? []).map((warning) => String(warning ?? '').toUpperCase()));
+
+    const isDirectionalSignal =
+      signal === 'BREAKOUT' ||
+      signal === 'BREAKDOWN' ||
+      signal === 'EXPANSION' ||
+      signal === 'MOMENTUM' ||
+      signal === 'BUILDING';
+    if (!isDirectionalSignal) return false;
+    if (qualityRank === 0) return false;
+    if (legacyScore < 58) return false;
+
+    const hardConflict =
+      warningSet.has('TREND_CONFLICT') ||
+      warningSet.has('TV_TREND_CONFLICT') ||
+      warningSet.has('CONFLICT_MOMENTUM') ||
+      warningSet.has('TV_RECOMMEND_OPPOSE');
+    if (hardConflict && legacyScore < 76) return false;
+    if (warningSet.has('LATE_PHASE_UNCONFIRMED') && legacyScore < 74) return false;
+
+    const todayBullish = dayMove > 0.1;
+    const todayBearish = dayMove < -0.1;
+    if (direction === 'bullish' && todayBearish && legacyScore < 78) return false;
+    if (direction === 'bearish' && todayBullish && legacyScore < 78) return false;
+
+    if (signal === 'BREAKOUT' || signal === 'BREAKDOWN' || signal === 'EXPANSION') {
+      if (momentumAbs < 18) return false;
+      if (volumeSpike < 1.1 && breakoutScore < 72) return false;
+    } else if (signal === 'MOMENTUM') {
+      if (momentumAbs < 30) return false;
+      if (volumeSpike < 1.0 && Math.abs(dayMove) < 0.45) return false;
+    } else if (signal === 'BUILDING') {
+      if (legacyScore < 64) return false;
+      if (momentumAbs < 16 || volumeSpike < 1.15) return false;
+    }
+
+    if (qualityRank < 2 && legacyScore < 72) return false;
+    return true;
+  };
+
+  const isPrepareCompressionAlert = (alert: ScannerResult, legacyScore: number): boolean => {
+    const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+    const phase = String(alert.compression?.phase ?? '').toUpperCase();
+    const qualityRank = getSignalQualityRank(alert.signalQuality);
+    const breakoutScore = alert.breakoutScore ?? 0;
+    const compressionStrength = Number.isFinite(alert.compression?.archStrength)
+      ? (alert.compression?.archStrength as number)
+      : Number.isFinite(alert.compression?.sparkScore)
+        ? (alert.compression?.sparkScore as number)
+        : 0;
+    const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
+    const volumeSpike = alert.volumeSpike ?? 1;
+    const dayMoveAbsPct = Math.abs(alert.priceChangePercent ?? 0);
+    const setupScore = alert.preBreakoutSetup?.score ?? 0;
+    const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
+    const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+
+    const warningSet = new Set((alert.warnings ?? []).map((warning) => String(warning ?? '').toUpperCase()));
+    const hardConflict = warningSet.has('CONFLICT_MOMENTUM');
+    const trendConflict = warningSet.has('TREND_CONFLICT') || warningSet.has('TV_TREND_CONFLICT');
+    const recommendOpposed = warningSet.has('TV_RECOMMEND_OPPOSE');
+
+    const isPreparePhase = phase === 'WAIT' || phase === 'PREPARE' || phase === 'READY';
+    const isPrepareSignal = signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING';
+    if (!isPreparePhase || !isPrepareSignal) return false;
+    if (qualityRank < 1) return false;
+    if (hardConflict) return false;
+
+    if (etaMinutes != null && etaMinutes <= 5 && setupScore >= 70 && setupTraits >= 3) {
+      return true;
+    }
+
+    const lowCompression = compressionStrength < 45;
+    const midCompression = compressionStrength >= 45 && compressionStrength < 65;
+    const lowVolume = volumeSpike < 1.0;
+    const midVolume = volumeSpike >= 1.0 && volumeSpike < 1.3;
+    const highVolume = volumeSpike >= 1.3;
+    const mom15To34 = momentumAbs >= 15 && momentumAbs < 35;
+    const mom35To54 = momentumAbs >= 35 && momentumAbs < 55;
+    const mom55Plus = momentumAbs >= 55;
+
+    // Recurrence-backed profiles from the 2-8 minute lead study.
+    const profileWaitLowVolMomentum = phase === 'WAIT' && lowCompression && lowVolume && mom55Plus;
+    const profileReadyLowVolMomentum = phase === 'READY' && midCompression && lowVolume && mom55Plus;
+    const profilePrepareHighVolMomentum = phase === 'PREPARE' && lowCompression && highVolume && (mom35To54 || mom55Plus);
+    const profileReadyHighVolControlledMomentum =
+      phase === 'READY' && midCompression && highVolume && mom35To54;
+
+    const badReadyWeakMomentumHighVol =
+      phase === 'READY' && midCompression && highVolume && mom15To34;
+
+    if (badReadyWeakMomentumHighVol && legacyScore < 70) return false;
+
+    let profileScore = 0;
+    if (profileWaitLowVolMomentum) profileScore += 5;
+    if (profileReadyLowVolMomentum) profileScore += 4;
+    if (profilePrepareHighVolMomentum) profileScore += 4;
+    if (profileReadyHighVolControlledMomentum) profileScore += 3;
+
+    if (phase === 'WAIT') profileScore += 1;
+    if (phase === 'PREPARE' || phase === 'READY') profileScore += 1;
+    if (lowCompression) profileScore += 2;
+    else if (midCompression) profileScore += 1;
+
+    if (mom55Plus) profileScore += 2;
+    else if (mom35To54) profileScore += 1;
+
+    if (lowVolume) profileScore += 1;
+    if (midVolume) profileScore += 1;
+    if (highVolume && phase === 'PREPARE' && momentumAbs >= 35) profileScore += 1;
+
+    if (breakoutScore >= 46) profileScore += 1;
+    if (legacyScore >= 52) profileScore += 1;
+    if (dayMoveAbsPct >= 0.45) profileScore += 1;
+
+    if (trendConflict && profileScore < 9 && legacyScore < 66) return false;
+    if (recommendOpposed && profileScore < 10 && legacyScore < 68) return false;
+    if (qualityRank === 1 && profileScore < 10) return false;
+
+    const strongProfileMatch =
+      profileWaitLowVolMomentum ||
+      profileReadyLowVolMomentum ||
+      profilePrepareHighVolMomentum ||
+      profileReadyHighVolControlledMomentum;
+
+    if (!strongProfileMatch && profileScore < 9) return false;
+    if (legacyScore < 50 && breakoutScore < 44 && profileScore < 11) return false;
+    return true;
+  };
+
+  const getRecentLogAgeMs = (alert: ScannerResult): number | null => {
+    const symbolStats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
+    const latestTs = toFiniteNumber(symbolStats?.latest?.timestamp);
+    if (latestTs == null || latestTs <= 0) return null;
+    return Math.max(0, Date.now() - latestTs);
+  };
+
+  const nowTs = Date.now();
+  const CARD_HYSTERESIS_MS = 4 * 60 * 1000;
+  const DIRECTION_FLIP_LOCK_MS = 3 * 60 * 1000;
+  for (const [symbol, hold] of cardHoldRef.current.entries()) {
+    if (!hold || hold.until <= nowTs) {
+      cardHoldRef.current.delete(symbol);
+    }
+  }
+  for (const [symbol, lock] of directionLockRef.current.entries()) {
+    if (!lock || lock.until <= nowTs) {
+      directionLockRef.current.delete(symbol);
+    }
+  }
+
+  const MAX_STICKY_LOG_AGE_MS = 8 * 60 * 1000;
   const MAX_VISIBLE_ALERTS = 3;
   const monitoredAlerts = (results || [])
-    .map((alert) => ({ alert, setupOdds: getSetupOdds(alert) }))
-    .filter(({ alert }) => (alert.breakoutScore ?? 0) >= MIN_ALERT_CARD_SCORE)
-    .filter(({ alert }) =>
-      (isSetupStartingTight(alert) && isActionablePlay(alert)) ||
-      (isExpansionDetected(alert) && isLegitExpansionPlay(alert))
-    )
-    .filter(({ alert, setupOdds }) => isHighChanceSetup(alert, setupOdds))
+    .map((alert) => {
+      const setupOdds = getSetupOdds(alert);
+      const legacyScore = getLegacyCardScore(alert);
+      const qualityRank = getSignalQualityRank(alert.signalQuality);
+      const recentLogAgeMs = getRecentLogAgeMs(alert);
+      const symbolUpper = String(alert.symbol ?? '').toUpperCase();
+      const direction = getLegacyCardDirection(alert);
+      const hold = cardHoldRef.current.get(symbolUpper);
+      const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+      const prepareCompressionAlert = isPrepareCompressionAlert(alert, legacyScore);
+      const stickyFromRecentLog =
+        recentLogAgeMs != null &&
+        recentLogAgeMs <= MAX_STICKY_LOG_AGE_MS &&
+        qualityRank >= 2 &&
+        legacyScore >= 54;
+      const passesLegacyGate = isLegacyBreakoutCard(alert, legacyScore);
+
+      const passesCurrentGate = passesLegacyGate || stickyFromRecentLog || prepareCompressionAlert;
+      const hardInvalidation =
+        qualityRank === 0 ||
+        (signal === 'BUILDING' && Math.abs(alert.momentumStrength ?? 0) < 10 && (alert.breakoutScore ?? 0) < 46);
+      const holdDirectionConflict =
+        !!hold &&
+        hold.direction !== 'neutral' &&
+        direction !== 'neutral' &&
+        hold.direction !== direction;
+
+      const directionLock = directionLockRef.current.get(symbolUpper);
+      const directionFlipConflict =
+        !!directionLock &&
+        directionLock.until > nowTs &&
+        directionLock.direction !== 'neutral' &&
+        direction !== 'neutral' &&
+        directionLock.direction !== direction;
+      const displayDirection = directionFlipConflict
+        ? directionLock.direction
+        : direction;
+
+      const holdActive =
+        !!hold &&
+        hold.until > nowTs &&
+        !hardInvalidation &&
+        qualityRank >= 1;
+
+      if (passesCurrentGate) {
+        cardHoldRef.current.set(symbolUpper, {
+          until: nowTs + CARD_HYSTERESIS_MS,
+          direction,
+        });
+      } else if (hold && !holdActive) {
+        cardHoldRef.current.delete(symbolUpper);
+      }
+
+      if (displayDirection !== 'neutral' && (passesCurrentGate || holdActive)) {
+        directionLockRef.current.set(symbolUpper, {
+          until: nowTs + DIRECTION_FLIP_LOCK_MS,
+          direction: displayDirection,
+        });
+      }
+
+      const wasVisibleLastCycle = lastVisibleSymbolsRef.current.has(symbolUpper);
+
+      return {
+        symbolUpper,
+        alert,
+        setupOdds,
+        legacyScore,
+        displayDirection,
+        directionFlipConflict,
+        prepareCompressionAlert,
+        passesCurrentGate,
+        holdActive,
+        wasVisibleLastCycle,
+        stickyFromRecentLog,
+        include: passesCurrentGate || holdActive,
+      };
+    })
+    .filter((row) => row.include)
     .slice()
     .sort((a, b) => {
-      const stageA = getSetupStage(a.alert);
-      const stageB = getSetupStage(b.alert);
-      if (stageA !== stageB) return stageA === 'READY' ? -1 : 1;
+      if (a.prepareCompressionAlert !== b.prepareCompressionAlert) return a.prepareCompressionAlert ? -1 : 1;
+      if (a.passesCurrentGate !== b.passesCurrentGate) return a.passesCurrentGate ? -1 : 1;
+      if (a.holdActive !== b.holdActive) return a.holdActive ? -1 : 1;
+      if (a.wasVisibleLastCycle !== b.wasVisibleLastCycle) return a.wasVisibleLastCycle ? -1 : 1;
+      if (b.legacyScore !== a.legacyScore) return b.legacyScore - a.legacyScore;
+      if (a.stickyFromRecentLog !== b.stickyFromRecentLog) return a.stickyFromRecentLog ? -1 : 1;
       if (b.setupOdds !== a.setupOdds) return b.setupOdds - a.setupOdds;
       return (b.alert.breakoutScore || 0) - (a.alert.breakoutScore || 0);
-    })
+    });
+
+  // Pin previously visible cards while their hold is active, then fill remaining slots.
+  const pinnedAlerts = Array.from(lastVisibleSymbolsRef.current)
+    .map((symbolUpper) => monitoredAlerts.find((row) => row.symbolUpper === symbolUpper))
+    .filter((row): row is NonNullable<typeof row> => !!row && (row.holdActive || row.passesCurrentGate));
+  const pinnedSymbolSet = new Set(pinnedAlerts.map((row) => row.symbolUpper));
+  const monitoredAlertsStable = [
+    ...pinnedAlerts,
+    ...monitoredAlerts.filter((row) => !pinnedSymbolSet.has(row.symbolUpper)),
+  ]
     .slice(0, MAX_VISIBLE_ALERTS);
 
-  if (monitoredAlerts.length > 0) {
+  useEffect(() => {
+    const next = new Set<string>();
+    for (const row of monitoredAlertsStable) {
+      next.add(String(row.alert.symbol ?? '').toUpperCase());
+    }
+    lastVisibleSymbolsRef.current = next;
+  }, [monitoredAlertsStable]);
+
+  if (monitoredAlertsStable.length > 0) {
     return (
       <div className="flex flex-wrap gap-2 mb-3">
-        {monitoredAlerts.map(({ alert, setupOdds }) => {
+        {monitoredAlertsStable.map(({ alert, setupOdds, prepareCompressionAlert, displayDirection }) => {
           const momentumStrength = alert.momentumStrength ?? 0;
-          const isBearish =
-            alert.breakoutSignal === 'BREAKDOWN' ||
-            (alert.breakoutSignal === 'EXPANSION' && alert.expansionDirection === 'bearish') ||
-            alert.expansionDirection === 'bearish';
+          const isBearish = displayDirection === 'bearish';
           const isLong = !isBearish;
           const alertColor = isLong ? '#10b981' : '#ef4444';
           const alertGlow = isLong ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)';
           const alertTopBar = isLong
             ? 'from-emerald-600 via-teal-400 to-cyan-500'
             : 'from-red-700 via-rose-500 to-orange-400';
-          const signalTag = isExpansionDetected(alert)
-            ? (marketPushMode ? 'LIVE PUSH' : 'EXPANSION DETECTED')
-            : 'SETUP STARTING';
+          const signalTag = prepareCompressionAlert
+            ? ((alert.preBreakoutSetup?.etaMinutes != null && alert.preBreakoutSetup.etaMinutes <= 5)
+              ? 'BREAKOUT <=5M'
+              : 'PREPARE ALERT')
+            : isExpansionDetected(alert)
+              ? (marketPushMode ? 'LIVE PUSH' : 'EXPANSION DETECTED')
+              : 'SETUP STARTING';
           const setupStage = getSetupStage(alert);
           const compressionStrength = Number.isFinite(alert.compression?.archStrength)
             ? (alert.compression?.archStrength as number)
@@ -3269,42 +3738,54 @@ export function BreakoutAlertBar({
           const symbolSampleCount = symbolStats?.completed ?? 0;
 
           // Reasoning logic for user-friendly explanation
-          let reasoning = '';
+          const reasoningParts: string[] = [];
           const vol = alert.volumeSpike ?? alert.volume ?? 0;
           const mom = alert.momentumStrength ?? 0;
           const rsi = alert.rsiValue ?? 0;
-          const compressionPhase = alert.compression?.phase || '';
-          if (Array.isArray(alert.optionPlays) && alert.optionPlays.length > 0) {
-            const hasHighProbOption = alert.optionPlays.some((play) => (play.score ?? 0) >= 60);
-            if (!hasHighProbOption) reasoning += 'No high-probability option play. ';
+          const compressionPhase = String(alert.compression?.phase || '').toUpperCase();
+          const setupScore = alert.preBreakoutSetup?.score ?? 0;
+          const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+          const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
+
+          if (etaMinutes != null && etaMinutes <= 5) {
+            reasoningParts.push(`Lead model flags breakout risk within ~${etaMinutes} minutes.`);
           }
-          if ((compressionPhase === 'WAIT' || compressionPhase === 'PREPARE' || vol < 1.1) && vol > 1.3 && Math.abs(mom) > 30) {
-            reasoning += 'Breakout from compression with strong volume and momentum. ';
+          if (setupScore > 0) {
+            reasoningParts.push(`Pre-breakout setup score ${Math.round(setupScore)} with ${setupTraits} structural traits.`);
           }
-          if ((compressionPhase?.toUpperCase() === 'COMPRESSION' || compressionPhase?.toUpperCase() === 'EXPANSION') && Math.abs(mom) > 30) {
-            reasoning += `In ${compressionPhase.toLowerCase()} phase with strong momentum. `;
+          if (compressionPhase === 'PREPARE' || compressionPhase === 'READY' || compressionPhase === 'NOW') {
+            reasoningParts.push(`Compression phase ${compressionPhase} with spark ${Math.round(compressionStrength)} supports release conditions.`);
+          }
+          if (vol >= 1.2 && Math.abs(mom) >= 20) {
+            reasoningParts.push('Volume and momentum are aligned with directional expansion criteria.');
+          }
+          if (Math.abs(mom) >= 35) {
+            reasoningParts.push('Momentum is elevated enough to reduce false-start risk.');
           }
           if (Array.isArray(alert.patterns) && alert.patterns.some((p) => {
             const name = (typeof p === 'string' ? p : p?.name || '').toUpperCase();
             return name.includes('BOS') || name.includes('CHOCH');
           })) {
-            reasoning += 'Detected BOS/CHOCH pattern. ';
-          }
-          if (Math.abs(mom) > 40) {
-            reasoning += 'Very strong momentum detected. ';
+            reasoningParts.push('Detected BOS/CHOCH structure confirmation.');
           }
           if (isLong && vol > 1.2 && mom > 20 && rsi > 50) {
-            reasoning += 'Bullish confluence: volume, momentum, and RSI align. ';
+            reasoningParts.push('Bullish confluence: volume, momentum, and RSI are aligned.');
           } else if (!isLong && vol > 1.2 && mom < -20 && rsi < 50) {
-            reasoning += 'Bearish confluence: volume, momentum, and RSI align. ';
+            reasoningParts.push('Bearish confluence: volume, momentum, and RSI are aligned.');
           }
-          if (!reasoning) reasoning = 'General strong move detected.';
           if ((alert.timeframeStack?.agreement ?? 0) >= 60) {
-            reasoning += ` Multi-timeframe agreement ${alert.timeframeStack?.agreement}% (${alert.timeframeStack?.bias || 'neutral'}).`;
+            reasoningParts.push(`Multi-timeframe alignment ${Math.round(alert.timeframeStack?.agreement ?? 0)}% (${alert.timeframeStack?.bias || 'neutral'} bias).`);
           }
-          if ((alert.preBreakoutSetup?.score ?? 0) > 0) {
-            reasoning += ` Pre-breakout setup score ${Math.round(alert.preBreakoutSetup?.score ?? 0)} with ${alert.preBreakoutSetup?.traits?.length ?? 0} shared traits.`;
+          if (Array.isArray(alert.warnings) && alert.warnings.length > 0) {
+            const keyWarning = alert.warnings[0];
+            if (typeof keyWarning === 'string' && keyWarning.trim()) {
+              reasoningParts.push(`Risk flag to watch: ${keyWarning}.`);
+            }
           }
+
+          const reasoning = reasoningParts.length > 0
+            ? reasoningParts.join(' ')
+            : 'Setup is active with directional pressure; monitor trigger confirmation and risk controls.';
 
           return (
             <Card

@@ -527,7 +527,8 @@ export function runMonsterOTMEngine(
   tactical: TacticalAdvice,
   optionsChain: any[],
   nowMinutes: number,
-  sessionSplit?: SessionSplit
+  sessionSplit?: SessionSplit,
+  currentPrice?: number
 ): MonsterOTMEngineOutput {
   const vwap = computeVWAPSeries(ohlc);
   const volSpike = detectVolumeSpike(ohlc);
@@ -545,7 +546,8 @@ export function runMonsterOTMEngine(
     emaCloud,
     { maxAbsGammaStrike: null },
     tactical,
-    sessionSplit
+    sessionSplit,
+    currentPrice
   );
 
   const pce = computePCE(ohlc, meta, vwap, volSpike, sweep, candle);
@@ -584,7 +586,10 @@ export function runMonsterOTMEngine(
     return { hasPlay: false, play: null, meta: baseMeta, pce };
   }
 
-  const lastPrice = ohlc[ohlc.length - 1].close;
+  const lastPrice =
+    Number.isFinite(currentPrice as number) && (currentPrice as number) > 0
+      ? Number(currentPrice)
+      : ohlc[ohlc.length - 1].close;
   const nearest =
     direction === "bullish" ? meta.liquidity.nearestAbove : meta.liquidity.nearestBelow;
   

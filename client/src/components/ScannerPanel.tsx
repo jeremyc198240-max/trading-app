@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, TrendingUp, TrendingDown, Activity, AlertCircle, Clock, Target, ShieldAlert, ArrowUpRight, ArrowDownRight, Minus, Zap, Radio, Radar, BarChart2, Flame, Volume2, ArrowUp, ArrowDown, Gauge, Crosshair, Timer, Bomb } from "lucide-react";
+import { RefreshCw, TrendingUp, TrendingDown, Activity, AlertCircle, Clock, Target, ShieldAlert, ArrowUpRight, ArrowDownRight, Minus, Zap, Radio, Radar, BarChart2, Flame, Volume2, ArrowUp, ArrowDown, Gauge, Crosshair, Timer, Bomb, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -51,6 +51,66 @@ interface ScannerResult {
     rangePct: string;
     volRatio: string;
   };
+  lastIndex?: number;
+  dailyVolume?: number;
+  pattern?: string;
+  optionPlays?: Array<{
+    score?: number;
+    openInterest?: number;
+    oi?: number;
+    direction?: 'CALL' | 'PUT' | 'NEUTRAL';
+    strike?: number;
+    premium?: number;
+    targetPrice?: number;
+    stopPrice?: number;
+    stopLoss?: number;
+    rr?: number;
+    riskReward?: number;
+    rationale?: string;
+  }>;
+  timeframeStack?: {
+    primary?: string;
+    aggregateScore?: number;
+    agreement?: number;
+    bias?: 'bullish' | 'bearish' | 'mixed' | 'neutral';
+    components?: Array<{
+      timeframe?: string;
+      breakoutSignal?: string | null;
+      breakoutScore?: number;
+      momentumStrength?: number;
+      direction?: 'bullish' | 'bearish' | 'neutral';
+      weight?: number;
+    }>;
+  };
+  preBreakoutSetup?: {
+    score?: number;
+    traits?: string[];
+    preVolumeRatio?: number;
+    preRsi?: number;
+    preMomentum3?: number;
+    preRangeCompression?: number;
+    preCloseLocation?: number;
+    preNearSessionHigh?: boolean;
+    preAboveVwap?: boolean;
+    etaMinutes?: number;
+  };
+  tradePlan?: {
+    entry?: number;
+    entryZoneLow?: number;
+    entryZoneHigh?: number;
+    stop?: number;
+    targets?: number[];
+    rrLadder?: number[];
+    riskRewardLabel?: string;
+    confidencePct?: number;
+    confidenceLabel?: string;
+    confidenceReasons?: string[];
+    positionSizing?: string;
+    timeline?: string;
+  };
+  setupReasoning?: string[];
+  isDegraded?: boolean;
+  degradedReason?: string;
 }
 
 interface ScannerStatus {
@@ -60,12 +120,43 @@ interface ScannerStatus {
   resultCount: number;
 }
 
+interface AnalyzeExpandedPayload {
+  strategy?: string;
+  confidence?: string;
+  directionScore?: number;
+  directionalBias?: string;
+  notes?: string[];
+  tactical?: {
+    strategy?: string;
+    bias?: string;
+    confidence?: string;
+    notes?: string[];
+    actionPlan?: string[];
+    tradePlan?: {
+      entry?: number;
+      entryZoneLow?: number;
+      entryZoneHigh?: number;
+      stop?: number;
+      targets?: number[];
+      rrLadder?: number[];
+      riskRewardLabel?: string;
+      confidencePct?: number;
+      confidenceLabel?: string;
+      confidenceReasons?: string[];
+      positionSizing?: string;
+      timeline?: string;
+    };
+  };
+}
+
 interface ScannerPanelProps { 
   onSelectSymbol?: (symbol: string) => void;
   selectedSymbol?: string;
 }
 
 export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelProps) {
+  const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+
   const { data: results, isLoading } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
     refetchInterval: 30000,
@@ -104,6 +195,19 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
   const filteredResults = sortedResults.filter(r => {
     const isOriginal = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA"].includes(r.symbol);
     return isOriginal || r.symbol === selectedSymbol;
+  });
+
+  const expandedResult = filteredResults.find((r) => r.symbol === expandedSymbol) ?? null;
+  const isExpandedResultDegraded = Boolean(
+    expandedResult?.isDegraded ||
+    expandedResult?.warnings?.includes('NO_OHLC_DATA')
+  );
+
+  const { data: expandedAnalysis, isFetching: isExpandedFetching } = useQuery<AnalyzeExpandedPayload>({
+    queryKey: ["/api/analyze", expandedSymbol ?? "idle", "5m"],
+    enabled: Boolean(expandedResult) && !isExpandedResultDegraded,
+    staleTime: 20000,
+    refetchInterval: expandedSymbol ? 30000 : false,
   });
 
   return (
@@ -160,24 +264,50 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
             ))}
           </div>
         ) : (
-          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-            {filteredResults.map((result) => (
-              <ScannerRow
-                key={result.symbol}
-                result={result}
-                isSelected={selectedSymbol === result.symbol}
-                onClick={() => onSelectSymbol?.(result.symbol)}
-              />
-            ))}
-            {(!results || results.length === 0) && (
-              <div className="text-center py-8">
-                <div className="relative inline-block">
-                  <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" />
-                  <Radar className="relative w-10 h-10 mx-auto mb-3 text-cyan-400/50" />
+          <div className="space-y-3">
+            <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1 pb-1 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+              {filteredResults.map((result) => (
+                <ScannerRow
+                  key={result.symbol}
+                  result={result}
+                  isSelected={selectedSymbol === result.symbol}
+                  onClick={() => onSelectSymbol?.(result.symbol)}
+                  isExpanded={expandedSymbol === result.symbol}
+                  onToggleExpand={() =>
+                    setExpandedSymbol((current) => (current === result.symbol ? null : result.symbol))
+                  }
+                />
+              ))}
+              {(!results || results.length === 0) && (
+                <div className="text-center py-8">
+                  <div className="relative inline-block">
+                    <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" />
+                    <Radar className="relative w-10 h-10 mx-auto mb-3 text-cyan-400/50" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Scanning market...</p>
+                  <p className="text-[10px] text-muted-foreground/50 mt-1">Detecting patterns across watchlist</p>
                 </div>
-                <p className="text-sm text-muted-foreground">Scanning market...</p>
-                <p className="text-[10px] text-muted-foreground/50 mt-1">Detecting patterns across watchlist</p>
-              </div>
+              )}
+            </div>
+
+            {expandedResult && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExpandedSymbol(null)}
+                  aria-label="Close expanded trade panel overlay"
+                  className="hidden lg:block fixed inset-0 z-[130] bg-slate-950/70 backdrop-blur-[2px]"
+                />
+                <div className="mt-2 lg:mt-0 lg:fixed lg:right-4 lg:top-[72px] lg:z-[140] lg:w-[min(640px,calc(100vw-1.5rem))] lg:max-h-[calc(100vh-92px)]">
+                  <ExpandedTradePanel
+                    result={expandedResult}
+                    analysis={expandedAnalysis}
+                    isFetching={isExpandedFetching}
+                    onClose={() => setExpandedSymbol(null)}
+                    className="lg:min-h-0 lg:max-h-[calc(100vh-92px)]"
+                  />
+                </div>
+              </>
             )}
           </div>
         )}
@@ -186,7 +316,63 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
   );
 }
 
-function ScannerRow({ result, onClick, isSelected }: { result: ScannerResult; onClick: () => void; isSelected?: boolean }) {
+function ScannerRow({
+  result,
+  onClick,
+  isSelected,
+  isExpanded,
+  onToggleExpand,
+}: {
+  result: ScannerResult;
+  onClick: () => void;
+  isSelected?: boolean;
+  isExpanded?: boolean;
+  onToggleExpand: () => void;
+}) {
+  const isDegraded = Boolean(
+    result.isDegraded ||
+    result.warnings?.includes('NO_OHLC_DATA')
+  );
+
+  const handleRowClick = () => {
+    onClick();
+    onToggleExpand();
+  };
+
+  if (isDegraded) {
+    return (
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-lg border cursor-pointer transition-all duration-200",
+          "hover-elevate active-elevate-2 border-cyan-500/25 bg-cyan-500/5",
+          isSelected && "ring-2 ring-cyan-500 border-cyan-500/50"
+        )}
+        onClick={handleRowClick}
+        data-testid={`scanner-row-${result.symbol}`}
+      >
+        <div className="h-0.5 bg-gradient-to-r from-cyan-500/60 to-blue-500/40" />
+        <div className="relative p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-mono font-bold text-sm tracking-wide text-cyan-200">{result.symbol}</span>
+              <Badge variant="outline" className="text-[7px] font-bold px-1 py-0 bg-cyan-500/20 text-cyan-300 border-cyan-400/40">
+                DATA DELAY
+              </Badge>
+            </div>
+            {Number.isFinite(result.lastPrice) && result.lastPrice > 0 && (
+              <div className="font-mono text-sm font-bold tabular-nums text-cyan-200/85">
+                ${result.lastPrice.toFixed(2)}
+              </div>
+            )}
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            Waiting for fresh candle feed...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isPositive = result.priceChangePercent >= 0;
   const topPattern = result.patterns[0];
   const absChange = Math.abs(result.priceChangePercent);
@@ -277,6 +463,7 @@ function ScannerRow({ result, onClick, isSelected }: { result: ScannerResult; on
         "relative overflow-hidden rounded-lg border cursor-pointer transition-all duration-200",
         "hover-elevate active-elevate-2",
         isSelected && "ring-2 ring-cyan-500 border-cyan-500/50 bg-cyan-500/5",
+        isExpanded && "ring-1 ring-blue-400/40",
         isHotPlay && !result.hasMonsterPlay
           ? "border-amber-500/50 shadow-lg shadow-amber-500/20"
           : result.hasMonsterPlay 
@@ -285,7 +472,7 @@ function ScannerRow({ result, onClick, isSelected }: { result: ScannerResult; on
               ? "border-border/50 hover:border-emerald-500/40" 
               : "border-border/50 hover:border-red-500/40"
       )}
-      onClick={onClick}
+      onClick={handleRowClick}
       data-testid={`scanner-row-${result.symbol}`}
     >
       {isHotPlay && !result.hasMonsterPlay && (
@@ -420,6 +607,23 @@ function ScannerRow({ result, onClick, isSelected }: { result: ScannerResult; on
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleExpand();
+              }}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] font-bold tracking-wider transition-colors",
+                isExpanded
+                  ? "border-cyan-400/50 bg-cyan-500/20 text-cyan-300"
+                  : "border-border/50 bg-muted/20 text-muted-foreground hover:border-cyan-500/40 hover:text-cyan-300"
+              )}
+              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${result.symbol} trade plan`}
+            >
+              {isExpanded ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
+              PLAN
+            </button>
             <div className="text-right">
               <div className={cn(
                 "font-mono text-sm font-bold tabular-nums",
@@ -717,6 +921,271 @@ function ScannerRow({ result, onClick, isSelected }: { result: ScannerResult; on
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function toConfidenceFromLabel(label?: string): number | null {
+  if (!label) return null;
+  const normalized = label.toLowerCase();
+  if (normalized.includes('very high') || normalized.includes('extreme')) return 90;
+  if (normalized.includes('high')) return 78;
+  if (normalized.includes('medium')) return 58;
+  if (normalized.includes('low')) return 38;
+  return null;
+}
+
+function clampConfidence(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function ConfidenceDial({ value, label }: { value: number; label: string }) {
+  const normalized = clampConfidence(value);
+  const radius = 46;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - normalized / 100);
+
+  const strokeTone =
+    normalized >= 75
+      ? 'stroke-emerald-400'
+      : normalized >= 55
+        ? 'stroke-cyan-400'
+        : normalized >= 40
+          ? 'stroke-amber-400'
+          : 'stroke-red-400';
+
+  const textTone =
+    normalized >= 75
+      ? 'text-emerald-300'
+      : normalized >= 55
+        ? 'text-cyan-300'
+        : normalized >= 40
+          ? 'text-amber-300'
+          : 'text-red-300';
+
+  return (
+    <div className="relative mx-auto h-40 w-40">
+      <div className="absolute inset-0 rounded-full bg-cyan-500/10 blur-xl" />
+      <svg viewBox="0 0 120 120" className="relative h-full w-full -rotate-90">
+        <circle
+          cx="60"
+          cy="60"
+          r={radius}
+          className="fill-none stroke-[8] stroke-cyan-900/40"
+        />
+        <circle
+          cx="60"
+          cy="60"
+          r={radius}
+          className={cn(
+            "fill-none stroke-[8] transition-all duration-700 ease-out drop-shadow-[0_0_6px_rgba(34,211,238,0.4)]",
+            strokeTone
+          )}
+          style={{
+            strokeDasharray: circumference,
+            strokeDashoffset: dashOffset,
+            strokeLinecap: 'round',
+          }}
+        />
+      </svg>
+
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <div className={cn("font-mono text-2xl font-bold tabular-nums", textTone)}>
+          {Math.round(normalized)}%
+        </div>
+        <div className="text-[9px] uppercase tracking-[0.18em] text-cyan-200/70">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function ExpandedTradePanel({
+  result,
+  analysis,
+  isFetching,
+  onClose,
+  className,
+}: {
+  result: ScannerResult;
+  analysis?: AnalyzeExpandedPayload;
+  isFetching: boolean;
+  onClose: () => void;
+  className?: string;
+}) {
+  const isDegraded = Boolean(
+    result.isDegraded ||
+    result.warnings?.includes('NO_OHLC_DATA')
+  );
+
+  const tradePlan = analysis?.tactical?.tradePlan ?? result.tradePlan;
+  const confidenceLabel = (
+    analysis?.tactical?.tradePlan?.confidenceLabel ??
+    analysis?.tactical?.confidence ??
+    analysis?.confidence ??
+    result.tradePlan?.confidenceLabel ??
+    'UNRATED'
+  ).toUpperCase();
+
+  const labelConfidence = toConfidenceFromLabel(confidenceLabel);
+  const rawConfidence = Number.isFinite(tradePlan?.confidencePct)
+    ? Number(tradePlan?.confidencePct)
+    : Number.isFinite(result.preBreakoutSetup?.score)
+      ? Number(result.preBreakoutSetup?.score)
+      : Number.isFinite(result.breakoutScore)
+        ? Number(result.breakoutScore)
+        : labelConfidence ?? 50;
+  const confidencePct = clampConfidence(rawConfidence);
+
+  const liveReasons =
+    analysis?.tactical?.tradePlan?.confidenceReasons?.length
+      ? analysis.tactical.tradePlan.confidenceReasons
+      : analysis?.tactical?.notes?.length
+        ? analysis.tactical.notes
+        : result.setupReasoning?.length
+          ? result.setupReasoning
+          : result.warnings ?? [];
+
+  const liveBias = (
+    analysis?.tactical?.bias ??
+    analysis?.directionalBias ??
+    result.timeframeStack?.bias ??
+    result.expansionDirection ??
+    'neutral'
+  ).toString().toUpperCase();
+
+  const setupTitle =
+    analysis?.tactical?.strategy ??
+    analysis?.strategy ??
+    result.pattern ??
+    'TACTICAL BREAKOUT SETUP';
+
+  const leadEta = result.preBreakoutSetup?.etaMinutes;
+  const optionPlay = result.optionPlays?.[0];
+
+  const formatPrice = (value?: number) => {
+    if (!Number.isFinite(value)) return '--';
+    return `$${Number(value).toFixed(2)}`;
+  };
+
+  const rrText = tradePlan?.riskRewardLabel ||
+    (Number.isFinite(tradePlan?.rrLadder?.[0]) ? `${Number(tradePlan?.rrLadder?.[0]).toFixed(2)}R` : '--');
+
+  return (
+    <div className={cn(
+      "relative w-full max-w-full overflow-y-auto overflow-x-hidden rounded-xl border border-cyan-500/40 bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900 p-3 shadow-[0_0_30px_rgba(6,182,212,0.15)] min-h-[460px] max-h-[72vh]",
+      className
+    )}>
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_80%_12%,rgba(34,211,238,0.1),transparent_40%),radial-gradient(circle_at_10%_90%,rgba(59,130,246,0.08),transparent_40%)]" />
+
+      <div className="relative flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[9px] uppercase tracking-[0.2em] text-cyan-300/70">Expanded Trade Console</div>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="font-mono text-lg font-bold tracking-wide text-cyan-100">{result.symbol}</span>
+            {result.breakoutSignal && (
+              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-cyan-400/35 text-cyan-200 bg-cyan-500/10">
+                {result.breakoutSignal}
+              </Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {isFetching && <RefreshCw className="w-3.5 h-3.5 text-cyan-300 animate-spin" />}
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center gap-1 rounded-md border border-cyan-400/40 bg-cyan-500/10 px-2 py-1 text-[9px] font-bold tracking-[0.12em] text-cyan-100 hover:border-cyan-300 hover:bg-cyan-500/20"
+            aria-label={`Close expanded ${result.symbol} trade panel`}
+          >
+            <X className="w-2.5 h-2.5" />
+            CLOSE
+          </button>
+        </div>
+      </div>
+
+      <div className="relative mt-3 grid items-center gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+        <ConfidenceDial value={confidencePct} label={confidenceLabel} />
+
+        <div className="space-y-2">
+          <div className="rounded-md border border-cyan-500/20 bg-cyan-500/8 px-2.5 py-2">
+            <div className="text-[9px] uppercase tracking-wider text-cyan-300/80">Setup Model</div>
+            <div className="mt-0.5 text-xs font-semibold text-cyan-100">{setupTitle}</div>
+            <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+              <span>Bias: <span className="text-foreground font-semibold">{liveBias}</span></span>
+              {Number.isFinite(leadEta) && <span>Lead: <span className="text-cyan-300 font-semibold">~{leadEta}m</span></span>}
+              {Number.isFinite(result.timeframeStack?.agreement) && (
+                <span>MTF: <span className="text-foreground font-semibold">{Math.round(Number(result.timeframeStack?.agreement))}%</span></span>
+              )}
+            </div>
+          </div>
+
+          {isDegraded && (
+            <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-2 text-[10px] text-amber-200">
+              Live OHLC candles are delayed for this symbol. Tactical data falls back to available feeds.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="relative mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-cyan-200/80">Entry</div>
+          <div className="font-mono text-[12px] font-bold text-cyan-100">{formatPrice(tradePlan?.entry)}</div>
+        </div>
+        <div className="rounded-md border border-red-500/25 bg-red-500/10 px-2 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-red-200/80">Stop</div>
+          <div className="font-mono text-[12px] font-bold text-red-200">{formatPrice(tradePlan?.stop)}</div>
+        </div>
+        <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-emerald-200/80">Target 1</div>
+          <div className="font-mono text-[12px] font-bold text-emerald-200">{formatPrice(tradePlan?.targets?.[0])}</div>
+        </div>
+        <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-amber-200/80">Risk/Reward</div>
+          <div className="font-mono text-[12px] font-bold leading-tight break-words text-amber-200">{rrText}</div>
+        </div>
+      </div>
+
+      <div className="relative mt-3 rounded-md border border-border/40 bg-muted/20 px-2.5 py-2">
+        <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+          <ShieldAlert className="w-3 h-3 text-amber-300" />
+          Confidence Reasoning
+        </div>
+        <div className="mt-1.5 space-y-1 text-[10px] text-muted-foreground">
+          {liveReasons.length > 0 ? (
+            liveReasons.slice(0, 4).map((reason, index) => (
+              <div key={`${result.symbol}-detail-reason-${index}`}>{reason}</div>
+            ))
+          ) : (
+            <div>No confidence reasoning available yet.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="relative mt-2.5 flex flex-wrap gap-1.5">
+        {result.preBreakoutSetup?.traits?.slice(0, 3).map((trait) => (
+          <Badge key={`${result.symbol}-${trait}`} variant="outline" className="text-[8px] px-1 py-0 border-blue-400/30 text-blue-200/90 bg-blue-500/10">
+            {trait}
+          </Badge>
+        ))}
+        {optionPlay?.direction && (
+          <Badge variant="outline" className="text-[8px] px-1 py-0 border-amber-400/30 text-amber-200 bg-amber-500/10">
+            {optionPlay.direction} {Number.isFinite(optionPlay.strike) ? Number(optionPlay.strike).toFixed(0) : 'strike'}
+          </Badge>
+        )}
+      </div>
+
+      <div className="relative mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1 rounded-md border border-cyan-400/40 bg-cyan-500/10 px-2 py-1 text-[9px] font-bold tracking-[0.12em] text-cyan-100 hover:border-cyan-300 hover:bg-cyan-500/20"
+          aria-label={`Close expanded ${result.symbol} trade panel`}
+        >
+          <X className="w-2.5 h-2.5" />
+          CLOSE PANEL
+        </button>
       </div>
     </div>
   );

@@ -1,0 +1,20 @@
+﻿CheckpointLocal: 2026-03-14 07:21:04 -05:00
+CheckpointUTC:   2026-03-14 12:21:04Z
+Workspace:       C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th
+GitHead:         49bfb9d244df05a439b5e4a89a9a29b14618c106
+ScreenshotNow:   C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\screen-20260314_072102.png
+WorkspaceZip:    C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\workspace-backup-20260314_071928.zip
+RepoBundle:      C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\repo-backup-20260314_071001.bundle
+GitStatus:       C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\git-status-20260314_071001.txt
+WorkingPatch:    C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\working-tree-20260314_071001.patch
+StagedPatch:     C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\staged-20260314_071001.patch
+UntrackedList:   C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\untracked-20260314_071001.txt
+
+SHA256:
+7079E1458BF958B00378145CC1FD90B2DBF7BE2D597B5526A991924BA71AA77F  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\screen-20260314_072102.png
+50EFCA166449122F15D022DE130A2B86CDB84E2DF0D78F5CD909C8093287DBF8  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\workspace-backup-20260314_071928.zip
+CB0645EADD04C436D9BB561C00A5D4FE4EAB4BEEC3B4C21764EF12FA7FC4293A  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\repo-backup-20260314_071001.bundle
+5A3BABCB493F34CE0C6E049410CF1140907B3267E6B87FEB5E90E7273372D887  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\git-status-20260314_071001.txt
+26B5DE18944D2E68E8CBAD490598AB3CA32741E804966FD17B264566C61C7848  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\working-tree-20260314_071001.patch
+BBC063828F63EC1832EE89A674155EB99FDE2363F706E9AD03ED8D91A1178C09  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\staged-20260314_071001.patch
+BCF382AFD6BE4BB7C5ECFD9C3A98437E85BBF8A97EEF2F2B784C48D67A6C5143  C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 th\backups\untracked-20260314_071001.txt

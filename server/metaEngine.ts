@@ -410,9 +410,13 @@ export function computeMetaEngine(
   emaCloud: EMACloud | null,
   gammaSummary: GammaSummary,
   tactical: TacticalAdvice,
-  sessionSplit?: SessionSplit
+  sessionSplit?: SessionSplit,
+  currentPrice?: number
 ): MetaEngineOutput {
-  const lastPrice = ohlc[ohlc.length - 1]?.close ?? 0;
+  const lastPrice =
+    Number.isFinite(currentPrice as number) && (currentPrice as number) > 0
+      ? Number(currentPrice)
+      : (ohlc[ohlc.length - 1]?.close ?? 0);
   const vwapLast = vwapSeries[vwapSeries.length - 1] ?? lastPrice;
 
   const regime = computeRegime(
