@@ -298,6 +298,26 @@ const state = {
 	symbolState: new Map<string, SymbolScanState>(),
 };
 
+function shouldKeepExistingScannerResult(
+	existing: ScannerResult | undefined,
+	incoming: ScannerResult,
+	nowMs: number = Date.now(),
+): boolean {
+	if (!existing) return false;
+
+	const existingAgeMs = Math.max(0, nowMs - (existing.scanTime || 0));
+
+	if (!existing.isDegraded && incoming.isDegraded === true && existingAgeMs <= 20 * 60 * 1000) {
+		return true;
+	}
+
+	if (existing.isDegraded === true && incoming.isDegraded === true && existingAgeMs <= 90 * 1000) {
+		return true;
+	}
+
+	return false;
+}
+
 let adaptiveTuningCache: { computedAt: number; value: AdaptiveBreakoutTuning } | null = null;
 let tradingViewIndicatorCache: { computedAt: number; bySymbol: Map<string, TradingViewSnapshot> } | null = null;
 
@@ -2245,7 +2265,8 @@ async function scanSymbol(
 				optionPlays: fallbackOptionPlays,
 				tradePlan: fallbackTradePlan,
 				setupReasoning: fallbackReasoning,
-				isDegraded: false,
+				isDegraded: true,
+				degradedReason: "TV_DERIVED_NO_OHLC",
 			};
 		}
 
@@ -2577,12 +2598,7 @@ async function runScanCycle(): Promise<void> {
 			);
 			if (result) {
 				const existing = state.results.get(result.symbol);
-				const recentExistingAgeMs = existing ? Math.max(0, now - (existing.scanTime || 0)) : Number.MAX_SAFE_INTEGER;
-				const keepExisting =
-					Boolean(existing) &&
-					!existing?.isDegraded &&
-					result.isDegraded === true &&
-					recentExistingAgeMs <= 20 * 60 * 1000;
+				const keepExisting = shouldKeepExistingScannerResult(existing, result, now);
 
 				if (!keepExisting) {
 					state.results.set(result.symbol, result);
@@ -2648,8 +2664,12 @@ export function addToWatchlist(symbol: string): boolean {
 	if (added) {
 		void scanSymbol(upperSymbol, DEFAULT_TIMEFRAME).then((result) => {
 			if (result) {
-				state.results.set(upperSymbol, result);
-				state.lastScanTime = Date.now();
+				const now = Date.now();
+				const existing = state.results.get(upperSymbol);
+				if (!shouldKeepExistingScannerResult(existing, result, now)) {
+					state.results.set(upperSymbol, result);
+				}
+				state.lastScanTime = now;
 			}
 		});
 	}
@@ -2678,8 +2698,12 @@ export async function scanSingleSymbol(
 
 	const result = await scanSymbol(upperSymbol, timeframe);
 	if (result) {
-		state.results.set(upperSymbol, result);
-		state.lastScanTime = Date.now();
+		const now = Date.now();
+		const existing = state.results.get(upperSymbol);
+		if (!shouldKeepExistingScannerResult(existing, result, now)) {
+			state.results.set(upperSymbol, result);
+		}
+		state.lastScanTime = now;
 	}
 	return result;
 }

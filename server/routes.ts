@@ -74,6 +74,7 @@ export async function registerRoutes(
   const BEST_PLAY_STALE_FALLBACK_MS = 10 * 60 * 1000;
   const BEST_PLAY_YAHOO_COOLDOWN_MS = 60 * 1000;
   const SIMULATED_ANALYZE_CACHE_TTL_MS = 45_000;
+  const SIMULATED_ANALYZE_STALE_FALLBACK_MS = 15 * 60 * 1000;
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
@@ -250,7 +251,12 @@ export async function registerRoutes(
         if (cachedAnalyze) {
           const cachedPayload = cachedAnalyze.payload;
           const cacheAgeMs = Date.now() - cachedAnalyze.timestamp;
-          const canReuseSimulated = cachedAnalyze.isSimulated && cacheAgeMs <= SIMULATED_ANALYZE_CACHE_TTL_MS;
+          const canReuseSimulated =
+            cachedAnalyze.isSimulated &&
+            (
+              cacheAgeMs <= SIMULATED_ANALYZE_CACHE_TTL_MS ||
+              (cacheAgeMs <= SIMULATED_ANALYZE_STALE_FALLBACK_MS && Boolean(liveResult.error))
+            );
 
           if (!cachedAnalyze.isSimulated || canReuseSimulated) {
             const cacheSourceLabel = cachedAnalyze.isSimulated
