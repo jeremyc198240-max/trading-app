@@ -102,6 +102,7 @@ interface TimeframeStackInput {
 	breakoutScore: number;
 	momentumStrength: number;
 	expansionDirection: "bullish" | "bearish" | null;
+	candleDirection?: DirectionalBias | "neutral";
 	weight: number;
 }
 
@@ -180,6 +181,45 @@ interface ScannerStatus {
 	resultCount: number;
 }
 
+interface ScannerStabilityRow {
+	symbol: string;
+	signal: BreakoutSignal | null;
+	score: number;
+	bias: DirectionalBias | "neutral" | "n/a";
+	isDegraded: boolean;
+}
+
+interface ScannerStabilitySnapshot {
+	capturedAt: number;
+	rows: Map<string, ScannerStabilityRow>;
+}
+
+interface ScannerSymbolStability {
+	symbol: string;
+	transitions: number;
+	flipTransitions: number;
+	signalFlips: number;
+	biasFlips: number;
+	degradedFlips: number;
+	scoreJumps: number;
+}
+
+interface ScannerStabilitySummary {
+	snapshots: number;
+	symbols: number;
+	transitionsPerSymbol: number;
+	totalTransitions: number;
+	totalFlipTransitions: number;
+	flipRatePct: number;
+	scoreJumpThreshold: number;
+	fromTimestamp: number | null;
+	toTimestamp: number | null;
+	windowMinutes: number;
+	currentDegradedCount: number;
+	currentDegradedRatioPct: number;
+	perSymbol: ScannerSymbolStability[];
+}
+
 interface TrendContext {
 	trendDirection: DirectionalBias | "neutral";
 	trendStrength: number;
@@ -228,7 +268,12 @@ const DEFAULT_WATCHLIST = [
 ];
 
 const DEFAULT_TIMEFRAME = "15m";
-const SCAN_INTERVAL_MS = 30_000;
+const SCAN_INTERVAL_MS = 60_000;
+const DEGRADED_RESULT_HOLD_MS = 5 * 60 * 1000;
+const DEGRADED_RESULT_STRONG_SHIFT_SCORE = 14;
+const SCANNER_STABILITY_HISTORY_LIMIT = 32;
+const SCANNER_STABILITY_DEFAULT_WINDOW = 6;
+const SCANNER_STABILITY_DEFAULT_SCORE_JUMP = 8;
 const ADAPTIVE_TUNING_CACHE_MS = 90_000;
 const TRADINGVIEW_SCAN_CACHE_MS = 25_000;
 const TRADINGVIEW_SCAN_ENDPOINT = "https://scanner.tradingview.com/america/scan";
@@ -292,11 +337,20 @@ const DEFAULT_ADAPTIVE_TUNING: AdaptiveBreakoutTuning = {
 const state = {
 	watchlist: new Set<string>(DEFAULT_WATCHLIST),
 	results: new Map<string, ScannerResult>(),
+	stabilityHistory: [] as ScannerStabilitySnapshot[],
 	lastScanTime: 0,
 	scanTimer: null as ReturnType<typeof setInterval> | null,
 	scanInFlight: false,
 	symbolState: new Map<string, SymbolScanState>(),
 };
+
+function signalQualityRank(quality: ScannerResult["signalQuality"] | undefined): number {
+	if (quality === "HIGH") return 4;
+	if (quality === "MEDIUM") return 3;
+	if (quality === "LOW") return 2;
+	if (quality === "UNRELIABLE") return 1;
+	return 0;
+}
 
 function shouldKeepExistingScannerResult(
 	existing: ScannerResult | undefined,
@@ -311,11 +365,55 @@ function shouldKeepExistingScannerResult(
 		return true;
 	}
 
-	if (existing.isDegraded === true && incoming.isDegraded === true && existingAgeMs <= 90 * 1000) {
-		return true;
+	if (existing.isDegraded === true && incoming.isDegraded === true) {
+		const existingScore = Number.isFinite(existing.breakoutScore) ? (existing.breakoutScore as number) : 0;
+		const incomingScore = Number.isFinite(incoming.breakoutScore) ? (incoming.breakoutScore as number) : 0;
+		const scoreShift = Math.abs(incomingScore - existingScore);
+		const qualityImproved = signalQualityRank(incoming.signalQuality) > signalQualityRank(existing.signalQuality);
+		const strongShift = qualityImproved || scoreShift >= DEGRADED_RESULT_STRONG_SHIFT_SCORE;
+
+		if (existingAgeMs <= DEGRADED_RESULT_HOLD_MS && !strongShift) {
+			return true;
+		}
 	}
 
 	return false;
+}
+
+function toStabilitySignal(signal: BreakoutSignal | undefined): BreakoutSignal | null {
+	return signal ?? null;
+}
+
+function toStabilityScore(result: ScannerResult): number {
+	const score = result.breakoutScore;
+	return Number.isFinite(score) ? (score as number) : 0;
+}
+
+function toStabilityBias(result: ScannerResult): DirectionalBias | "neutral" | "n/a" {
+	return result.timeframeStack?.bias ?? result.expansionDirection ?? "n/a";
+}
+
+function pushScannerStabilitySnapshot(capturedAt: number): void {
+	if (state.results.size === 0) {
+		return;
+	}
+
+	const rows = new Map<string, ScannerStabilityRow>();
+	for (const [symbol, result] of state.results.entries()) {
+		rows.set(symbol, {
+			symbol,
+			signal: toStabilitySignal(result.breakoutSignal),
+			score: toStabilityScore(result),
+			bias: toStabilityBias(result),
+			isDegraded: result.isDegraded === true,
+		});
+	}
+
+	state.stabilityHistory.push({ capturedAt, rows });
+
+	if (state.stabilityHistory.length > SCANNER_STABILITY_HISTORY_LIMIT) {
+		state.stabilityHistory.splice(0, state.stabilityHistory.length - SCANNER_STABILITY_HISTORY_LIMIT);
+	}
 }
 
 let adaptiveTuningCache: { computedAt: number; value: AdaptiveBreakoutTuning } | null = null;
@@ -379,6 +477,66 @@ function getCandleCount(timeframe: string): number {
 		default:
 			return 96;
 	}
+}
+
+function timeframeToMs(timeframe: string): number | null {
+	switch (String(timeframe ?? "").toLowerCase()) {
+		case "1m":
+			return 60_000;
+		case "5m":
+			return 5 * 60_000;
+		case "15m":
+			return 15 * 60_000;
+		case "30m":
+			return 30 * 60_000;
+		case "1h":
+			return 60 * 60_000;
+		case "2h":
+			return 2 * 60 * 60_000;
+		case "4h":
+			return 4 * 60 * 60_000;
+		case "1d":
+			return 24 * 60 * 60_000;
+		default:
+			return null;
+	}
+}
+
+function getCandleTimestampMs(candle: OHLC | undefined): number | null {
+	if (!candle) return null;
+	const timeMs = Number(candle.timeMs);
+	if (Number.isFinite(timeMs) && timeMs > 0) return timeMs;
+
+	const timeRaw = Number(candle.time);
+	if (!Number.isFinite(timeRaw) || timeRaw <= 0) return null;
+
+	return timeRaw > 10_000_000_000 ? timeRaw : timeRaw * 1000;
+}
+
+function getStableClosedCandles(candles: OHLC[], timeframe: string, nowMs: number = Date.now()): OHLC[] {
+	if (candles.length < 3) return candles;
+
+	const tfMs = timeframeToMs(timeframe);
+	if (!tfMs) return candles;
+
+	const lastMs = getCandleTimestampMs(candles[candles.length - 1]);
+	if (!Number.isFinite(lastMs)) return candles;
+
+	const isClosed = nowMs >= ((lastMs as number) + tfMs - 2_000);
+	return isClosed ? candles : candles.slice(0, -1);
+}
+
+function getLastCandleDirection(candles: OHLC[]): DirectionalBias | "neutral" {
+	const last = candles[candles.length - 1];
+	if (!last) return "neutral";
+
+	const open = Number(last.open);
+	const close = Number(last.close);
+	if (!Number.isFinite(open) || !Number.isFinite(close)) return "neutral";
+
+	if (close > open) return "bullish";
+	if (close < open) return "bearish";
+	return "neutral";
 }
 
 function analyzeCompression(candles: OHLC[]): CompressionSnapshot {
@@ -661,7 +819,7 @@ function buildTimeframeStack(
 	const inputs = [primary, micro].filter((entry): entry is TimeframeStackInput => Boolean(entry));
 	const totalWeight = Math.max(0.0001, inputs.reduce((sum, entry) => sum + entry.weight, 0));
 	const components: ScannerTimeframeStackComponent[] = inputs.map((entry) => {
-		const direction = resolveDirectionalBias(entry.breakoutSignal, entry.expansionDirection, entry.momentumStrength);
+		const direction = entry.candleDirection ?? resolveDirectionalBias(entry.breakoutSignal, entry.expansionDirection, entry.momentumStrength);
 		return {
 			timeframe: entry.timeframe,
 			breakoutSignal: entry.breakoutSignal,
@@ -2409,15 +2567,23 @@ async function scanSymbol(
 			timeWindowBias,
 		});
 
+		const stablePrimaryCandles = getStableClosedCandles(ohlc, timeframe);
+		const primaryStackCandles = stablePrimaryCandles.length > 0 ? stablePrimaryCandles : ohlc;
+		const primaryCandleDirection = getLastCandleDirection(primaryStackCandles);
+		const stableMicroCandles = getStableClosedCandles(microCandles, "5m");
+		const microStackCandles = stableMicroCandles.length >= 24 ? stableMicroCandles : microCandles;
+		const microCandleDirection = getLastCandleDirection(microStackCandles);
+
 		const primaryStackInput: TimeframeStackInput = {
 			timeframe,
 			breakoutSignal: breakoutSignalForResult,
 			breakoutScore: breakoutScoreForResult,
 			momentumStrength,
 			expansionDirection: breakoutState.expansionDirection,
+			candleDirection: primaryCandleDirection,
 			weight: 0.64,
 		};
-		const microSnapshot = microCandles.length >= 24 ? buildTimeframeSignalSnapshot(microCandles) : null;
+		const microSnapshot = microStackCandles.length >= 24 ? buildTimeframeSignalSnapshot(microStackCandles) : null;
 		const microStackInput: TimeframeStackInput | null = microSnapshot
 			? {
 				timeframe: "5m",
@@ -2425,6 +2591,7 @@ async function scanSymbol(
 				breakoutScore: microSnapshot.breakoutScore,
 				momentumStrength: microSnapshot.momentumStrength,
 				expansionDirection: microSnapshot.expansionDirection,
+				candleDirection: microCandleDirection,
 				weight: 0.36,
 			}
 			: null;
@@ -2566,6 +2733,20 @@ async function scanSymbol(
 				expansionDirection: result.expansionDirection,
 				warnings: result.warnings,
 				compression: result.compression,
+				preBreakoutSetup: result.preBreakoutSetup
+					? {
+						score: result.preBreakoutSetup.score,
+						etaMinutes: result.preBreakoutSetup.etaMinutes,
+						traits: result.preBreakoutSetup.traits,
+					}
+					: undefined,
+				timeframeStack: result.timeframeStack
+					? {
+						agreement: result.timeframeStack.agreement,
+						aggregateScore: result.timeframeStack.aggregateScore,
+						bias: result.timeframeStack.bias,
+					}
+					: undefined,
 				tvRsi: result.tvRsi,
 				tvAdx: result.tvAdx,
 				tvRecommendAll: result.tvRecommendAll,
@@ -2607,6 +2788,7 @@ async function runScanCycle(): Promise<void> {
 		}
 
 		state.lastScanTime = Date.now();
+		pushScannerStabilitySnapshot(state.lastScanTime);
 	} finally {
 		state.scanInFlight = false;
 	}
@@ -2626,6 +2808,112 @@ export function getScannerStatus(): ScannerStatus {
 		lastScanTime: state.lastScanTime,
 		watchlistCount: state.watchlist.size,
 		resultCount: state.results.size,
+	};
+}
+
+export function getScannerStability(
+	windowSnapshots: number = SCANNER_STABILITY_DEFAULT_WINDOW,
+	scoreJumpThreshold: number = SCANNER_STABILITY_DEFAULT_SCORE_JUMP,
+): ScannerStabilitySummary {
+	const clampedWindow = Math.max(2, Math.min(SCANNER_STABILITY_HISTORY_LIMIT, Math.floor(windowSnapshots)));
+	const scoreJump = Math.max(0, scoreJumpThreshold);
+	const snapshots = state.stabilityHistory.slice(-clampedWindow);
+	const latestSnapshot = snapshots[snapshots.length - 1];
+
+	const watchlistOrder = new Map<string, number>();
+	Array.from(state.watchlist).forEach((symbol, idx) => {
+		watchlistOrder.set(symbol, idx);
+	});
+
+	const symbols = latestSnapshot
+		? Array.from(latestSnapshot.rows.keys()).sort((a, b) => {
+			const aOrder = watchlistOrder.get(a) ?? Number.MAX_SAFE_INTEGER;
+			const bOrder = watchlistOrder.get(b) ?? Number.MAX_SAFE_INTEGER;
+			if (aOrder !== bOrder) return aOrder - bOrder;
+			return a.localeCompare(b);
+		})
+		: Array.from(state.watchlist);
+
+	let totalTransitions = 0;
+	let totalFlipTransitions = 0;
+	const transitionsPerSymbol = Math.max(0, snapshots.length - 1);
+
+	const perSymbol: ScannerSymbolStability[] = symbols.map((symbol) => {
+		let transitions = 0;
+		let flipTransitions = 0;
+		let signalFlips = 0;
+		let biasFlips = 0;
+		let degradedFlips = 0;
+		let scoreJumps = 0;
+
+		for (let idx = 1; idx < snapshots.length; idx++) {
+			const prev = snapshots[idx - 1].rows.get(symbol);
+			const curr = snapshots[idx].rows.get(symbol);
+			if (!prev || !curr) continue;
+
+			transitions += 1;
+			totalTransitions += 1;
+
+			let changed = false;
+			if (prev.signal !== curr.signal) {
+				signalFlips += 1;
+				changed = true;
+			}
+			if (prev.bias !== curr.bias) {
+				biasFlips += 1;
+				changed = true;
+			}
+			if (prev.isDegraded !== curr.isDegraded) {
+				degradedFlips += 1;
+				changed = true;
+			}
+			if (Math.abs(curr.score - prev.score) >= scoreJump) {
+				scoreJumps += 1;
+				changed = true;
+			}
+			if (changed) {
+				flipTransitions += 1;
+				totalFlipTransitions += 1;
+			}
+		}
+
+		return {
+			symbol,
+			transitions,
+			flipTransitions,
+			signalFlips,
+			biasFlips,
+			degradedFlips,
+			scoreJumps,
+		};
+	});
+
+	const fromTimestamp = snapshots[0]?.capturedAt ?? null;
+	const toTimestamp = snapshots[snapshots.length - 1]?.capturedAt ?? null;
+	const windowMinutes =
+		fromTimestamp !== null && toTimestamp !== null && toTimestamp >= fromTimestamp
+			? roundTo((toTimestamp - fromTimestamp) / 60_000, 2)
+			: 0;
+
+	const currentRows = latestSnapshot ? Array.from(latestSnapshot.rows.values()) : [];
+	const currentDegradedCount = currentRows.filter((row) => row.isDegraded).length;
+	const currentDegradedRatioPct =
+		currentRows.length > 0 ? roundTo((currentDegradedCount / currentRows.length) * 100, 2) : 0;
+
+	return {
+		snapshots: snapshots.length,
+		symbols: symbols.length,
+		transitionsPerSymbol,
+		totalTransitions,
+		totalFlipTransitions,
+		flipRatePct: totalTransitions > 0 ? roundTo((totalFlipTransitions / totalTransitions) * 100, 2) : 0,
+		scoreJumpThreshold: scoreJump,
+		fromTimestamp,
+		toTimestamp,
+		windowMinutes,
+		currentDegradedCount,
+		currentDegradedRatioPct,
+		perSymbol,
 	};
 }
 
@@ -2670,6 +2958,7 @@ export function addToWatchlist(symbol: string): boolean {
 					state.results.set(upperSymbol, result);
 				}
 				state.lastScanTime = now;
+				pushScannerStabilitySnapshot(now);
 			}
 		});
 	}
@@ -2704,6 +2993,7 @@ export async function scanSingleSymbol(
 			state.results.set(upperSymbol, result);
 		}
 		state.lastScanTime = now;
+		pushScannerStabilitySnapshot(now);
 	}
 	return result;
 }

@@ -1,0 +1,16 @@
+AUDIT snapshots=3 transitionsPerSymbol=2 symbols=8 totalTransitions=16 totalFlipTransitions=0 flipRatePct=0
+
+symbol transitions flipTransitions signalFlips biasFlips degradeFlips scoreJumpsGeThreshold
+------ ----------- --------------- ----------- --------- ------------ ---------------------
+AAPL             2               0           0         0            0                     0
+AMZN             2               0           0         0            0                     0
+GOOGL            2               0           0         0            0                     0
+MSFT             2               0           0         0            0                     0
+NVDA             2               0           0         0            0                     0
+QQQ              2               0           0         0            0                     0
+SPY              2               0           0         0            0                     0
+TSLA             2               0           0         0            0                     0
+
+
+
+

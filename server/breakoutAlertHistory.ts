@@ -22,6 +22,18 @@ export interface BreakoutCompressionSnapshot {
   volRatio?: string;
 }
 
+export interface BreakoutPreSetupSnapshot {
+  score?: number;
+  etaMinutes?: number;
+  traits?: string[];
+}
+
+export interface BreakoutTimeframeStackSnapshot {
+  agreement?: number;
+  aggregateScore?: number;
+  bias?: "bullish" | "bearish" | "mixed" | "neutral";
+}
+
 export interface BreakoutAlertInput {
   symbol: string;
   timeframe: string;
@@ -44,6 +56,8 @@ export interface BreakoutAlertInput {
   tvTrendStrength?: number;
   warnings?: string[];
   compression?: BreakoutCompressionSnapshot;
+  preBreakoutSetup?: BreakoutPreSetupSnapshot;
+  timeframeStack?: BreakoutTimeframeStackSnapshot;
 }
 
 export interface BreakoutAlertSnapshot {
@@ -73,6 +87,16 @@ export interface BreakoutAlertSnapshot {
     bbWidth: number;
     rangePct: number;
     volRatio: number;
+  };
+  preBreakoutSetup?: {
+    score?: number;
+    etaMinutes?: number;
+    traits?: string[];
+  };
+  timeframeStack?: {
+    agreement?: number;
+    aggregateScore?: number;
+    bias?: "bullish" | "bearish" | "mixed" | "neutral";
   };
   priceAtCapture: number;
   stopLoss: number;
@@ -115,12 +139,33 @@ export interface BreakoutAlertSummary {
     pending: number;
     winRate: number;
   }>;
+  lead5m: {
+    total: number;
+    completed: number;
+    wins: number;
+    losses: number;
+    missed: number;
+    pending: number;
+    winRate: number;
+    avgResolutionMins: number;
+  };
+  lead10m: {
+    total: number;
+    completed: number;
+    wins: number;
+    losses: number;
+    missed: number;
+    pending: number;
+    winRate: number;
+    avgResolutionMins: number;
+  };
   avgResolutionMins: number;
 }
 
 const PROJECT_ROOT = process.cwd();
 const STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "breakout_alert_history.json");
-const RETENTION_MS = 48 * 60 * 60 * 1000;
+const MAX_LOOKBACK_HOURS = 21 * 24;
+const RETENTION_MS = MAX_LOOKBACK_HOURS * 60 * 60 * 1000;
 const MIN_RECORD_INTERVAL_MINS = 6;
 const MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS = 2;
 const MIN_RECORD_INTERVAL_DRIFT_MINS = 3;
@@ -366,6 +411,45 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
   const priceChangePercent = Number.isFinite(input.priceChangePercent as number)
     ? parseNum(input.priceChangePercent)
     : undefined;
+  const setupScore = Number.isFinite(input.preBreakoutSetup?.score as number)
+    ? parseNum(input.preBreakoutSetup?.score)
+    : undefined;
+  const setupEtaRaw = Number(input.preBreakoutSetup?.etaMinutes);
+  const setupEtaMinutes = Number.isFinite(setupEtaRaw)
+    ? clamp(Math.round(setupEtaRaw), 0, 120)
+    : undefined;
+  const setupTraits = Array.isArray(input.preBreakoutSetup?.traits)
+    ? input.preBreakoutSetup!.traits!.slice(0, 10).map((trait) => String(trait)).filter(Boolean)
+    : undefined;
+
+  const stackAgreement = Number.isFinite(input.timeframeStack?.agreement as number)
+    ? clamp(parseNum(input.timeframeStack?.agreement), 0, 100)
+    : undefined;
+  const stackAggregateScore = Number.isFinite(input.timeframeStack?.aggregateScore as number)
+    ? clamp(parseNum(input.timeframeStack?.aggregateScore), 0, 100)
+    : undefined;
+  const stackBiasRaw = String(input.timeframeStack?.bias ?? "").toLowerCase();
+  const stackBias = stackBiasRaw === "bullish" || stackBiasRaw === "bearish" || stackBiasRaw === "mixed" || stackBiasRaw === "neutral"
+    ? (stackBiasRaw as "bullish" | "bearish" | "mixed" | "neutral")
+    : undefined;
+
+  const leadSetup =
+    setupScore != null || setupEtaMinutes != null || (setupTraits && setupTraits.length > 0)
+      ? {
+        score: setupScore,
+        etaMinutes: setupEtaMinutes,
+        traits: setupTraits,
+      }
+      : undefined;
+
+  const stackSnapshot =
+    stackAgreement != null || stackAggregateScore != null || stackBias != null
+      ? {
+        agreement: stackAgreement,
+        aggregateScore: stackAggregateScore,
+        bias: stackBias,
+      }
+      : undefined;
   const id = `${input.symbol}-${now}-${Math.floor(Math.random() * 1e6).toString(36)}`;
 
   const snapshot: BreakoutAlertSnapshot = {
@@ -396,6 +480,8 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
       rangePct: parseNum(compression.rangePct, 0),
       volRatio: parseNum(compression.volRatio, 0),
     },
+    preBreakoutSetup: leadSetup,
+    timeframeStack: stackSnapshot,
     priceAtCapture: entryPrice,
     stopLoss: levels.stopLoss,
     targets: levels.targets,
@@ -513,7 +599,7 @@ export function getBreakoutAlertLog(limit: number = 200, symbol?: string, lookba
 
   const bounded = Number.isFinite(limit) && limit > 0 ? Math.min(2000, Math.floor(limit)) : 200;
   const boundedHours = Number.isFinite(lookbackHours) && (lookbackHours as number) > 0
-    ? Math.min(48, Math.floor(lookbackHours as number))
+    ? Math.min(MAX_LOOKBACK_HOURS, Math.floor(lookbackHours as number))
     : null;
   const cutoff = boundedHours != null ? Date.now() - boundedHours * 60 * 60 * 1000 : null;
   const sym = symbol ? symbol.toUpperCase() : null;
@@ -554,12 +640,23 @@ function summarizeRows(rows: BreakoutAlertSnapshot[]): {
   };
 }
 
+function computeAvgResolutionMins(rows: BreakoutAlertSnapshot[]): number {
+  const resolutionSamples = rows
+    .filter((row) => row.resolvedAt && row.resolvedAt > row.timestamp)
+    .map((row) => ((row.resolvedAt as number) - row.timestamp) / 60000)
+    .filter((mins) => Number.isFinite(mins) && mins >= 0);
+
+  return resolutionSamples.length > 0
+    ? resolutionSamples.reduce((sum, mins) => sum + mins, 0) / resolutionSamples.length
+    : 0;
+}
+
 export function getBreakoutAlertSummary(lookbackHours: number = 48): BreakoutAlertSummary {
   pruneOld(Date.now());
 
   const boundedHours = Number.isFinite(lookbackHours) && lookbackHours > 0
-    ? Math.min(48, lookbackHours)
-    : 48;
+    ? Math.min(MAX_LOOKBACK_HOURS, lookbackHours)
+    : Math.min(48, MAX_LOOKBACK_HOURS);
   const cutoff = Date.now() - boundedHours * 60 * 60 * 1000;
   const scoped = breakoutHistory.filter((row) => row.timestamp >= cutoff);
 
@@ -578,20 +675,33 @@ export function getBreakoutAlertSummary(lookbackHours: number = 48): BreakoutAle
     byDirection[direction] = summarizeRows(scoped.filter((row) => row.direction === direction));
   }
 
+  const lead5Rows = scoped.filter((row) => {
+    const eta = Number(row.preBreakoutSetup?.etaMinutes);
+    return Number.isFinite(eta) && eta <= 5;
+  });
+  const lead10Rows = scoped.filter((row) => {
+    const eta = Number(row.preBreakoutSetup?.etaMinutes);
+    return Number.isFinite(eta) && eta <= 10;
+  });
+
   const overall = summarizeRows(scoped);
-  const resolutionSamples = scoped
-    .filter((row) => row.resolvedAt && row.resolvedAt > row.timestamp)
-    .map((row) => ((row.resolvedAt as number) - row.timestamp) / 60000)
-    .filter((mins) => Number.isFinite(mins) && mins >= 0);
-  const avgResolutionMins = resolutionSamples.length > 0
-    ? resolutionSamples.reduce((sum, mins) => sum + mins, 0) / resolutionSamples.length
-    : 0;
+  const avgResolutionMins = computeAvgResolutionMins(scoped);
+  const lead5Summary = summarizeRows(lead5Rows);
+  const lead10Summary = summarizeRows(lead10Rows);
 
   return {
     lookbackHours: boundedHours,
     sample: overall,
     bySignal,
     byDirection,
+    lead5m: {
+      ...lead5Summary,
+      avgResolutionMins: computeAvgResolutionMins(lead5Rows),
+    },
+    lead10m: {
+      ...lead10Summary,
+      avgResolutionMins: computeAvgResolutionMins(lead10Rows),
+    },
     avgResolutionMins,
   };
 }

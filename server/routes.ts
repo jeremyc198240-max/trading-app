@@ -12,6 +12,7 @@ import {
   getScannerResults, 
   getScannerResult, 
   getScannerStatus, 
+  getScannerStability,
   getWatchlist, 
   addToWatchlist, 
   removeFromWatchlist,
@@ -1029,6 +1030,20 @@ export async function registerRoutes(
     res.json(getScannerStatus());
   });
 
+  app.get("/api/scanner/stability", (req, res) => {
+    const requestedWindow = Number(req.query.window);
+    const windowSnapshots = Number.isFinite(requestedWindow) && requestedWindow > 1
+      ? Math.min(30, Math.floor(requestedWindow))
+      : 6;
+
+    const requestedScoreJump = Number(req.query.scoreJump);
+    const scoreJumpThreshold = Number.isFinite(requestedScoreJump) && requestedScoreJump >= 0
+      ? Math.min(100, requestedScoreJump)
+      : 8;
+
+    res.json(getScannerStability(windowSnapshots, scoreJumpThreshold));
+  });
+
   app.get("/api/scanner/results", (_req, res) => {
     res.json(getScannerResults());
   });
@@ -1053,8 +1068,9 @@ export async function registerRoutes(
   app.get("/api/scanner/breakout-log", (req, res) => {
     const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
     const requestedHours = Number(req.query.hours);
+    const maxLookbackHours = 21 * 24;
     const lookbackHours = Number.isFinite(requestedHours) && requestedHours > 0
-      ? Math.min(48, requestedHours)
+      ? Math.min(maxLookbackHours, requestedHours)
       : undefined;
     const requested = Number(req.query.limit);
     const limit = Number.isFinite(requested) && requested > 0 ? Math.min(2000, requested) : 200;
@@ -1069,7 +1085,10 @@ export async function registerRoutes(
 
   app.get("/api/scanner/breakout-log/summary", (req, res) => {
     const requested = Number(req.query.hours);
-    const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(48, requested) : 48;
+    const maxLookbackHours = 21 * 24;
+    const lookbackHours = Number.isFinite(requested) && requested > 0
+      ? Math.min(maxLookbackHours, requested)
+      : 48;
 
     res.json({
       success: true,

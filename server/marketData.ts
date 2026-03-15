@@ -386,6 +386,90 @@ function getAggregationFactor(timeframe: string): number {
   }
 }
 
+async function fetchYahooChartDirect(
+  symbol: string,
+  timeframe: string,
+  session: SessionType,
+  period1: Date,
+  period2: Date,
+): Promise<OHLC[] | null> {
+  const interval = INTERVAL_MAP[timeframe] || '1d';
+  const includePrePost = session !== 'RTH' ? 'true' : 'false';
+  const from = Math.max(0, Math.floor(period1.getTime() / 1000));
+  const to = Math.max(from + 60, Math.floor(period2.getTime() / 1000));
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol.toUpperCase())}?period1=${from}&period2=${to}&interval=${interval}&includePrePost=${includePrePost}&events=history`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+
+    if (!response.ok) {
+      if (process.env.DEBUG_SIGNALS === '1') {
+        console.warn(`[YahooDirect] HTTP ${response.status} for ${symbol}/${timeframe}`);
+      }
+      return null;
+    }
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      return null;
+    }
+
+    const payload = await response.json() as any;
+    const result = payload?.chart?.result?.[0];
+    const ts = Array.isArray(result?.timestamp) ? result.timestamp : [];
+    const quote = result?.indicators?.quote?.[0];
+    if (!quote || ts.length === 0) return null;
+
+    const open = Array.isArray(quote.open) ? quote.open : [];
+    const high = Array.isArray(quote.high) ? quote.high : [];
+    const low = Array.isArray(quote.low) ? quote.low : [];
+    const close = Array.isArray(quote.close) ? quote.close : [];
+    const volume = Array.isArray(quote.volume) ? quote.volume : [];
+
+    const len = Math.min(ts.length, open.length, high.length, low.length, close.length, volume.length);
+    if (len <= 0) return null;
+
+    const candles: OHLC[] = [];
+    for (let i = 0; i < len; i++) {
+      const t = Number(ts[i]);
+      const o = Number(open[i]);
+      const h = Number(high[i]);
+      const l = Number(low[i]);
+      const c = Number(close[i]);
+      const v = Number(volume[i]);
+
+      if (!Number.isFinite(t) || t <= 0) continue;
+      if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+
+      candles.push({
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: Number.isFinite(v) ? Math.max(0, v) : 0,
+        time: Math.floor(t),
+        timeMs: Math.floor(t) * 1000,
+      });
+    }
+
+    if (candles.length === 0) return null;
+    if (process.env.DEBUG_SIGNALS === '1') {
+      console.log(`[YahooDirect] OHLC fallback for ${symbol}/${timeframe}: ${candles.length} candles`);
+    }
+    return candles;
+  } catch (error) {
+    if (process.env.DEBUG_SIGNALS === '1') {
+      console.warn(`[YahooDirect] Error for ${symbol}/${timeframe}:`, error);
+    }
+    return null;
+  }
+}
+
 function sanitizeOhlcWicks(candles: OHLC[]): OHLC[] {
   if (candles.length < 5) return candles;
 
@@ -586,6 +670,40 @@ export async function fetchLiveOHLC(
     };
   };
 
+  const tryYahooDirectFallback = async (reason: string) => {
+    const directRaw = await fetchYahooChartDirect(symbol, timeframe, session, period1, period2);
+    if (!directRaw || directRaw.length === 0) return null;
+
+    const directOhlc = sanitizeOhlcWicks(directRaw);
+    if (directOhlc.length === 0) return null;
+
+    const rawSplit = splitSessions(directOhlc);
+    const aggFactor = getAggregationFactor(timeframe);
+    const split = aggFactor > 1 ? {
+      full: aggregateCandles(rawSplit.full, aggFactor),
+      rth: aggregateCandles(rawSplit.rth, aggFactor),
+      overnight: aggregateCandles(rawSplit.overnight, aggFactor),
+      prevDayRth: aggregateCandles(rawSplit.prevDayRth, aggFactor),
+    } : rawSplit;
+
+    lastKnownData.set(lastKnownKey, split);
+    setCache(symbol, timeframe, session, period1, period2, split);
+
+    const data =
+      session === 'RTH' ? split.rth :
+      session === 'OVERNIGHT' ? split.overnight :
+      split.full;
+
+    return {
+      data,
+      rth: split.rth,
+      overnight: split.overnight,
+      prevDayRth: split.prevDayRth,
+      isLive: true,
+      error: `Using Yahoo direct candles (${reason})`,
+    };
+  };
+
   // Global cooldown after Yahoo 429s to avoid hammering every symbol in scanner loops.
   if (Date.now() < yahooOhlcGlobalCooldownUntil) {
     const remainingMs = yahooOhlcGlobalCooldownUntil - Date.now();
@@ -612,6 +730,9 @@ export async function fetchLiveOHLC(
         error: `Yahoo cooldown active (${remainingSec}s), using cached data`,
       };
     }
+
+    const yahooDirectFallback = await tryYahooDirectFallback(`Yahoo cooldown ${remainingSec}s`);
+    if (yahooDirectFallback) return yahooDirectFallback;
 
     const finnhubFallback = await tryFinnhubFallback(`Yahoo cooldown ${remainingSec}s`);
     if (finnhubFallback) return finnhubFallback;
@@ -678,6 +799,9 @@ export async function fetchLiveOHLC(
         };
       }
 
+      const yahooDirectFallback = await tryYahooDirectFallback('Yahoo SDK returned no candles');
+      if (yahooDirectFallback) return yahooDirectFallback;
+
       const finnhubFallback = await tryFinnhubFallback('Yahoo returned no candles');
       if (finnhubFallback) return finnhubFallback;
 
@@ -727,6 +851,9 @@ export async function fetchLiveOHLC(
           error: 'Using cached data (no valid OHLC)',
         };
       }
+
+      const yahooDirectFallback = await tryYahooDirectFallback('Yahoo SDK produced invalid OHLC');
+      if (yahooDirectFallback) return yahooDirectFallback;
 
       const finnhubFallback = await tryFinnhubFallback('Yahoo produced invalid OHLC');
       if (finnhubFallback) return finnhubFallback;
@@ -807,6 +934,9 @@ export async function fetchLiveOHLC(
         error: `Using cached data (${effectiveMessage})`,
       };
     }
+
+    const yahooDirectFallback = await tryYahooDirectFallback(effectiveMessage);
+    if (yahooDirectFallback) return yahooDirectFallback;
 
     const finnhubFallback = await tryFinnhubFallback(effectiveMessage);
     if (finnhubFallback) return finnhubFallback;

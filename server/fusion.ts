@@ -41,6 +41,7 @@ export interface OHLC {
   close: number;
   volume: number;
   time?: number;
+  timeMs?: number;
 }
 
 export interface PatternResult {
@@ -1084,26 +1085,58 @@ function patternResultToLive(p: PatternResult, ohlc: OHLC[]): LivePattern {
   };
 }
 
-function computeTFBias(ohlc: OHLC[], patterns?: LivePattern[], liveSpot?: number): 'bullish' | 'bearish' | 'neutral' {
-  if (ohlc.length < 5) return 'neutral';
+function timeframeToMs(timeframe: Timeframe): number {
+  switch (timeframe) {
+    case '5m':
+      return 5 * 60_000;
+    case '15m':
+      return 15 * 60_000;
+    case '30m':
+      return 30 * 60_000;
+    case '1h':
+      return 60 * 60_000;
+    case '4h':
+      return 4 * 60 * 60_000;
+    case '1D':
+      return 24 * 60 * 60_000;
+    default:
+      return 15 * 60_000;
+  }
+}
 
-  const recent = ohlc.slice(-5);
-  const greenCount = recent.filter(c => c.close > c.open).length;
-  const redCount = recent.filter(c => c.close < c.open).length;
+function getCandleTimestampMs(candle: OHLC | undefined): number | null {
+  if (!candle) return null;
 
-  const refPrice = liveSpot && liveSpot > 0 ? liveSpot : recent[recent.length - 1].close;
-  const startPrice = recent[0].open;
-  const netMove = (refPrice - startPrice) / startPrice;
+  const timeMs = Number(candle.timeMs);
+  if (Number.isFinite(timeMs) && timeMs > 0) return timeMs;
 
-  if (netMove > 0.0005 && greenCount >= 3) return 'bullish';
-  if (netMove < -0.0005 && redCount >= 3) return 'bearish';
+  const timeRaw = Number(candle.time);
+  if (!Number.isFinite(timeRaw) || timeRaw <= 0) return null;
 
-  if (netMove > 0.001) return 'bullish';
-  if (netMove < -0.001) return 'bearish';
+  return timeRaw > 10_000_000_000 ? timeRaw : timeRaw * 1000;
+}
 
-  if (greenCount >= 4) return 'bullish';
-  if (redCount >= 4) return 'bearish';
+function getStableClosedCandles(ohlc: OHLC[], timeframe: Timeframe, nowMs: number = Date.now()): OHLC[] {
+  if (ohlc.length < 3) return ohlc;
 
+  const tfMs = timeframeToMs(timeframe);
+  const lastCandleMs = getCandleTimestampMs(ohlc[ohlc.length - 1]);
+  if (!Number.isFinite(lastCandleMs)) return ohlc;
+
+  const isClosed = nowMs >= ((lastCandleMs as number) + tfMs - 2_000);
+  return isClosed ? ohlc : ohlc.slice(0, -1);
+}
+
+function computeTFBias(timeframe: Timeframe, ohlc: OHLC[]): 'bullish' | 'bearish' | 'neutral' {
+  if (ohlc.length === 0) return 'neutral';
+
+  const closedCandles = getStableClosedCandles(ohlc, timeframe);
+  const source = closedCandles.length > 0 ? closedCandles : ohlc;
+  const last = source[source.length - 1];
+  if (!last) return 'neutral';
+
+  if (last.close > last.open) return 'bullish';
+  if (last.close < last.open) return 'bearish';
   return 'neutral';
 }
 
@@ -1120,8 +1153,7 @@ function computeSimpleEMA(ohlc: OHLC[], period: number): number {
 function computeTFIntel(
   timeframe: Timeframe,
   ohlc: OHLC[],
-  patterns: PatternResult[],
-  liveSpot?: number
+  patterns: PatternResult[]
 ): TimeframePatternIntel {
   const live = patterns.map(p => patternResultToLive(p, ohlc));
 
@@ -1145,7 +1177,7 @@ function computeTFIntel(
     : structuralCompression < 0.2 ? 'expanding'
     : 'ranging';
 
-  const trendBias = computeTFBias(ohlc, live, liveSpot);
+  const trendBias = computeTFBias(timeframe, ohlc);
 
   return {
     timeframe,
@@ -1726,8 +1758,7 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
       computeTFIntel(
         tf,
         ohlcByTF[tf]!,
-        patternsByTF[tf] ?? [],
-        lastPrice
+        patternsByTF[tf] ?? []
       )
     );
 
