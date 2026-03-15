@@ -1068,7 +1068,7 @@ export async function registerRoutes(
   app.get("/api/scanner/breakout-log", (req, res) => {
     const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
     const requestedHours = Number(req.query.hours);
-    const maxLookbackHours = 21 * 24;
+    const maxLookbackHours = 48;
     const lookbackHours = Number.isFinite(requestedHours) && requestedHours > 0
       ? Math.min(maxLookbackHours, requestedHours)
       : undefined;
@@ -1085,7 +1085,7 @@ export async function registerRoutes(
 
   app.get("/api/scanner/breakout-log/summary", (req, res) => {
     const requested = Number(req.query.hours);
-    const maxLookbackHours = 21 * 24;
+    const maxLookbackHours = 48;
     const lookbackHours = Number.isFinite(requested) && requested > 0
       ? Math.min(maxLookbackHours, requested)
       : 48;
@@ -1715,7 +1715,7 @@ export async function registerRoutes(
     try {
       const symbol = req.params.symbol.toUpperCase();
       const requested = Number(req.query.hours);
-      const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(720, requested) : 24;
+      const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(48, requested) : 24;
 
       try {
         const spotData = await fetchLiveSpot(symbol);

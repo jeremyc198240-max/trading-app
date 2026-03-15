@@ -1,7 +1,13 @@
 import React, { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
-export function OptionPlayDropdown({ optionPlays }: { optionPlays: any[] }) {
+export function OptionPlayDropdown({
+  optionPlays,
+  expectedDirection,
+}: {
+  optionPlays: any[];
+  expectedDirection?: "CALL" | "PUT" | null;
+}) {
   const [open, setOpen] = useState(false);
   if (!optionPlays || optionPlays.length === 0) return null;
   // Confluence logic: volume, momentum, RSI/MACD must all align with play direction
@@ -21,12 +27,25 @@ export function OptionPlayDropdown({ optionPlays }: { optionPlays: any[] }) {
   }
 
   // Show best play even if no confluence
-  const confluentPlays = optionPlays.filter(isConfluent);
+  const sortedPlays = [...optionPlays].sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.rr ?? 0) - (a.rr ?? 0));
+  const confluentPlays = sortedPlays.filter(isConfluent);
+  const normalizedExpected = (expectedDirection || "").toUpperCase();
+  const confluentDirectional = normalizedExpected
+    ? confluentPlays.filter((play) => String(play?.direction || "").toUpperCase() === normalizedExpected)
+    : confluentPlays;
+  const directionalBest = normalizedExpected
+    ? sortedPlays.find((play) => String(play?.direction || "").toUpperCase() === normalizedExpected)
+    : null;
+
   let bestPlay = null;
-  if (confluentPlays.length > 0) {
-    bestPlay = confluentPlays.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.rr ?? 0) - (a.rr ?? 0))[0];
-  } else if (optionPlays.length > 0) {
-    bestPlay = optionPlays.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.rr ?? 0) - (a.rr ?? 0))[0];
+  if (confluentDirectional.length > 0) {
+    bestPlay = confluentDirectional[0];
+  } else if (directionalBest) {
+    bestPlay = directionalBest;
+  } else if (confluentPlays.length > 0) {
+    bestPlay = confluentPlays[0];
+  } else if (sortedPlays.length > 0) {
+    bestPlay = sortedPlays[0];
   }
 
   return (

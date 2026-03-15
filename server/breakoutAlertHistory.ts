@@ -164,8 +164,9 @@ export interface BreakoutAlertSummary {
 
 const PROJECT_ROOT = process.cwd();
 const STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "breakout_alert_history.json");
-const MAX_LOOKBACK_HOURS = 21 * 24;
+const MAX_LOOKBACK_HOURS = 48;
 const RETENTION_MS = MAX_LOOKBACK_HOURS * 60 * 60 * 1000;
+const RETENTION_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_RECORD_INTERVAL_MINS = 6;
 const MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS = 2;
 const MIN_RECORD_INTERVAL_DRIFT_MINS = 3;
@@ -251,6 +252,11 @@ function hydrateFromDisk(): void {
 }
 
 hydrateFromDisk();
+
+const breakoutRetentionSweep = setInterval(() => {
+  pruneOld(Date.now());
+}, RETENTION_SWEEP_INTERVAL_MS);
+breakoutRetentionSweep.unref?.();
 
 function parseNum(value: unknown, fallback: number = 0): number {
   const n = Number(value);

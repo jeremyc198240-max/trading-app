@@ -1,0 +1,20 @@
+TradingView history recurrence study (14d)
+Window: 2026-03-01T14:55:40.531Z -> 2026-03-15T14:55:40.531Z
+
+Data provenance:
+- Source file: breakout_alert_history.json
+- Rows with TradingView snapshots: 1275/1275
+- Strict real pre-compression completed rows: 415
+
+Baseline (strict real + TradingView snapshot + pre-compression):
+- Win rate: 52.53%
+- Wins: 218
+- Losses: 177
+- Missed: 20
+
+Top TradingView recurrence rules (support >= 12):
+- tv_recommend_direction_match + tv_adx>=25: winRate 65% | support 40 | lift 1.237x
+- tv_trend_aligned + tv_adx>=25 + |momentum|>=35: winRate 62.86% | support 35 | lift 1.197x
+- tv_rsi_extreme + tv_adx>=25: winRate 59.18% | support 49 | lift 1.127x
+- tv_recommend_all<=-0.35 and bearish direction: winRate 56.91% | support 123 | lift 1.083x
+- tv_rsi_45_55 + tv_adx<20: winRate 48.98% | support 49 | lift 0.932x

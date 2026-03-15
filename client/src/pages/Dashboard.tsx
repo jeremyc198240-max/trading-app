@@ -11,6 +11,7 @@ import { SignalCardsGrid, DivergenceWarningCard } from "@/components/SignalCard"
 import { TickerInput } from "@/components/TickerInput";
 import { TimeframeSelector } from "@/components/TimeframeSelector";
 import { PriceCard, BreakoutAlertBar, GapAnalysisCard, SMCAnalysisCard } from "@/components/MetricCard";
+import { EdgeAlertBar } from "@/components/EdgeAlertBar";
 import { PriceChart } from "@/components/PriceChart";
 import { MarketHealth } from "@/components/MarketHealth";
 import { ScannerPanel, PatternMatrix } from "@/components/ScannerPanel";
@@ -307,6 +308,8 @@ function DashboardContent({
             drawablePatterns={analysis.drawablePatterns}
             marketHealth={analysis.marketHealth}
           />
+
+          <EdgeAlertBar />
 
           <DivergenceWarningCard data={analysis.divergenceWarning} />
 

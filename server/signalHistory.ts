@@ -135,6 +135,10 @@ interface SignalHistoryStore {
 
 const signalHistory: SignalHistoryStore = {};
 const MAX_HISTORY_PER_SYMBOL = 500;
+const TUNING_RETENTION_HOURS = 48;
+const TUNING_RETENTION_MS = TUNING_RETENTION_HOURS * 60 * 60 * 1000;
+const MAX_SIGNAL_LOOKBACK_HOURS = TUNING_RETENTION_HOURS;
+const DAILY_LOG_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_RECORD_CONFIDENCE_PCT = 30;
 const MIN_RECORD_GATING_SCORE = 15;
 const MIN_DIRECTIONAL_EDGE = 0.08;
@@ -212,9 +216,106 @@ let lastSignalDirection: { [symbol: string]: string } = {};
 let persistTimer: NodeJS.Timeout | null = null;
 let scannerGateCache: { computedAt: number; gate: ScannerRecordGate } | null = null;
 let activeTradingDateKey = '';
+let lastDailyLogPruneAt = 0;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function syncLastSignalPointers(): void {
+  const nextTime: { [symbol: string]: number } = {};
+  const nextGrade: { [symbol: string]: string } = {};
+  const nextDirection: { [symbol: string]: string } = {};
+
+  for (const [symbol, rows] of Object.entries(signalHistory)) {
+    if (!Array.isArray(rows) || rows.length === 0) continue;
+    const last = rows[rows.length - 1];
+    nextTime[symbol] = Number.isFinite(last.timestamp) ? last.timestamp : 0;
+    nextGrade[symbol] = typeof last.grade === 'string' ? last.grade : '';
+    nextDirection[symbol] = typeof last.direction === 'string' ? last.direction : '';
+  }
+
+  lastSignalTime = nextTime;
+  lastSignalGrade = nextGrade;
+  lastSignalDirection = nextDirection;
+}
+
+function pruneSignalHistory(now: number = Date.now(), options?: { persist?: boolean }): boolean {
+  const cutoff = now - TUNING_RETENTION_MS;
+  let writeNeeded = false;
+
+  for (const [symbol, rows] of Object.entries(signalHistory)) {
+    if (!Array.isArray(rows)) {
+      signalHistory[symbol] = [];
+      writeNeeded = true;
+      continue;
+    }
+
+    const retained = rows
+      .filter((row) => Number.isFinite(row?.timestamp) && Number(row.timestamp) >= cutoff)
+      .slice(-MAX_HISTORY_PER_SYMBOL);
+
+    if (retained.length !== rows.length) {
+      signalHistory[symbol] = retained;
+      writeNeeded = true;
+    }
+  }
+
+  if (writeNeeded) {
+    scannerGateCache = null;
+    syncLastSignalPointers();
+    if (options?.persist !== false) {
+      schedulePersist();
+    }
+  }
+
+  return writeNeeded;
+}
+
+function pruneDailyTuningLog(now: number = Date.now(), options?: { force?: boolean }): void {
+  if (!options?.force && lastDailyLogPruneAt > 0 && now - lastDailyLogPruneAt < DAILY_LOG_PRUNE_INTERVAL_MS) {
+    return;
+  }
+  lastDailyLogPruneAt = now;
+
+  try {
+    if (!fs.existsSync(SIGNAL_HISTORY_DAILY_LOG_PATH)) return;
+
+    const raw = fs.readFileSync(SIGNAL_HISTORY_DAILY_LOG_PATH, 'utf8');
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) return;
+
+    const entries = lines
+      .map((line) => {
+        try {
+          return JSON.parse(line) as DailyTuningLogEntry;
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is DailyTuningLogEntry => !!entry);
+
+    const cutoff = now - TUNING_RETENTION_MS;
+    const retained = entries.filter(
+      (entry) => Number.isFinite(entry.rolledAt) && Number(entry.rolledAt) >= cutoff,
+    );
+
+    if (retained.length === entries.length) return;
+
+    ensureStorageDir();
+    const serialized = retained.map((entry) => JSON.stringify(entry)).join('\n');
+    fs.writeFileSync(
+      SIGNAL_HISTORY_DAILY_LOG_PATH,
+      serialized.length > 0 ? `${serialized}\n` : '',
+      'utf8',
+    );
+  } catch (error) {
+    console.error('[SignalHistory] Failed pruning daily tuning log:', error);
+  }
 }
 
 function getAdaptiveScannerRecordGate(now: number): ScannerRecordGate {
@@ -316,7 +417,7 @@ export function getLiveTuningSnapshot(lookbackHours: number = SCANNER_ADAPTIVE_L
 } {
   ensureDailyRollover(Date.now());
   const boundedLookback = Number.isFinite(lookbackHours) && lookbackHours > 0
-    ? Math.min(48, lookbackHours)
+    ? Math.min(MAX_SIGNAL_LOOKBACK_HOURS, lookbackHours)
     : SCANNER_ADAPTIVE_LOOKBACK_HOURS;
   const now = Date.now();
   const cutoff = now - boundedLookback * 60 * 60 * 1000;
@@ -392,32 +493,50 @@ function ensureStorageDir(): void {
 }
 
 function hydrateFromDisk(): void {
+  const now = Date.now();
+  let writeNeeded = false;
+
   try {
-    if (!fs.existsSync(SIGNAL_HISTORY_STORAGE_PATH)) return;
-    const raw = fs.readFileSync(SIGNAL_HISTORY_STORAGE_PATH, "utf8");
-    if (!raw?.trim()) return;
+    if (fs.existsSync(SIGNAL_HISTORY_STORAGE_PATH)) {
+      const raw = fs.readFileSync(SIGNAL_HISTORY_STORAGE_PATH, 'utf8');
+      if (raw?.trim()) {
+        const parsed = JSON.parse(raw) as SignalHistoryStore;
+        const cutoff = now - TUNING_RETENTION_MS;
 
-    const parsed = JSON.parse(raw) as SignalHistoryStore;
-    for (const [symbol, entries] of Object.entries(parsed || {})) {
-      const sym = symbol.toUpperCase();
-      const safeEntries = Array.isArray(entries) ? entries : [];
-      signalHistory[sym] = safeEntries.slice(-MAX_HISTORY_PER_SYMBOL).map((entry) => ({
-        ...entry,
-        symbol: sym,
-        outcome: (entry.outcome || 'pending') as SignalOutcome,
-      }));
+        for (const [symbol, entries] of Object.entries(parsed || {})) {
+          const sym = symbol.toUpperCase();
+          const safeEntries = Array.isArray(entries) ? entries : [];
 
-      const last = signalHistory[sym][signalHistory[sym].length - 1];
-      if (last) {
-        lastSignalTime[sym] = last.timestamp || 0;
-        lastSignalGrade[sym] = last.grade || '';
-        lastSignalDirection[sym] = last.direction || '';
+          const normalized = safeEntries
+            .filter((entry) => Number.isFinite(entry?.timestamp) && Number(entry.timestamp) >= cutoff)
+            .slice(-MAX_HISTORY_PER_SYMBOL)
+            .map((entry) => ({
+              ...entry,
+              symbol: sym,
+              outcome: (entry.outcome || 'pending') as SignalOutcome,
+            }));
+
+          if (normalized.length !== safeEntries.length) {
+            writeNeeded = true;
+          }
+
+          signalHistory[sym] = normalized;
+        }
       }
     }
+
+    const pruned = pruneSignalHistory(now, { persist: false });
+    syncLastSignalPointers();
+
     const latestTs = Object.values(signalHistory)
       .flat()
       .reduce((maxTs, row) => Math.max(maxTs, row.timestamp || 0), 0);
-    activeTradingDateKey = toNYDateKey(latestTs > 0 ? latestTs : Date.now());
+    activeTradingDateKey = toNYDateKey(latestTs > 0 ? latestTs : now);
+    pruneDailyTuningLog(now, { force: true });
+
+    if (writeNeeded || pruned) {
+      schedulePersist();
+    }
   } catch (error) {
     console.error('[SignalHistory] Failed to hydrate from disk:', error);
     activeTradingDateKey = toNYDateKey(Date.now());
@@ -442,6 +561,11 @@ function schedulePersist(): void {
 }
 
 hydrateFromDisk();
+
+const signalRetentionSweep = setInterval(() => {
+  ensureDailyRollover(Date.now());
+}, DAILY_LOG_PRUNE_INTERVAL_MS);
+signalRetentionSweep.unref?.();
 
 export function isWinOutcome(outcome?: SignalOutcome | string): boolean {
   return typeof outcome === 'string' && outcome.startsWith('win');
@@ -553,6 +677,7 @@ function buildDailyTuningLogEntry(dateKey: string, rolledAt: number): DailyTunin
   const allRows: SignalSnapshot[] = [];
   for (const entries of Object.values(signalHistory)) {
     for (const signal of entries) {
+      if (toNYDateKey(signal.timestamp) !== dateKey) continue;
       allRows.push(signal);
     }
   }
@@ -578,10 +703,12 @@ function buildDailyTuningLogEntry(dateKey: string, rolledAt: number): DailyTunin
   const bySymbol: DailyTuningLogEntry['bySymbol'] = {};
   for (const [symbol, rows] of Object.entries(signalHistory)) {
     if (!rows || rows.length === 0) continue;
-    const symbolScanner = rows.filter((signal) => signal.source === 'scanner');
-    const symbolFusion = rows.filter((signal) => signal.source !== 'scanner');
+    const datedRows = rows.filter((signal) => toNYDateKey(signal.timestamp) === dateKey);
+    if (datedRows.length === 0) continue;
+    const symbolScanner = datedRows.filter((signal) => signal.source === 'scanner');
+    const symbolFusion = datedRows.filter((signal) => signal.source !== 'scanner');
     bySymbol[symbol] = {
-      ...summarizeRows(rows),
+      ...summarizeRows(datedRows),
       bySource: {
         scanner: summarizeRows(symbolScanner),
         fusion: summarizeRows(symbolFusion),
@@ -605,24 +732,36 @@ function buildDailyTuningLogEntry(dateKey: string, rolledAt: number): DailyTunin
 function appendDailyLog(entry: DailyTuningLogEntry): void {
   try {
     ensureStorageDir();
+
+    if (fs.existsSync(SIGNAL_HISTORY_DAILY_LOG_PATH)) {
+      const raw = fs.readFileSync(SIGNAL_HISTORY_DAILY_LOG_PATH, 'utf8');
+      const lines = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      const alreadyLogged = lines.some((line) => {
+        try {
+          const existing = JSON.parse(line) as DailyTuningLogEntry;
+          return existing.date === entry.date;
+        } catch {
+          return false;
+        }
+      });
+
+      if (alreadyLogged) return;
+    }
+
     fs.appendFileSync(SIGNAL_HISTORY_DAILY_LOG_PATH, `${JSON.stringify(entry)}\n`, 'utf8');
   } catch (error) {
     console.error('[SignalHistory] Failed to append daily log:', error);
   }
 }
 
-function performLiveClear(): void {
-  for (const sym in signalHistory) {
-    signalHistory[sym] = [];
-  }
-  lastSignalTime = {};
-  lastSignalGrade = {};
-  lastSignalDirection = {};
-  scannerGateCache = null;
-  schedulePersist();
-}
-
 function ensureDailyRollover(now: number = Date.now()): void {
+  pruneSignalHistory(now);
+  pruneDailyTuningLog(now);
+
   const currentDateKey = toNYDateKey(now);
   if (!activeTradingDateKey) {
     activeTradingDateKey = currentDateKey;
@@ -633,7 +772,6 @@ function ensureDailyRollover(now: number = Date.now()): void {
   const entry = buildDailyTuningLogEntry(activeTradingDateKey, now);
   if (entry) appendDailyLog(entry);
 
-  performLiveClear();
   activeTradingDateKey = currentDateKey;
 }
 
@@ -1052,7 +1190,9 @@ export function getSignalMetrics(symbol: string, lookbackHours: number = 24): Si
   ensureDailyRollover(Date.now());
   const sym = symbol.toUpperCase();
   const history = signalHistory[sym] || [];
-  const boundedLookbackHours = Number.isFinite(lookbackHours) && lookbackHours > 0 ? Math.min(720, lookbackHours) : 24;
+  const boundedLookbackHours = Number.isFinite(lookbackHours) && lookbackHours > 0
+    ? Math.min(MAX_SIGNAL_LOOKBACK_HOURS, lookbackHours)
+    : 24;
   const cutoff = Date.now() - boundedLookbackHours * 60 * 60 * 1000;
   const scoped = history.filter((signal) => signal.timestamp >= cutoff);
 

@@ -1,0 +1,20 @@
+Recurrence study lookback: 14 days
+Window: 2026-03-01T14:45:45.102Z -> 2026-03-15T14:45:45.102Z
+
+Pre-compression baseline:
+- Completed samples: 415
+- Wins: 218
+- Win rate: 52.53%
+
+Top recurrence rules (support >= 12):
+- tv_aligned + spark_high + momentum_active: winRate 59.72% | support 72 | lift 1.137x
+- phase_ready_now + spark_high + bb_tight + momentum_active + no_trend_conflict: winRate 54.13% | support 109 | lift 1.03x
+- bb_tight + volume_not_dry + rsi_balanced + momentum_active + no_trend_conflict: winRate 53.33% | support 45 | lift 1.015x
+- phase_ready_now + bb_tight + volume_not_dry + momentum_active: winRate 52.44% | support 82 | lift 0.998x
+- tv_recommend_not_hard_oppose + spark_high + phase_ready_now: winRate 50.67% | support 150 | lift 0.965x
+- spark_high + rsi_balanced + adx_trending + no_trend_conflict: winRate 39.19% | support 74 | lift 0.746x
+
+Missing captured indicators:
+- Fast stochastic (FSTO) is not persisted in breakout history.
+- Parabolic SAR is not persisted in breakout history.
+- Raw MACD line/signal values are not persisted; momentumStrength is available as a proxy.

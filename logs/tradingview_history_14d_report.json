@@ -1,0 +1,355 @@
+{
+  "lookback": {
+    "days": 14,
+    "from": "2026-03-01T14:55:40.531Z",
+    "to": "2026-03-15T14:55:40.531Z"
+  },
+  "provenance": {
+    "source": "breakout_alert_history.json",
+    "requiresTvFields": [
+      "tvRsi",
+      "tvAdx",
+      "tvRecommendAll"
+    ],
+    "strictRealFilter": "exclude warnings containing TV_DERIVED_NO_OHLC, SIMULATED, DEGRADED"
+  },
+  "counts": {
+    "rows14d": 1275,
+    "rowsWithTvSnapshot": 1275,
+    "preCompressionRowsWithTv": 415,
+    "preCompressionCompletedWithTv": 415,
+    "preCompressionCompletedStrictReal": 415
+  },
+  "baseline": {
+    "total": 415,
+    "completed": 415,
+    "wins": 218,
+    "losses": 177,
+    "missed": 20,
+    "pending": 0,
+    "winRate": 52.53
+  },
+  "bySignal": {
+    "BUILDING": {
+      "total": 27,
+      "completed": 27,
+      "wins": 13,
+      "losses": 13,
+      "missed": 1,
+      "pending": 0,
+      "winRate": 48.15
+    },
+    "SQUEEZE": {
+      "total": 388,
+      "completed": 388,
+      "wins": 205,
+      "losses": 164,
+      "missed": 19,
+      "pending": 0,
+      "winRate": 52.84
+    }
+  },
+  "byDirection": {
+    "bullish": {
+      "total": 196,
+      "completed": 196,
+      "wins": 100,
+      "losses": 96,
+      "missed": 0,
+      "pending": 0,
+      "winRate": 51.02
+    },
+    "bearish": {
+      "total": 200,
+      "completed": 200,
+      "wins": 118,
+      "losses": 81,
+      "missed": 1,
+      "pending": 0,
+      "winRate": 59
+    },
+    "neutral": {
+      "total": 19,
+      "completed": 19,
+      "wins": 0,
+      "losses": 0,
+      "missed": 19,
+      "pending": 0,
+      "winRate": 0
+    }
+  },
+  "bins": {
+    "tvRsi": [
+      {
+        "bin": "0-35",
+        "total": 65,
+        "completed": 65,
+        "wins": 36,
+        "losses": 23,
+        "missed": 6,
+        "pending": 0,
+        "winRate": 55.38
+      },
+      {
+        "bin": "35-45",
+        "total": 294,
+        "completed": 294,
+        "wins": 153,
+        "losses": 129,
+        "missed": 12,
+        "pending": 0,
+        "winRate": 52.04
+      },
+      {
+        "bin": "45-55",
+        "total": 56,
+        "completed": 56,
+        "wins": 29,
+        "losses": 25,
+        "missed": 2,
+        "pending": 0,
+        "winRate": 51.79
+      },
+      {
+        "bin": "55-65",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      },
+      {
+        "bin": "65-101",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      }
+    ],
+    "tvAdx": [
+      {
+        "bin": "0-15",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      },
+      {
+        "bin": "15-20",
+        "total": 148,
+        "completed": 148,
+        "wins": 68,
+        "losses": 73,
+        "missed": 7,
+        "pending": 0,
+        "winRate": 45.95
+      },
+      {
+        "bin": "20-25",
+        "total": 168,
+        "completed": 168,
+        "wins": 89,
+        "losses": 71,
+        "missed": 8,
+        "pending": 0,
+        "winRate": 52.98
+      },
+      {
+        "bin": "25-35",
+        "total": 99,
+        "completed": 99,
+        "wins": 61,
+        "losses": 33,
+        "missed": 5,
+        "pending": 0,
+        "winRate": 61.62
+      },
+      {
+        "bin": "35-100",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      }
+    ],
+    "tvRecommendAll": [
+      {
+        "bin": "-1.1--0.5",
+        "total": 38,
+        "completed": 38,
+        "wins": 17,
+        "losses": 20,
+        "missed": 1,
+        "pending": 0,
+        "winRate": 44.74
+      },
+      {
+        "bin": "-0.5--0.2",
+        "total": 367,
+        "completed": 367,
+        "wins": 195,
+        "losses": 154,
+        "missed": 18,
+        "pending": 0,
+        "winRate": 53.13
+      },
+      {
+        "bin": "-0.2-0.2",
+        "total": 10,
+        "completed": 10,
+        "wins": 6,
+        "losses": 3,
+        "missed": 1,
+        "pending": 0,
+        "winRate": 60
+      },
+      {
+        "bin": "0.2-0.5",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      },
+      {
+        "bin": "0.5-1.1",
+        "total": 0,
+        "completed": 0,
+        "wins": 0,
+        "losses": 0,
+        "missed": 0,
+        "pending": 0,
+        "winRate": 0
+      }
+    ]
+  },
+  "bySymbol": {
+    "TSLA": {
+      "total": 62,
+      "completed": 62,
+      "wins": 27,
+      "losses": 33,
+      "missed": 2,
+      "pending": 0,
+      "winRate": 43.55
+    },
+    "MSFT": {
+      "total": 55,
+      "completed": 55,
+      "wins": 29,
+      "losses": 25,
+      "missed": 1,
+      "pending": 0,
+      "winRate": 52.73
+    },
+    "QQQ": {
+      "total": 54,
+      "completed": 54,
+      "wins": 25,
+      "losses": 27,
+      "missed": 2,
+      "pending": 0,
+      "winRate": 46.3
+    },
+    "GOOGL": {
+      "total": 52,
+      "completed": 52,
+      "wins": 33,
+      "losses": 18,
+      "missed": 1,
+      "pending": 0,
+      "winRate": 63.46
+    },
+    "SPY": {
+      "total": 50,
+      "completed": 50,
+      "wins": 29,
+      "losses": 17,
+      "missed": 4,
+      "pending": 0,
+      "winRate": 58
+    },
+    "AMZN": {
+      "total": 48,
+      "completed": 48,
+      "wins": 32,
+      "losses": 11,
+      "missed": 5,
+      "pending": 0,
+      "winRate": 66.67
+    },
+    "NVDA": {
+      "total": 47,
+      "completed": 47,
+      "wins": 24,
+      "losses": 21,
+      "missed": 2,
+      "pending": 0,
+      "winRate": 51.06
+    },
+    "AAPL": {
+      "total": 47,
+      "completed": 47,
+      "wins": 19,
+      "losses": 25,
+      "missed": 3,
+      "pending": 0,
+      "winRate": 40.43
+    }
+  },
+  "topRules": [
+    {
+      "rule": "tv_recommend_direction_match + tv_adx>=25",
+      "support": 40,
+      "total": 40,
+      "wins": 26,
+      "winRate": 65,
+      "lift": 1.237
+    },
+    {
+      "rule": "tv_trend_aligned + tv_adx>=25 + |momentum|>=35",
+      "support": 35,
+      "total": 35,
+      "wins": 22,
+      "winRate": 62.86,
+      "lift": 1.197
+    },
+    {
+      "rule": "tv_rsi_extreme + tv_adx>=25",
+      "support": 49,
+      "total": 49,
+      "wins": 29,
+      "winRate": 59.18,
+      "lift": 1.127
+    },
+    {
+      "rule": "tv_recommend_all<=-0.35 and bearish direction",
+      "support": 123,
+      "total": 123,
+      "wins": 70,
+      "winRate": 56.91,
+      "lift": 1.083
+    },
+    {
+      "rule": "tv_rsi_45_55 + tv_adx<20",
+      "support": 49,
+      "total": 49,
+      "wins": 24,
+      "winRate": 48.98,
+      "lift": 0.932
+    }
+  ]
+}

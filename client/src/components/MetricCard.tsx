@@ -525,6 +525,37 @@ function getAlertDirection(alert: ScannerResult): 'bullish' | 'bearish' {
   return 'bullish';
 }
 
+function resolveExpectedOptionDirection(direction: 'bullish' | 'bearish' | 'neutral'): 'CALL' | 'PUT' | null {
+  if (direction === 'bullish') return 'CALL';
+  if (direction === 'bearish') return 'PUT';
+  return null;
+}
+
+function getBestOptionPlayForDirection(
+  alert: ScannerResult,
+  directionHint: 'bullish' | 'bearish' | 'neutral' = 'neutral'
+): Record<string, unknown> | undefined {
+  const plays = Array.isArray(alert.optionPlays) ? [...alert.optionPlays] : [];
+  if (plays.length === 0) return undefined;
+
+  plays.sort((a, b) => {
+    const scoreA = toFiniteNumber(a?.score) ?? 0;
+    const scoreB = toFiniteNumber(b?.score) ?? 0;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    const rrA = toFiniteNumber(a?.rr) ?? toFiniteNumber(a?.riskReward) ?? 0;
+    const rrB = toFiniteNumber(b?.rr) ?? toFiniteNumber(b?.riskReward) ?? 0;
+    return rrB - rrA;
+  });
+
+  const expectedDirection = resolveExpectedOptionDirection(directionHint);
+  if (!expectedDirection) {
+    return plays[0] as Record<string, unknown>;
+  }
+
+  const aligned = plays.find((play) => String(play?.direction ?? '').toUpperCase() === expectedDirection);
+  return (aligned as Record<string, unknown> | undefined) ?? (plays[0] as Record<string, unknown>);
+}
+
 function getStructuralRiskRewardPercent(entry: BreakoutLogEntry | undefined, direction: 'bullish' | 'bearish'): number | null {
   if (!entry) return null;
   const entryPrice = toFiniteNumber(entry.priceAtCapture);
@@ -3059,7 +3090,7 @@ export function BreakoutAlertBar({
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
     const breakoutScore = alert.breakoutScore ?? 0;
-    const bestPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+    const bestPlay = getBestOptionPlayForDirection(alert, getAlertDirection(alert));
     const optionScore = toFiniteNumber(bestPlay?.score) ?? 0;
     const optionOi = getOptionPlayOpenInterest(bestPlay);
 
@@ -3211,7 +3242,7 @@ export function BreakoutAlertBar({
     if (strongMoveOverride) return true;
 
     // --- 0DTE/2DTE Enhanced Logic ---
-    const bestPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+    const bestPlay = getBestOptionPlayForDirection(alert, getAlertDirection(alert));
     const bestPlayScore = toFiniteNumber(bestPlay?.score) ?? 0;
     const bestPlayOpenInterest = getOptionPlayOpenInterest(bestPlay);
     const bestPlayDirection = String(bestPlay?.direction ?? '').toUpperCase();
@@ -3693,7 +3724,24 @@ export function BreakoutAlertBar({
       <div className="flex flex-wrap gap-2 mb-3">
         {monitoredAlertsStable.map(({ alert, setupOdds, prepareCompressionAlert, displayDirection }) => {
           const momentumStrength = alert.momentumStrength ?? 0;
-          const isBearish = displayDirection === 'bearish';
+          const stackBias = alert.timeframeStack?.bias;
+          const topPlayHint = getBestOptionPlayForDirection(alert, displayDirection);
+          const topPlayDirection = String(topPlayHint?.direction ?? '').toUpperCase();
+          const effectiveDirection: 'bullish' | 'bearish' =
+            displayDirection === 'neutral'
+              ? topPlayDirection === 'PUT'
+                ? 'bearish'
+                : topPlayDirection === 'CALL'
+                  ? 'bullish'
+                  : stackBias === 'bearish'
+                    ? 'bearish'
+                    : stackBias === 'bullish'
+                      ? 'bullish'
+                      : momentumStrength < 0
+                        ? 'bearish'
+                        : 'bullish'
+              : displayDirection;
+          const isBearish = effectiveDirection === 'bearish';
           const isLong = !isBearish;
           const alertColor = isLong ? '#10b981' : '#ef4444';
           const alertGlow = isLong ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)';
@@ -3715,7 +3763,7 @@ export function BreakoutAlertBar({
               : 0;
           const volumeValue = alert.dailyVolume ?? alert.volume;
           const volumeElevated = (alert.volumeSpike ?? 0) > 1.2;
-          const topPlay = alert.optionPlays?.[0] as Record<string, unknown> | undefined;
+          const topPlay = topPlayHint;
           const optionOpenInterest = getOptionPlayOpenInterest(topPlay);
           const optionRrPct = getOptionPlayRiskRewardPercent(topPlay);
           const symbolStats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
@@ -3723,7 +3771,7 @@ export function BreakoutAlertBar({
             symbolStats && symbolStats.completed > 0
               ? (symbolStats.wins / symbolStats.completed) * 100
               : null;
-          const alertDirection = getAlertDirection(alert);
+          const alertDirection = effectiveDirection;
           const latestDirectionalLog =
             alertDirection === 'bearish'
               ? (symbolStats?.latestBearish ?? symbolStats?.latest)
@@ -3994,7 +4042,7 @@ export function BreakoutAlertBar({
               </div>
               {/* Option Play Recommendation (always visible if present) */}
               {/* Option Play Dropdown (only visible on click) */}
-              <OptionPlayDropdown optionPlays={alert.optionPlays || []} />
+              <OptionPlayDropdown optionPlays={alert.optionPlays || []} expectedDirection={isLong ? 'CALL' : 'PUT'} />
 
               {(symbolWinRatePct != null || structuralRrPct != null) && (
                 <div

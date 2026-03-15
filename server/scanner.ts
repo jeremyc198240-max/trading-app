@@ -96,6 +96,39 @@ interface ScannerTradePlan {
 	timeline?: string;
 }
 
+type EdgeSignal = "BREAK_UP" | "BREAK_DOWN" | "WAIT";
+type EdgeState = "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED";
+type SarBias = "above" | "below" | "neutral";
+
+interface EdgeIndicatorSnapshot {
+	rsi: number;
+	macdHistogram: number;
+	macdTrend: DirectionalBias | "neutral";
+	bbPercentB: number;
+	bbSqueeze: boolean;
+	stochasticK: number;
+	stochasticD: number;
+	adx: number;
+	tvRsi: number;
+	tvAdx: number;
+	tvRecommendAll: number;
+	momentum: number;
+	volumeSpike: number;
+	sarBias: SarBias;
+}
+
+interface EdgeEngineSnapshot {
+	signal: EdgeSignal;
+	direction: DirectionalBias | "neutral";
+	state: EdgeState;
+	edgeScore: number;
+	confidence: number;
+	leadMinutes: number;
+	triggerProbability: number;
+	reasons: string[];
+	indicators: EdgeIndicatorSnapshot;
+}
+
 interface TimeframeStackInput {
 	timeframe: string;
 	breakoutSignal: BreakoutSignal;
@@ -170,6 +203,7 @@ interface ScannerResult {
 	preBreakoutSetup?: ScannerPreBreakoutSetup;
 	tradePlan?: ScannerTradePlan;
 	setupReasoning?: string[];
+	edgeEngine?: EdgeEngineSnapshot;
 	isDegraded?: boolean;
 	degradedReason?: string;
 }
@@ -428,7 +462,7 @@ function avg(values: number[]): number {
 	return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function toNumber(value: string | number | undefined): number {
+function toNumber(value: string | number | null | undefined): number {
 	if (typeof value === "number") return Number.isFinite(value) ? value : 0;
 	const parsed = Number.parseFloat(value ?? "0");
 	return Number.isFinite(parsed) ? parsed : 0;
@@ -765,6 +799,239 @@ function resolveDirectionalBias(
 	if (momentumStrength >= 8) return "bullish";
 	if (momentumStrength <= -8) return "bearish";
 	return "neutral";
+}
+
+function computeParabolicSarBias(candles: OHLC[]): SarBias {
+	if (!Array.isArray(candles) || candles.length < 3) return "neutral";
+
+	const step = 0.02;
+	const maxAf = 0.2;
+	let isUptrend = candles[1].close >= candles[0].close;
+	let ep = isUptrend ? candles[0].high : candles[0].low;
+	let sar = isUptrend ? candles[0].low : candles[0].high;
+	let af = step;
+
+	for (let i = 1; i < candles.length; i++) {
+		const curr = candles[i];
+		const prev = candles[Math.max(0, i - 1)];
+		const prev2 = candles[Math.max(0, i - 2)];
+
+		sar = sar + af * (ep - sar);
+
+		if (isUptrend) {
+			sar = Math.min(sar, prev.low, prev2.low);
+			if (curr.low < sar) {
+				isUptrend = false;
+				sar = ep;
+				ep = curr.low;
+				af = step;
+			} else {
+				if (curr.high > ep) {
+					ep = curr.high;
+					af = Math.min(maxAf, af + step);
+				}
+			}
+		} else {
+			sar = Math.max(sar, prev.high, prev2.high);
+			if (curr.high > sar) {
+				isUptrend = true;
+				sar = ep;
+				ep = curr.high;
+				af = step;
+			} else {
+				if (curr.low < ep) {
+					ep = curr.low;
+					af = Math.min(maxAf, af + step);
+				}
+			}
+		}
+	}
+
+	const lastClose = candles[candles.length - 1]?.close;
+	if (!Number.isFinite(lastClose) || !Number.isFinite(sar)) return "neutral";
+	if (lastClose > sar) return "below";
+	if (lastClose < sar) return "above";
+	return "neutral";
+}
+
+function computeEdgeEngineSnapshot(params: {
+	breakoutSignal: BreakoutSignal;
+	compression: CompressionSnapshot | undefined;
+	momentumStrength: number;
+	volumeSpike: number;
+	timeframeStack?: ScannerTimeframeStack;
+	tvRsi?: number | null;
+	tvAdx?: number | null;
+	tvRecommendAll?: number | null;
+	tvTrendDirection?: DirectionalBias | "neutral" | null;
+	rsi?: number | null;
+	macdHistogram?: number | null;
+	macdTrend?: DirectionalBias | "neutral" | null;
+	bbPercentB?: number | null;
+	bbSqueeze?: boolean | null;
+	stochasticK?: number | null;
+	stochasticD?: number | null;
+	adx?: number | null;
+	sarBias?: SarBias;
+}): EdgeEngineSnapshot {
+	const rsi = clamp(toNumber(params.rsi ?? params.tvRsi ?? 50), 0, 100);
+	const macdHistogram = clamp(toNumber(params.macdHistogram, 0), -2.5, 2.5);
+	const macdTrend = params.macdTrend ?? "neutral";
+	const bbPercentB = clamp(toNumber(params.bbPercentB, 50), 0, 100);
+	const bbSqueeze = Boolean(params.bbSqueeze);
+	const stochasticK = clamp(toNumber(params.stochasticK, rsi), 0, 100);
+	const stochasticD = clamp(toNumber(params.stochasticD, stochasticK), 0, 100);
+	const adx = clamp(toNumber(params.adx ?? params.tvAdx ?? 15), 0, 100);
+	const tvRsi = clamp(toNumber(params.tvRsi, rsi), 0, 100);
+	const tvAdx = clamp(toNumber(params.tvAdx, adx), 0, 100);
+	const tvRecommendAll = clamp(toNumber(params.tvRecommendAll, 0), -1, 1);
+	const momentum = clamp(toNumber(params.momentumStrength, 0), -100, 100);
+	const volumeSpike = clamp(toNumber(params.volumeSpike, 1), 0, 4);
+	const sarBias = params.sarBias ?? "neutral";
+
+	let bullishVotes = 0;
+	let bearishVotes = 0;
+
+	if (macdTrend === "bullish" || macdHistogram > 0.05) bullishVotes += 1;
+	if (macdTrend === "bearish" || macdHistogram < -0.05) bearishVotes += 1;
+	if (rsi >= 56) bullishVotes += 1;
+	if (rsi <= 44) bearishVotes += 1;
+	if (stochasticK > stochasticD + 2 && stochasticK >= 52) bullishVotes += 1;
+	if (stochasticK < stochasticD - 2 && stochasticK <= 48) bearishVotes += 1;
+	if (bbPercentB >= 58) bullishVotes += 1;
+	if (bbPercentB <= 42) bearishVotes += 1;
+	if (momentum >= 18) bullishVotes += 1;
+	if (momentum <= -18) bearishVotes += 1;
+	if (tvRecommendAll >= 0.15) bullishVotes += 1;
+	if (tvRecommendAll <= -0.15) bearishVotes += 1;
+	if (params.timeframeStack?.bias === "bullish") bullishVotes += 2;
+	if (params.timeframeStack?.bias === "bearish") bearishVotes += 2;
+	if (params.tvTrendDirection === "bullish") bullishVotes += 1;
+	if (params.tvTrendDirection === "bearish") bearishVotes += 1;
+	if (sarBias === "below") bullishVotes += 1;
+	if (sarBias === "above") bearishVotes += 1;
+
+	const voteDelta = bullishVotes - bearishVotes;
+	const direction: DirectionalBias | "neutral" = voteDelta >= 2
+		? "bullish"
+		: voteDelta <= -2
+			? "bearish"
+			: "neutral";
+
+	const phase = String(params.compression?.phase ?? "WAIT").toUpperCase();
+	const spark = clamp(toNumber(params.compression?.sparkScore, 0), 0, 100);
+	const bbWidth = clamp(toNumber(params.compression?.bbWidth, 1.2), 0, 10);
+	const phaseWeight = phase === "NOW"
+		? 20
+		: phase === "READY"
+			? 16
+			: phase === "PREPARE"
+				? 10
+				: 4;
+	const compressionScore = clamp(
+		spark * 0.28 +
+			phaseWeight +
+			(bbSqueeze || bbWidth <= 0.8 ? 12 : bbWidth <= 1.2 ? 8 : bbWidth <= 1.8 ? 4 : 1),
+		0,
+		35,
+	);
+
+	const trendScore = clamp((adx >= 25 ? 17 : adx >= 20 ? 13 : adx >= 15 ? 8 : 4) + (Math.abs(voteDelta) >= 4 ? 4 : 0), 0, 22);
+	const momentumScore = clamp(Math.abs(momentum) * 0.2 + Math.abs(macdHistogram) * 40, 0, 20);
+	const volumeScore = clamp(volumeSpike >= 1.2 ? 12 : volumeSpike >= 1.0 ? 8 : volumeSpike >= 0.85 ? 5 : 2, 0, 12);
+	const consensusScore = clamp((Math.abs(voteDelta) / 10) * 11, 0, 11);
+
+	const edgeScore = Math.round(clamp(compressionScore + trendScore + momentumScore + volumeScore + consensusScore, 0, 100));
+	const confidence = Math.round(
+		clamp(
+			edgeScore +
+				(direction !== "neutral" ? 5 : -6) +
+				(phase === "READY" || phase === "NOW" ? 4 : 0) +
+				(tvAdx >= 25 ? 2 : 0),
+			0,
+			99,
+		),
+	);
+
+	let state: EdgeState = "STANDBY";
+	if (direction !== "neutral" && edgeScore >= 80 && (phase === "READY" || phase === "NOW")) {
+		state = "TRIGGERED";
+	} else if (direction !== "neutral" && edgeScore >= 68 && (phase === "PREPARE" || phase === "READY" || phase === "NOW")) {
+		state = "PRIMED";
+	} else if (edgeScore >= 52) {
+		state = "ARMING";
+	}
+
+	const signal: EdgeSignal = direction === "bullish"
+		? "BREAK_UP"
+		: direction === "bearish"
+			? "BREAK_DOWN"
+			: "WAIT";
+
+	const leadMinutes = state === "TRIGGERED"
+		? edgeScore >= 88
+			? 3
+			: 5
+		: state === "PRIMED"
+			? edgeScore >= 75
+				? 6
+				: 10
+			: state === "ARMING"
+				? 15
+				: 25;
+
+	const triggerProbability = Math.round(
+		clamp(
+			confidence *
+				(state === "TRIGGERED"
+					? 1
+					: state === "PRIMED"
+						? 0.84
+						: state === "ARMING"
+							? 0.58
+							: 0.3),
+			0,
+			99,
+		),
+	);
+
+	const reasons: string[] = [];
+	if (phase === "READY" || phase === "NOW") reasons.push(`Compression phase ${phase} with spark ${Math.round(spark)}.`);
+	if (bbSqueeze || bbWidth <= 0.8) reasons.push(`Bollinger squeeze active (width ${roundTo(bbWidth, 2)}).`);
+	if (adx >= 25) reasons.push(`Trend strength confirmed (ADX ${Math.round(adx)}).`);
+	if (Math.abs(momentum) >= 30) reasons.push(`Momentum pressure elevated (${Math.round(momentum)}).`);
+	if (volumeSpike >= 1.0) reasons.push(`Participation rising (volume x${roundTo(volumeSpike, 2)}).`);
+	if (tvRecommendAll <= -0.35 || tvRecommendAll >= 0.35) reasons.push(`TradingView directional pressure ${roundTo(tvRecommendAll, 2)}.`);
+	if (stochasticK > stochasticD + 2 || stochasticK < stochasticD - 2) reasons.push(`Stochastic rotation K/D ${Math.round(stochasticK)}/${Math.round(stochasticD)}.`);
+	if (sarBias !== "neutral") reasons.push(`SAR is ${sarBias === "below" ? "below" : "above"} price.`);
+	if (reasons.length === 0) reasons.push("Edge engine is monitoring for directional compression release.");
+
+	return {
+		signal,
+		direction,
+		state,
+		edgeScore,
+		confidence,
+		leadMinutes,
+		triggerProbability,
+		reasons: reasons.slice(0, 5),
+		indicators: {
+			rsi: roundTo(rsi, 2),
+			macdHistogram: roundTo(macdHistogram, 3),
+			macdTrend,
+			bbPercentB: roundTo(bbPercentB, 2),
+			bbSqueeze,
+			stochasticK: roundTo(stochasticK, 2),
+			stochasticD: roundTo(stochasticD, 2),
+			adx: roundTo(adx, 2),
+			tvRsi: roundTo(tvRsi, 2),
+			tvAdx: roundTo(tvAdx, 2),
+			tvRecommendAll: roundTo(tvRecommendAll, 3),
+			momentum: roundTo(momentum, 2),
+			volumeSpike: roundTo(volumeSpike, 2),
+			sarBias,
+		},
+	};
 }
 
 function buildTimeframeSignalSnapshot(candles: OHLC[]): TimeframeSignalSnapshot {
@@ -1326,9 +1593,19 @@ function buildOptionPlaysFromAnalysis(
 		}
 	}
 
-	return Array.from(deduped.values())
-		.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-		.slice(0, 3);
+	const sortedPlays = Array.from(deduped.values())
+		.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+	if (directionHint === "bullish" || directionHint === "bearish") {
+		const expectedDirection = directionHint === "bullish" ? "CALL" : "PUT";
+		const alignedPlays = sortedPlays.filter((play) => play.direction === expectedDirection);
+		if (alignedPlays.length > 0) {
+			return alignedPlays.slice(0, 3);
+		}
+		return [];
+	}
+
+	return sortedPlays.slice(0, 3);
 }
 
 function parseTvNumber(value: unknown): number | null {
@@ -2276,6 +2553,39 @@ async function scanSymbol(
 				},
 				null,
 			);
+			const fallbackSarBias: SarBias = tvSignalContext.trendDirection === "bullish"
+				? "below"
+				: tvSignalContext.trendDirection === "bearish"
+					? "above"
+					: "neutral";
+			const fallbackEdgeEngine = computeEdgeEngineSnapshot({
+				breakoutSignal,
+				compression: {
+					sparkScore: breakoutScore,
+					phase: tvAdx >= 22 ? "READY" : tvAdx >= 18 ? "PREPARE" : "WAIT",
+					bbWidth: tvAdx >= 22 ? "0.80" : "1.20",
+					rangePct: "0.00",
+					volRatio: "1.00",
+				},
+				momentumStrength,
+				volumeSpike: fallbackVolumeSpike,
+				timeframeStack: fallbackTimeframeStack,
+				tvRsi,
+				tvAdx,
+				tvRecommendAll,
+				tvTrendDirection: tvSignalContext.trendDirection,
+				rsi: tvRsi,
+				macdHistogram: Number.isFinite(tvSnapshot?.macd as number) && Number.isFinite(tvSnapshot?.macdSignal as number)
+					? (tvSnapshot?.macd as number) - (tvSnapshot?.macdSignal as number)
+					: momentumStrength / 120,
+				macdTrend: momentumStrength >= 6 ? "bullish" : momentumStrength <= -6 ? "bearish" : "neutral",
+				bbPercentB: tvRsi,
+				bbSqueeze: breakoutSignal === "SQUEEZE" || breakoutSignal === "BUILDING",
+				stochasticK: tvRsi,
+				stochasticD: clamp((tvRsi ?? 50) + (momentumStrength >= 0 ? -4 : 4), 0, 100),
+				adx: tvAdx,
+				sarBias: fallbackSarBias,
+			});
 
 			const fallbackTraits: string[] = [];
 			if (tvSignalContext.trendAlignment === "aligned") fallbackTraits.push("TV_TREND_ALIGNED");
@@ -2422,6 +2732,7 @@ async function scanSymbol(
 				preBreakoutSetup: fallbackPreBreakoutSetup,
 				optionPlays: fallbackOptionPlays,
 				tradePlan: fallbackTradePlan,
+				edgeEngine: fallbackEdgeEngine,
 				setupReasoning: fallbackReasoning,
 				isDegraded: true,
 				degradedReason: "TV_DERIVED_NO_OHLC",
@@ -2596,6 +2907,27 @@ async function scanSymbol(
 			}
 			: null;
 		const timeframeStack = buildTimeframeStack(primaryStackInput, microStackInput);
+		const liveSarBias = computeParabolicSarBias(primaryStackCandles);
+		const edgeEngine = computeEdgeEngineSnapshot({
+			breakoutSignal: breakoutSignalForResult,
+			compression,
+			momentumStrength,
+			volumeSpike,
+			timeframeStack,
+			tvRsi: tvSnapshot?.rsi,
+			tvAdx: tvSnapshot?.adx,
+			tvRecommendAll: tvSnapshot?.recommendAll,
+			tvTrendDirection: tvSignalContext.trendDirection,
+			rsi: analysis.marketHealth?.rsi?.value,
+			macdHistogram: analysis.marketHealth?.macd?.histogram,
+			macdTrend: analysis.marketHealth?.macd?.trend,
+			bbPercentB: analysis.marketHealth?.bollingerBands?.percentB,
+			bbSqueeze: analysis.marketHealth?.bollingerBands?.squeeze,
+			stochasticK: analysis.marketHealth?.stochastic?.k,
+			stochasticD: analysis.marketHealth?.stochastic?.d,
+			adx: analysis.marketHealth?.adx?.value,
+			sarBias: liveSarBias,
+		});
 
 		let preBreakoutSetup = computePreBreakoutSetup({
 			primaryCandles: ohlc,
@@ -2705,6 +3037,7 @@ async function scanSymbol(
 			timeframeStack,
 			preBreakoutSetup,
 			optionPlays,
+			edgeEngine,
 			tradePlan,
 			setupReasoning,
 		};
