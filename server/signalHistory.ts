@@ -149,6 +149,11 @@ const SCANNER_MIN_RECORD_GATING_SCORE = 50;
 const SCANNER_MIN_DIRECTIONAL_EDGE = 0.2;
 const SCANNER_MIN_DIRECTIONAL_PROB = 0.68;
 const SCANNER_MIN_RECORD_INTERVAL_MINS = 15;
+const FUSION_MIN_DIRECTIONAL_SPREAD = 0.1;
+const SCANNER_MIN_DIRECTIONAL_SPREAD = 0.22;
+const DIRECTION_FLIP_COOLDOWN_MINS = 12;
+const DIRECTION_FLIP_MIN_DIRECTIONAL_EDGE = 0.16;
+const DIRECTION_FLIP_MIN_DIRECTIONAL_PROB = 0.62;
 const SCANNER_ADAPTIVE_LOOKBACK_HOURS = 12;
 const SCANNER_ADAPTIVE_MIN_COMPLETED = 12;
 const SCANNER_ADAPTIVE_MAX_CONF_SHIFT = 8;
@@ -829,10 +834,13 @@ export function recordSignal(
   const minDirectionalEdge = source === 'scanner'
     ? (scannerGate?.minDirectionalEdge ?? SCANNER_MIN_DIRECTIONAL_EDGE)
     : MIN_DIRECTIONAL_EDGE;
+  const minDirectionalSpread = source === 'scanner'
+    ? Math.max(minDirectionalEdge, SCANNER_MIN_DIRECTIONAL_SPREAD)
+    : Math.max(minDirectionalEdge, FUSION_MIN_DIRECTIONAL_SPREAD);
   const minRecordIntervalMins = source === 'scanner'
     ? (scannerGate?.minRecordIntervalMins ?? SCANNER_MIN_RECORD_INTERVAL_MINS)
     : MIN_RECORD_INTERVAL_MINS;
-  const directionSupported = directionalProb >= minDirectionalProb && directionalEdge >= minDirectionalEdge;
+  const directionSupported = directionalProb >= minDirectionalProb && directionalEdge >= minDirectionalSpread;
   const scannerGradeOk = source !== 'scanner' || currentGrade === 'HOT' || currentGrade === 'GOLD';
   const scannerStateOk = source !== 'scanner' || currentGrade !== 'BUILDING';
   const hasHardBlockReason = reasons.some((reason) => isHardBlockingReason(reason));
@@ -845,6 +853,25 @@ export function recordSignal(
   
   // Record only actionable directional signals that pass hard quality constraints.
   if (!actionableState || !actionableDirection) return;
+  const snapshotDirection = currentDirection as 'CALL' | 'PUT';
+
+  const lastSnapshot = signalHistory[sym][signalHistory[sym].length - 1];
+  const lastSnapshotDirection = lastSnapshot?.direction === 'CALL' || lastSnapshot?.direction === 'PUT'
+    ? (lastSnapshot.direction as 'CALL' | 'PUT')
+    : null;
+  const isDirectionFlip = lastSnapshotDirection != null && snapshotDirection !== lastSnapshotDirection;
+  const hasRecentOppositePending = signalHistory[sym].some((existing) => {
+    if (existing.outcome !== 'pending') return false;
+    if (existing.direction !== 'CALL' && existing.direction !== 'PUT') return false;
+    if (existing.direction === snapshotDirection) return false;
+    return (now - existing.timestamp) / 60000 < DIRECTION_FLIP_COOLDOWN_MINS;
+  });
+  const flipNeedsConfirmation =
+    isDirectionFlip &&
+    (timeSinceLastMins < DIRECTION_FLIP_COOLDOWN_MINS || hasRecentOppositePending);
+  const flipDirectionalProbMin = Math.max(minDirectionalProb, DIRECTION_FLIP_MIN_DIRECTIONAL_PROB);
+  const flipDirectionalEdgeMin = Math.max(minDirectionalSpread, DIRECTION_FLIP_MIN_DIRECTIONAL_EDGE);
+  const flipConfirmed = directionalProb >= flipDirectionalProbMin && directionalEdge >= flipDirectionalEdgeMin;
 
   const passesQualityGate =
     confidencePct >= minConfidencePct &&
@@ -855,8 +882,7 @@ export function recordSignal(
     !hasHardBlockReason;
 
   if (!passesQualityGate) return;
-
-  const snapshotDirection = currentDirection as 'CALL' | 'PUT';
+  if (flipNeedsConfirmation && !flipConfirmed) return;
   const rawTargets = (
     Array.isArray(unifiedSignal.targets) && unifiedSignal.targets.length > 0
       ? unifiedSignal.targets

@@ -291,6 +291,8 @@ const EDGE_TUNING_MAX_LOG_ROWS = 180;
 const MIN_RECORD_INTERVAL_MINS = 6;
 const MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS = 2;
 const MIN_RECORD_INTERVAL_DRIFT_MINS = 3;
+const DUPLICATE_ALERT_COOLDOWN_MINS = 12;
+const DUPLICATE_PRICE_BUCKET_PCT = 0.0025;
 const MIN_BREAKOUT_SCORE = 60;
 const OUTCOME_TIMEOUT_MINS = 180;
 const OUTCOME_TIMEOUT_MOVE_PCT = 0.2;
@@ -757,6 +759,11 @@ function parseNum(value: unknown, fallback: number = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function inSamePriceBucket(a: number, b: number): boolean {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return false;
+  return Math.abs(a - b) / Math.max(a, b) <= DUPLICATE_PRICE_BUCKET_PCT;
+}
+
 function toDirection(input: BreakoutAlertInput): BreakoutDirection {
   const signal = String(input.breakoutSignal ?? "").toUpperCase();
   if (signal === "BREAKOUT") return "bullish";
@@ -788,7 +795,7 @@ function isTrackableSignal(signal: BreakoutSignal): signal is Exclude<BreakoutSi
   );
 }
 
-function isCardCandidate(input: BreakoutAlertInput): boolean {
+function isCardCandidate(input: BreakoutAlertInput, direction: BreakoutDirection): boolean {
   const signal: BreakoutSignal = input.breakoutSignal ?? null;
   if (!isTrackableSignal(signal)) return false;
 
@@ -818,6 +825,23 @@ function isCardCandidate(input: BreakoutAlertInput): boolean {
   if (hasTrendConflict && breakoutScore < 74) return false;
   if (warnings.has("LATE_PHASE_UNCONFIRMED") && breakoutScore < 76) return false;
 
+  const tvAdx = Number.isFinite(input.tvAdx as number) ? parseNum(input.tvAdx) : undefined;
+  const tvRecommendAll = Number.isFinite(input.tvRecommendAll as number) ? parseNum(input.tvRecommendAll) : undefined;
+  const tvTrendDirection = input.tvTrendDirection;
+  const bearishTvConflict =
+    direction === "bullish" &&
+    tvTrendDirection === "bearish" &&
+    tvAdx != null &&
+    tvAdx < 25;
+  const strongBearishPressure =
+    direction === "bullish" &&
+    tvRecommendAll != null &&
+    tvRecommendAll <= -0.35 &&
+    tvAdx != null &&
+    tvAdx < 25;
+
+  if (bearishTvConflict || strongBearishPressure) return false;
+
   return true;
 }
 
@@ -843,44 +867,71 @@ function buildLevels(entryPrice: number, direction: BreakoutDirection): { stopLo
 
 function shouldRecord(input: BreakoutAlertInput, direction: BreakoutDirection): boolean {
   const now = input.timestamp;
+  const symbol = String(input.symbol || "").toUpperCase();
   const signal = String(input.breakoutSignal ?? "").toUpperCase();
+  const timeframe = String(input.timeframe || "15m").toLowerCase();
+  const entryPrice = parseNum(input.lastPrice, 0);
   const isDirectionalSignal =
     signal === "BREAKOUT" ||
     signal === "BREAKDOWN" ||
     signal === "EXPANSION" ||
     signal === "MOMENTUM";
 
+  let latestForSymbol: BreakoutAlertSnapshot | null = null;
+
   for (let i = breakoutHistory.length - 1; i >= 0; i--) {
     const last = breakoutHistory[i];
-    if (last.symbol !== input.symbol) continue;
-
     const minsSince = (now - last.timestamp) / 60000;
-    const signalChanged = last.signal !== String(input.breakoutSignal).toUpperCase();
-    const directionChanged =
-      last.direction !== direction &&
-      last.direction !== "neutral" &&
-      direction !== "neutral";
-    const scoreChanged = Math.abs(last.breakoutScore - parseNum(input.breakoutScore, 0)) >= 8;
-    const momentumChanged = Math.abs(last.momentumStrength - parseNum(input.momentumStrength, 0)) >= 12;
+    if (minsSince > DUPLICATE_ALERT_COOLDOWN_MINS) break;
+    if (last.symbol !== symbol) continue;
+    if (!latestForSymbol) latestForSymbol = last;
 
-    if (minsSince >= MIN_RECORD_INTERVAL_MINS) return true;
-
-    if (signalChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
-      return true;
+    const lastTimeframe = String(last.timeframe || "15m").toLowerCase();
+    const sameTimeframe = lastTimeframe === timeframe;
+    const sameDirection = last.direction === direction;
+    const samePriceBucket = inSamePriceBucket(last.priceAtCapture, entryPrice);
+    if (sameTimeframe && sameDirection && samePriceBucket) {
+      return false;
     }
-
-    if (isDirectionalSignal && directionChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
-      return true;
-    }
-
-    if ((scoreChanged || momentumChanged) && minsSince >= MIN_RECORD_INTERVAL_DRIFT_MINS) {
-      return true;
-    }
-
-    return false;
   }
 
-  return true;
+  if (!latestForSymbol) {
+    for (let i = breakoutHistory.length - 1; i >= 0; i--) {
+      if (breakoutHistory[i].symbol === symbol) {
+        latestForSymbol = breakoutHistory[i];
+        break;
+      }
+    }
+  }
+
+  if (!latestForSymbol) return true;
+
+  const last = latestForSymbol;
+
+  const minsSince = (now - last.timestamp) / 60000;
+  const signalChanged = last.signal !== String(input.breakoutSignal).toUpperCase();
+  const directionChanged =
+    last.direction !== direction &&
+    last.direction !== "neutral" &&
+    direction !== "neutral";
+  const scoreChanged = Math.abs(last.breakoutScore - parseNum(input.breakoutScore, 0)) >= 8;
+  const momentumChanged = Math.abs(last.momentumStrength - parseNum(input.momentumStrength, 0)) >= 12;
+
+  if (minsSince >= MIN_RECORD_INTERVAL_MINS) return true;
+
+  if (signalChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
+    return true;
+  }
+
+  if (isDirectionalSignal && directionChanged && minsSince >= MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS) {
+    return true;
+  }
+
+  if ((scoreChanged || momentumChanged) && minsSince >= MIN_RECORD_INTERVAL_DRIFT_MINS) {
+    return true;
+  }
+
+  return false;
 }
 
 export function recordBreakoutAlert(input: BreakoutAlertInput): void {
@@ -888,10 +939,10 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
   pruneOld(now);
 
   if (!input.symbol || !Number.isFinite(input.lastPrice) || input.lastPrice <= 0) return;
-  if (!isCardCandidate(input)) return;
+  const direction = toDirection(input);
+  if (!isCardCandidate(input, direction)) return;
 
   const signal = String(input.breakoutSignal).toUpperCase() as Exclude<BreakoutSignal, null>;
-  const direction = toDirection(input);
   if (!shouldRecord(input, direction)) return;
 
   const entryPrice = input.lastPrice;
