@@ -2,7 +2,13 @@ import { analyzeSymbol } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, type PatternResult } from "./patterns";
 import { runMonsterOTMEngine } from "./monsterOtmEngine";
-import { getBreakoutAlertLog, getBreakoutAlertSummary, recordBreakoutAlert, updateBreakoutAlertOutcomes } from "./breakoutAlertHistory";
+import {
+	getBreakoutAlertLog,
+	getBreakoutAlertSummary,
+	recordBreakoutAlert,
+	recordEdgeTuningSample,
+	updateBreakoutAlertOutcomes,
+} from "./breakoutAlertHistory";
 
 interface OHLC {
 	open: number;
@@ -2399,11 +2405,11 @@ async function scanSymbol(
 		if (!upperSymbol) return null;
 		const tvSnapshot = tvSnapshotInput ?? (await getTradingViewIndicatorMap([upperSymbol])).get(upperSymbol);
 
-		const liveSpot = await fetchLiveSpot(upperSymbol).catch(() => {
+		const liveSpot = await fetchLiveSpot(upperSymbol, { mode: "bulk" }).catch(() => {
 			const cached = getCachedSpot(upperSymbol);
-			if (cached) return cached.data;
+			if (cached && cached.quoteAgeMs <= 15 * 60 * 1000) return cached.data;
 			const candleSpot = getLastKnownSpotFromCandles(upperSymbol);
-			return candleSpot ? candleSpot.data : null;
+			return candleSpot && candleSpot.ageMs <= 15 * 60 * 1000 ? candleSpot.data : null;
 		});
 		const live = await fetchLiveOHLC(upperSymbol, timeframe, "FULL");
 		const hasOhlcData = live.data.length > 0;
@@ -3043,6 +3049,27 @@ async function scanSymbol(
 		};
 
 		if (timeframe === DEFAULT_TIMEFRAME) {
+			recordEdgeTuningSample({
+				symbol: upperSymbol,
+				timeframe,
+				timestamp: result.scanTime,
+				breakoutSignal: result.breakoutSignal,
+				breakoutScore: result.breakoutScore,
+				edgeEngine: result.edgeEngine
+					? {
+						signal: result.edgeEngine.signal,
+						direction: result.edgeEngine.direction,
+						state: result.edgeEngine.state,
+						edgeScore: result.edgeEngine.edgeScore,
+						confidence: result.edgeEngine.confidence,
+						leadMinutes: result.edgeEngine.leadMinutes,
+						triggerProbability: result.edgeEngine.triggerProbability,
+						reasons: result.edgeEngine.reasons,
+						indicators: result.edgeEngine.indicators,
+					}
+					: undefined,
+			});
+
 			updateBreakoutAlertOutcomes(upperSymbol, lastPrice, {
 				high: lastCandle.high,
 				low: lastCandle.low,
@@ -3085,6 +3112,19 @@ async function scanSymbol(
 				tvRecommendAll: result.tvRecommendAll,
 				tvTrendDirection: result.tvTrendDirection,
 				tvTrendStrength: result.tvTrendStrength,
+				edgeEngine: result.edgeEngine
+					? {
+						signal: result.edgeEngine.signal,
+						direction: result.edgeEngine.direction,
+						state: result.edgeEngine.state,
+						edgeScore: result.edgeEngine.edgeScore,
+						confidence: result.edgeEngine.confidence,
+						leadMinutes: result.edgeEngine.leadMinutes,
+						triggerProbability: result.edgeEngine.triggerProbability,
+						reasons: result.edgeEngine.reasons,
+						indicators: result.edgeEngine.indicators,
+					}
+					: undefined,
 			});
 		}
 

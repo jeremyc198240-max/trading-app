@@ -49,7 +49,14 @@ import {
   clearHistory
 } from "./signalHistory";
 import { runTuningAnalysis, formatTuningReport } from "./signalTuning";
-import { clearBreakoutAlertLog, getBreakoutAlertLog, getBreakoutAlertSummary } from "./breakoutAlertHistory";
+import {
+  clearBreakoutAlertLog,
+  collectEdgeTuning2dNow,
+  getBreakoutAlertLog,
+  getBreakoutAlertSummary,
+  getEdgeTuning2dLog,
+  getEdgeTuning2dSnapshot,
+} from "./breakoutAlertHistory";
 import {
   getBreakoutThresholdConfig,
   refreshBreakoutThresholdConfig,
@@ -184,15 +191,23 @@ export async function registerRoutes(
     timeframe: string = "15m",
   ): Promise<number | undefined> => {
     const cachedSpot = getCachedSpot(symbol);
-    if (cachedSpot) return cachedSpot.data.spot;
+    if (cachedSpot && cachedSpot.quoteAgeMs <= 15 * 60 * 1000) return cachedSpot.data.spot;
 
     const candleSpot = getLastKnownSpotFromCandles(symbol);
-    if (candleSpot) return candleSpot.data.spot;
+    if (candleSpot && candleSpot.ageMs <= 15 * 60 * 1000) return candleSpot.data.spot;
 
     try {
       const result = await fetchLiveOHLC(symbol, timeframe, "FULL");
       if (result.data.length > 0) {
-        return result.data[result.data.length - 1].close;
+        const last = result.data[result.data.length - 1];
+        const lastMs = Number.isFinite((last as any)?.timeMs)
+          ? Number((last as any).timeMs)
+          : Number.isFinite((last as any)?.time)
+          ? Number((last as any).time) * 1000
+          : Number.NaN;
+        if (Number.isFinite(lastMs) && Date.now() - lastMs <= 15 * 60 * 1000) {
+          return last.close;
+        }
       }
     } catch {
       // Intentionally swallow and let caller continue to synthetic fallback.
@@ -894,7 +909,7 @@ export async function registerRoutes(
     const sectorFetches = await Promise.all(
       sectorUniverse.map(async (sector) => {
         try {
-          const quote = await fetchLiveSpot(sector.code);
+          const quote = await fetchLiveSpot(sector.code, { mode: "bulk" });
           const hasPrevClose = Number.isFinite(quote.prevClose) && quote.prevClose !== 0;
           const baseline = hasPrevClose ? quote.prevClose : quote.spot;
           const rawChangePct = baseline === 0 ? 0 : ((quote.spot - baseline) / baseline) * 100;
@@ -964,7 +979,7 @@ export async function registerRoutes(
         console.warn(`[Spot] Rate-limited for ${upperSymbol}.`);
 
         const cachedSpot = getCachedSpot(upperSymbol);
-        if (cachedSpot && cachedSpot.ageMs <= 2 * 60 * 1000) {
+        if (cachedSpot && cachedSpot.quoteAgeMs <= 2 * 60 * 1000) {
           return res.json({
             ...cachedSpot.data,
             degraded: true,
@@ -979,13 +994,21 @@ export async function registerRoutes(
             const intraday = await fetchLiveOHLC(upperSymbol, tf, "FULL");
             if (intraday.data.length > 0) {
               const last = intraday.data[intraday.data.length - 1];
+              const lastMs = Number.isFinite((last as any)?.timeMs)
+                ? Number((last as any).timeMs)
+                : Number.isFinite((last as any)?.time)
+                ? Number((last as any).time) * 1000
+                : Number.NaN;
+              if (!Number.isFinite(lastMs) || Date.now() - lastMs > 8 * 60 * 1000) {
+                continue;
+              }
               const prev = intraday.data.length > 1 ? intraday.data[intraday.data.length - 2] : last;
               return res.json({
                 symbol: upperSymbol,
                 spot: last.close,
                 prevClose: prev.close,
                 marketState: "REGULAR",
-                timestamp: new Date(((last.time ?? Math.floor(Date.now() / 1000)) * 1000)).toISOString(),
+                timestamp: new Date(lastMs).toISOString(),
                 source: "yahoo",
                 degraded: true,
                 degradedReason: `intraday-${tf}`,
@@ -997,19 +1020,11 @@ export async function registerRoutes(
         }
 
         const candleFallback = getLastKnownSpotFromCandles(upperSymbol);
-        if (candleFallback) {
+        if (candleFallback && candleFallback.ageMs <= 15 * 60 * 1000) {
           return res.json({
             ...candleFallback.data,
             degraded: true,
             degradedReason: "last-known-candle",
-          });
-        }
-
-        if (cachedSpot) {
-          return res.json({
-            ...cachedSpot.data,
-            degraded: true,
-            degradedReason: "stale-cached-spot",
           });
         }
 
@@ -1093,6 +1108,31 @@ export async function registerRoutes(
     res.json({
       success: true,
       summary: getBreakoutAlertSummary(lookbackHours),
+      timestamp: Date.now(),
+    });
+  });
+
+  app.get("/api/scanner/edge-tuning/2d", (req, res) => {
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(180, Math.floor(requestedLimit))
+      : 30;
+
+    res.json({
+      success: true,
+      latest: getEdgeTuning2dLog(1)[0] ?? null,
+      currentWindow: getEdgeTuning2dSnapshot(),
+      entries: getEdgeTuning2dLog(limit),
+      timestamp: Date.now(),
+    });
+  });
+
+  app.post("/api/scanner/edge-tuning/2d/collect", (_req, res) => {
+    const entry = collectEdgeTuning2dNow();
+    res.json({
+      success: true,
+      collected: Boolean(entry),
+      entry,
       timestamp: Date.now(),
     });
   });

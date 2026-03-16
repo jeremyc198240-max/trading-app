@@ -19,6 +19,7 @@ import { MetaEngineStrip, LiquidityLevelsCard, ProbabilityBars } from "@/compone
 import { GammaGhostPanel } from "@/components/GammaGhostPanel";
 import { MetaSignalPanel } from "@/components/MetaSignalPanel";
 import { FusionPanel } from "@/components/FusionPanel";
+import { EdgeTuningCard } from "@/components/EdgeTuningCard";
 import { TradeAnalysisPanel } from "@/components/TradeAnalysisPanel";
 import { DashboardSkeleton, EmptyState, ErrorState } from "@/components/LoadingSkeleton";
 import { SignalHistoryPanel } from "@/components/SignalHistoryPanel";
@@ -48,10 +49,11 @@ export default function Dashboard() {
   const { data: spotData } = useQuery<SpotData>({
     queryKey: ["/api/spot", searchTicker],
     enabled: !!searchTicker,
-    refetchInterval: 30000,
+    refetchInterval: 5000,
     refetchIntervalInBackground: true,
-    staleTime: 25000,
+    staleTime: 0,
     refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     retry: false,
   });
 
@@ -61,6 +63,13 @@ export default function Dashboard() {
       ? analysis.ohlc[analysis.ohlc.length - 1].close
       : undefined;
   const spotPrice = spotData?.spot;
+  const spotTimestampMs = spotData?.timestamp ? Date.parse(spotData.timestamp) : Number.NaN;
+  const spotAgeMs = Number.isFinite(spotTimestampMs) ? Date.now() - spotTimestampMs : Number.POSITIVE_INFINITY;
+  const spotIsFresh =
+    spotPrice != null &&
+    Number.isFinite(spotAgeMs) &&
+    spotAgeMs >= 0 &&
+    spotAgeMs <= 20 * 60 * 1000;
   const spotDivergencePct =
     spotPrice != null &&
     lastCandleClose != null &&
@@ -68,13 +77,16 @@ export default function Dashboard() {
     lastCandleClose > 0
       ? Math.abs(spotPrice - lastCandleClose) / lastCandleClose
       : 0;
+  const analysisAllowsSpot =
+    analysisDataSource.startsWith("live") ||
+    analysisDataSource.startsWith("cached") ||
+    analysisDataSource.startsWith("simulated");
   const spotLooksAligned =
-    spotPrice != null &&
+    spotIsFresh &&
     (
       lastCandleClose == null ||
-      spotDivergencePct <= 0.012 ||
-      analysisDataSource.startsWith("live") ||
-      analysisDataSource.startsWith("cached (")
+      spotDivergencePct <= 0.03 ||
+      analysisAllowsSpot
     );
 
   const lastPrice =
@@ -98,6 +110,7 @@ export default function Dashboard() {
   const handleRefresh = () => {
     if (searchTicker) {
       queryClient.invalidateQueries({ queryKey: ["/api/analyze", searchTicker, timeframe] });
+      queryClient.invalidateQueries({ queryKey: ["/api/spot", searchTicker] });
     }
   };
 
@@ -378,6 +391,8 @@ function DashboardContent({
 
         <div className="xl:col-span-4 space-y-6">
           <FusionPanel symbol={analysis.symbol} />
+
+          <EdgeTuningCard />
           
           <Card className="overflow-hidden">
             <div className="h-0.5 bg-gradient-to-r from-amber-500/50 via-orange-500/50 to-red-500/50" />

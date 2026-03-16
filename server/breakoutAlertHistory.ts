@@ -34,6 +34,93 @@ export interface BreakoutTimeframeStackSnapshot {
   bias?: "bullish" | "bearish" | "mixed" | "neutral";
 }
 
+export interface BreakoutEdgeIndicatorSnapshot {
+  rsi?: number;
+  macdHistogram?: number;
+  macdTrend?: "bullish" | "bearish" | "neutral";
+  bbPercentB?: number;
+  bbSqueeze?: boolean;
+  stochasticK?: number;
+  stochasticD?: number;
+  adx?: number;
+  tvRsi?: number;
+  tvAdx?: number;
+  tvRecommendAll?: number;
+  momentum?: number;
+  volumeSpike?: number;
+  sarBias?: "above" | "below" | "neutral";
+}
+
+export interface BreakoutEdgeEngineSnapshot {
+  signal?: "BREAK_UP" | "BREAK_DOWN" | "WAIT";
+  direction?: "bullish" | "bearish" | "neutral";
+  state?: "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED";
+  edgeScore?: number;
+  confidence?: number;
+  leadMinutes?: number;
+  triggerProbability?: number;
+  reasons?: string[];
+  indicators?: BreakoutEdgeIndicatorSnapshot;
+}
+
+export interface EdgeTuning2dLogEntry {
+  rolledAt: number;
+  windowHours: number;
+  windowStart: number;
+  windowEnd: number;
+  sample: {
+    edgeSampleCount: number;
+    symbolCount: number;
+    breakoutAlertCount: number;
+    total: number;
+    completed: number;
+    wins: number;
+    losses: number;
+    missed: number;
+    pending: number;
+    winRate: number;
+  };
+  quality: {
+    avgEdgeScore: number;
+    avgConfidence: number;
+    avgTriggerProbability: number;
+    avgLeadMinutes: number;
+  };
+  indicatorMeans: {
+    rsi: number;
+    adx: number;
+    stochK: number;
+    bbPercentB: number;
+    tvRsi: number;
+    tvAdx: number;
+    momentum: number;
+    volumeSpike: number;
+  };
+  mix: {
+    signal: Record<"BREAK_UP" | "BREAK_DOWN" | "WAIT", number>;
+    state: Record<"STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED", number>;
+  };
+  topReasons: Array<{ reason: string; count: number }>;
+}
+
+export interface EdgeTuningSampleInput {
+  symbol: string;
+  timeframe: string;
+  timestamp: number;
+  breakoutSignal?: BreakoutSignal;
+  breakoutScore?: number;
+  edgeEngine?: BreakoutEdgeEngineSnapshot;
+}
+
+interface EdgeTuningSample {
+  timestamp: number;
+  symbol: string;
+  timeframe: string;
+  breakoutSignal?: Exclude<BreakoutSignal, null>;
+  breakoutScore?: number;
+  edgeEngine: NonNullable<BreakoutAlertSnapshot["edgeEngine"]>;
+}
+
 export interface BreakoutAlertInput {
   symbol: string;
   timeframe: string;
@@ -58,6 +145,7 @@ export interface BreakoutAlertInput {
   compression?: BreakoutCompressionSnapshot;
   preBreakoutSetup?: BreakoutPreSetupSnapshot;
   timeframeStack?: BreakoutTimeframeStackSnapshot;
+  edgeEngine?: BreakoutEdgeEngineSnapshot;
 }
 
 export interface BreakoutAlertSnapshot {
@@ -97,6 +185,32 @@ export interface BreakoutAlertSnapshot {
     agreement?: number;
     aggregateScore?: number;
     bias?: "bullish" | "bearish" | "mixed" | "neutral";
+  };
+  edgeEngine?: {
+    signal?: "BREAK_UP" | "BREAK_DOWN" | "WAIT";
+    direction?: "bullish" | "bearish" | "neutral";
+    state?: "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED";
+    edgeScore?: number;
+    confidence?: number;
+    leadMinutes?: number;
+    triggerProbability?: number;
+    reasons?: string[];
+    indicators?: {
+      rsi?: number;
+      macdHistogram?: number;
+      macdTrend?: "bullish" | "bearish" | "neutral";
+      bbPercentB?: number;
+      bbSqueeze?: boolean;
+      stochasticK?: number;
+      stochasticD?: number;
+      adx?: number;
+      tvRsi?: number;
+      tvAdx?: number;
+      tvRecommendAll?: number;
+      momentum?: number;
+      volumeSpike?: number;
+      sarBias?: "above" | "below" | "neutral";
+    };
   };
   priceAtCapture: number;
   stopLoss: number;
@@ -164,9 +278,16 @@ export interface BreakoutAlertSummary {
 
 const PROJECT_ROOT = process.cwd();
 const STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "breakout_alert_history.json");
+const EDGE_TUNING_2D_STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "edge_tuning_2d_log.jsonl");
+const EDGE_SAMPLE_STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "edge_engine_samples.json");
 const MAX_LOOKBACK_HOURS = 48;
 const RETENTION_MS = MAX_LOOKBACK_HOURS * 60 * 60 * 1000;
 const RETENTION_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+const EDGE_TUNING_WINDOW_HOURS = 48;
+const EDGE_TUNING_WINDOW_MS = EDGE_TUNING_WINDOW_HOURS * 60 * 60 * 1000;
+const EDGE_SAMPLE_MIN_INTERVAL_MS = 45 * 1000;
+const EDGE_TUNING_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const EDGE_TUNING_MAX_LOG_ROWS = 180;
 const MIN_RECORD_INTERVAL_MINS = 6;
 const MIN_RECORD_INTERVAL_SIGNAL_FLIP_MINS = 2;
 const MIN_RECORD_INTERVAL_DRIFT_MINS = 3;
@@ -176,6 +297,16 @@ const OUTCOME_TIMEOUT_MOVE_PCT = 0.2;
 
 const breakoutHistory: BreakoutAlertSnapshot[] = [];
 let persistTimer: NodeJS.Timeout | null = null;
+const edgeSamples: EdgeTuningSample[] = [];
+let edgeSamplePersistTimer: NodeJS.Timeout | null = null;
+const edgeTuning2dLog: EdgeTuning2dLogEntry[] = [];
+let lastEdgeTuningRollAt = 0;
+const lastEdgeSampleBySymbol = new Map<string, {
+  timestamp: number;
+  state?: "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED";
+  signal?: "BREAK_UP" | "BREAK_DOWN" | "WAIT";
+  edgeScore?: number;
+}>();
 
 function roundToCent(value: number): number {
   return Math.round(value * 100) / 100;
@@ -187,6 +318,13 @@ function clamp(value: number, min: number, max: number): number {
 
 function ensureStorageDir(): void {
   const dir = path.dirname(STORAGE_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function ensureDirFor(filePath: string): void {
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -209,19 +347,47 @@ function schedulePersist(): void {
   }, 250);
 }
 
+function persistEdgeSamplesToDisk(): void {
+  try {
+    ensureDirFor(EDGE_SAMPLE_STORAGE_PATH);
+    fs.writeFileSync(EDGE_SAMPLE_STORAGE_PATH, JSON.stringify(edgeSamples), "utf8");
+  } catch (error) {
+    console.error("[BreakoutAlertHistory] Failed to persist edge samples:", error);
+  }
+}
+
+function scheduleEdgeSamplePersist(): void {
+  if (edgeSamplePersistTimer) return;
+  edgeSamplePersistTimer = setTimeout(() => {
+    edgeSamplePersistTimer = null;
+    persistEdgeSamplesToDisk();
+  }, 300);
+}
+
 function pruneOld(now: number = Date.now()): void {
   const cutoff = now - RETENTION_MS;
-  let writeNeeded = false;
+  let breakoutWriteNeeded = false;
+  let edgeSampleWriteNeeded = false;
 
   for (let i = breakoutHistory.length - 1; i >= 0; i--) {
     if (breakoutHistory[i].timestamp < cutoff) {
       breakoutHistory.splice(i, 1);
-      writeNeeded = true;
+      breakoutWriteNeeded = true;
     }
   }
 
-  if (writeNeeded) {
+  for (let i = edgeSamples.length - 1; i >= 0; i--) {
+    if (edgeSamples[i].timestamp < cutoff) {
+      edgeSamples.splice(i, 1);
+      edgeSampleWriteNeeded = true;
+    }
+  }
+
+  if (breakoutWriteNeeded) {
     schedulePersist();
+  }
+  if (edgeSampleWriteNeeded) {
+    scheduleEdgeSamplePersist();
   }
 }
 
@@ -251,12 +417,340 @@ function hydrateFromDisk(): void {
   }
 }
 
+function hydrateEdgeSamplesFromDisk(): void {
+  try {
+    if (!fs.existsSync(EDGE_SAMPLE_STORAGE_PATH)) return;
+    const raw = fs.readFileSync(EDGE_SAMPLE_STORAGE_PATH, "utf8");
+    if (!raw.trim()) return;
+
+    const parsed = JSON.parse(raw) as EdgeTuningSample[];
+    if (!Array.isArray(parsed)) return;
+
+    edgeSamples.length = 0;
+    for (const row of parsed) {
+      if (!row || typeof row !== "object") continue;
+      if (!Number.isFinite(row.timestamp)) continue;
+      if (typeof row.symbol !== "string") continue;
+      if (!row.edgeEngine || typeof row.edgeEngine !== "object") continue;
+      edgeSamples.push(row);
+
+      const symbol = String(row.symbol).toUpperCase();
+      const prev = lastEdgeSampleBySymbol.get(symbol);
+      if (!prev || row.timestamp >= prev.timestamp) {
+        lastEdgeSampleBySymbol.set(symbol, {
+          timestamp: row.timestamp,
+          state: row.edgeEngine.state,
+          signal: row.edgeEngine.signal,
+          edgeScore: row.edgeEngine.edgeScore,
+        });
+      }
+    }
+
+    pruneOld(Date.now());
+  } catch (error) {
+    console.error("[BreakoutAlertHistory] Failed to hydrate edge samples:", error);
+  }
+}
+
+function average(values: number[]): number {
+  if (!values.length) return 0;
+  const sum = values.reduce((acc, value) => acc + value, 0);
+  return sum / values.length;
+}
+
+function parseEdgeSnapshot(input?: BreakoutEdgeEngineSnapshot): BreakoutAlertSnapshot["edgeEngine"] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+
+  const signalRaw = String(input.signal ?? "").toUpperCase();
+  const signal = signalRaw === "BREAK_UP" || signalRaw === "BREAK_DOWN" || signalRaw === "WAIT"
+    ? (signalRaw as "BREAK_UP" | "BREAK_DOWN" | "WAIT")
+    : undefined;
+
+  const directionRaw = String(input.direction ?? "").toLowerCase();
+  const direction = directionRaw === "bullish" || directionRaw === "bearish" || directionRaw === "neutral"
+    ? (directionRaw as "bullish" | "bearish" | "neutral")
+    : undefined;
+
+  const stateRaw = String(input.state ?? "").toUpperCase();
+  const state = stateRaw === "STANDBY" || stateRaw === "ARMING" || stateRaw === "PRIMED" || stateRaw === "TRIGGERED"
+    ? (stateRaw as "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED")
+    : undefined;
+
+  const indicatorsIn = input.indicators ?? {};
+  const indicators: NonNullable<BreakoutAlertSnapshot["edgeEngine"]>["indicators"] = {
+    rsi: Number.isFinite(indicatorsIn.rsi as number) ? parseNum(indicatorsIn.rsi) : undefined,
+    macdHistogram: Number.isFinite(indicatorsIn.macdHistogram as number) ? parseNum(indicatorsIn.macdHistogram) : undefined,
+    macdTrend:
+      indicatorsIn.macdTrend === "bullish" || indicatorsIn.macdTrend === "bearish" || indicatorsIn.macdTrend === "neutral"
+        ? indicatorsIn.macdTrend
+        : undefined,
+    bbPercentB: Number.isFinite(indicatorsIn.bbPercentB as number) ? parseNum(indicatorsIn.bbPercentB) : undefined,
+    bbSqueeze: typeof indicatorsIn.bbSqueeze === "boolean" ? indicatorsIn.bbSqueeze : undefined,
+    stochasticK: Number.isFinite(indicatorsIn.stochasticK as number) ? parseNum(indicatorsIn.stochasticK) : undefined,
+    stochasticD: Number.isFinite(indicatorsIn.stochasticD as number) ? parseNum(indicatorsIn.stochasticD) : undefined,
+    adx: Number.isFinite(indicatorsIn.adx as number) ? parseNum(indicatorsIn.adx) : undefined,
+    tvRsi: Number.isFinite(indicatorsIn.tvRsi as number) ? parseNum(indicatorsIn.tvRsi) : undefined,
+    tvAdx: Number.isFinite(indicatorsIn.tvAdx as number) ? parseNum(indicatorsIn.tvAdx) : undefined,
+    tvRecommendAll: Number.isFinite(indicatorsIn.tvRecommendAll as number) ? parseNum(indicatorsIn.tvRecommendAll) : undefined,
+    momentum: Number.isFinite(indicatorsIn.momentum as number) ? parseNum(indicatorsIn.momentum) : undefined,
+    volumeSpike: Number.isFinite(indicatorsIn.volumeSpike as number) ? parseNum(indicatorsIn.volumeSpike) : undefined,
+    sarBias:
+      indicatorsIn.sarBias === "above" || indicatorsIn.sarBias === "below" || indicatorsIn.sarBias === "neutral"
+        ? indicatorsIn.sarBias
+        : undefined,
+  };
+
+  const reasons = Array.isArray(input.reasons)
+    ? input.reasons.map((reason) => String(reason).trim()).filter(Boolean).slice(0, 8)
+    : undefined;
+
+  const snapshot: BreakoutAlertSnapshot["edgeEngine"] = {
+    signal,
+    direction,
+    state,
+    edgeScore: Number.isFinite(input.edgeScore as number) ? parseNum(input.edgeScore) : undefined,
+    confidence: Number.isFinite(input.confidence as number) ? parseNum(input.confidence) : undefined,
+    leadMinutes: Number.isFinite(input.leadMinutes as number) ? parseNum(input.leadMinutes) : undefined,
+    triggerProbability: Number.isFinite(input.triggerProbability as number) ? parseNum(input.triggerProbability) : undefined,
+    reasons,
+    indicators,
+  };
+
+  const hasAnyField =
+    snapshot.signal != null ||
+    snapshot.direction != null ||
+    snapshot.state != null ||
+    snapshot.edgeScore != null ||
+    snapshot.confidence != null ||
+    snapshot.leadMinutes != null ||
+    snapshot.triggerProbability != null ||
+    (snapshot.reasons != null && snapshot.reasons.length > 0) ||
+    Object.values(snapshot.indicators ?? {}).some((value) => value != null);
+
+  return hasAnyField ? snapshot : undefined;
+}
+
+function hydrateEdgeTuning2dLog(): void {
+  try {
+    if (!fs.existsSync(EDGE_TUNING_2D_STORAGE_PATH)) return;
+    const raw = fs.readFileSync(EDGE_TUNING_2D_STORAGE_PATH, "utf8");
+    if (!raw.trim()) return;
+
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    edgeTuning2dLog.length = 0;
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as EdgeTuning2dLogEntry;
+        if (!parsed || !Number.isFinite(parsed.rolledAt)) continue;
+        edgeTuning2dLog.push(parsed);
+      } catch {
+        // Ignore malformed lines.
+      }
+    }
+
+    edgeTuning2dLog.sort((a, b) => a.rolledAt - b.rolledAt);
+    if (edgeTuning2dLog.length > EDGE_TUNING_MAX_LOG_ROWS) {
+      edgeTuning2dLog.splice(0, edgeTuning2dLog.length - EDGE_TUNING_MAX_LOG_ROWS);
+    }
+
+    lastEdgeTuningRollAt = edgeTuning2dLog.length > 0
+      ? edgeTuning2dLog[edgeTuning2dLog.length - 1].rolledAt
+      : 0;
+  } catch (error) {
+    console.error("[BreakoutAlertHistory] Failed to hydrate 2d edge tuning log:", error);
+  }
+}
+
+function persistEdgeTuning2dLog(): void {
+  try {
+    ensureDirFor(EDGE_TUNING_2D_STORAGE_PATH);
+    const rows = edgeTuning2dLog
+      .slice(-EDGE_TUNING_MAX_LOG_ROWS)
+      .map((entry) => JSON.stringify(entry))
+      .join("\n");
+    fs.writeFileSync(
+      EDGE_TUNING_2D_STORAGE_PATH,
+      rows.length > 0 ? `${rows}\n` : "",
+      "utf8",
+    );
+  } catch (error) {
+    console.error("[BreakoutAlertHistory] Failed to persist 2d edge tuning log:", error);
+  }
+}
+
+function buildEdgeTuning2dEntry(now: number): EdgeTuning2dLogEntry | null {
+  const windowStart = now - EDGE_TUNING_WINDOW_MS;
+  const scopedEdgeSamples = edgeSamples.filter(
+    (row) => row.timestamp >= windowStart && row.timestamp <= now && row.edgeEngine,
+  );
+  if (!scopedEdgeSamples.length) return null;
+
+  const scopedAlerts = breakoutHistory.filter(
+    (row) => row.timestamp >= windowStart && row.timestamp <= now && row.edgeEngine,
+  );
+  const alertOutcomes = summarizeRows(scopedAlerts);
+  const sample: EdgeTuning2dLogEntry["sample"] = {
+    edgeSampleCount: scopedEdgeSamples.length,
+    symbolCount: new Set(scopedEdgeSamples.map((row) => row.symbol)).size,
+    breakoutAlertCount: scopedAlerts.length,
+    ...alertOutcomes,
+  };
+
+  const edgeScores = scopedEdgeSamples
+    .map((row) => row.edgeEngine.edgeScore)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const confidences = scopedEdgeSamples
+    .map((row) => row.edgeEngine.confidence)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const triggerProbs = scopedEdgeSamples
+    .map((row) => row.edgeEngine.triggerProbability)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const leadMinutes = scopedEdgeSamples
+    .map((row) => row.edgeEngine.leadMinutes)
+    .filter((value): value is number => Number.isFinite(value as number));
+
+  const rsiValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.rsi)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const adxValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.adx)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const stochKValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.stochasticK)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const bbPercentBValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.bbPercentB)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const tvRsiValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.tvRsi)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const tvAdxValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.tvAdx)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const momentumValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.momentum)
+    .filter((value): value is number => Number.isFinite(value as number));
+  const volumeSpikeValues = scopedEdgeSamples
+    .map((row) => row.edgeEngine.indicators?.volumeSpike)
+    .filter((value): value is number => Number.isFinite(value as number));
+
+  const signalMix: EdgeTuning2dLogEntry["mix"]["signal"] = {
+    BREAK_UP: 0,
+    BREAK_DOWN: 0,
+    WAIT: 0,
+  };
+  const stateMix: EdgeTuning2dLogEntry["mix"]["state"] = {
+    STANDBY: 0,
+    ARMING: 0,
+    PRIMED: 0,
+    TRIGGERED: 0,
+  };
+  const reasonCounts = new Map<string, number>();
+
+  for (const row of scopedEdgeSamples) {
+    const signal = row.edgeEngine.signal;
+    if (signal && signal in signalMix) {
+      signalMix[signal] += 1;
+    }
+
+    const state = row.edgeEngine.state;
+    if (state && state in stateMix) {
+      stateMix[state] += 1;
+    }
+
+    for (const reason of row.edgeEngine.reasons ?? []) {
+      const normalized = String(reason).trim();
+      if (!normalized) continue;
+      reasonCounts.set(normalized, (reasonCounts.get(normalized) ?? 0) + 1);
+    }
+  }
+
+  const topReasons = Array.from(reasonCounts.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+
+  return {
+    rolledAt: now,
+    windowHours: EDGE_TUNING_WINDOW_HOURS,
+    windowStart,
+    windowEnd: now,
+    sample,
+    quality: {
+      avgEdgeScore: roundToCent(average(edgeScores)),
+      avgConfidence: roundToCent(average(confidences)),
+      avgTriggerProbability: roundToCent(average(triggerProbs)),
+      avgLeadMinutes: roundToCent(average(leadMinutes)),
+    },
+    indicatorMeans: {
+      rsi: roundToCent(average(rsiValues)),
+      adx: roundToCent(average(adxValues)),
+      stochK: roundToCent(average(stochKValues)),
+      bbPercentB: roundToCent(average(bbPercentBValues)),
+      tvRsi: roundToCent(average(tvRsiValues)),
+      tvAdx: roundToCent(average(tvAdxValues)),
+      momentum: roundToCent(average(momentumValues)),
+      volumeSpike: roundToCent(average(volumeSpikeValues)),
+    },
+    mix: {
+      signal: signalMix,
+      state: stateMix,
+    },
+    topReasons,
+  };
+}
+
+function maybeRollEdgeTuning2d(now: number = Date.now(), options?: { force?: boolean }): EdgeTuning2dLogEntry | null {
+  const force = Boolean(options?.force);
+  if (!force && lastEdgeTuningRollAt > 0 && now - lastEdgeTuningRollAt < EDGE_TUNING_WINDOW_MS) {
+    return null;
+  }
+
+  const next = buildEdgeTuning2dEntry(now);
+  if (!next) {
+    if (lastEdgeTuningRollAt === 0) {
+      // Start cadence even if no qualifying entries yet.
+      lastEdgeTuningRollAt = now;
+    }
+    return null;
+  }
+
+  if (!force && edgeTuning2dLog.length > 0) {
+    const last = edgeTuning2dLog[edgeTuning2dLog.length - 1];
+    if (Math.abs(last.windowEnd - next.windowEnd) < 60_000) {
+      return null;
+    }
+  }
+
+  edgeTuning2dLog.push(next);
+  if (edgeTuning2dLog.length > EDGE_TUNING_MAX_LOG_ROWS) {
+    edgeTuning2dLog.splice(0, edgeTuning2dLog.length - EDGE_TUNING_MAX_LOG_ROWS);
+  }
+  lastEdgeTuningRollAt = next.rolledAt;
+  persistEdgeTuning2dLog();
+  return next;
+}
+
 hydrateFromDisk();
+hydrateEdgeSamplesFromDisk();
+hydrateEdgeTuning2dLog();
 
 const breakoutRetentionSweep = setInterval(() => {
   pruneOld(Date.now());
 }, RETENTION_SWEEP_INTERVAL_MS);
 breakoutRetentionSweep.unref?.();
+
+const edgeTuning2dSweep = setInterval(() => {
+  maybeRollEdgeTuning2d(Date.now());
+}, EDGE_TUNING_CHECK_INTERVAL_MS);
+edgeTuning2dSweep.unref?.();
+
+// Bootstrap at startup so cadence starts immediately in fresh environments.
+maybeRollEdgeTuning2d(Date.now(), { force: true });
 
 function parseNum(value: unknown, fallback: number = 0): number {
   const n = Number(value);
@@ -488,6 +982,7 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
     },
     preBreakoutSetup: leadSetup,
     timeframeStack: stackSnapshot,
+    edgeEngine: parseEdgeSnapshot(input.edgeEngine),
     priceAtCapture: entryPrice,
     stopLoss: levels.stopLoss,
     targets: levels.targets,
@@ -498,6 +993,61 @@ export function recordBreakoutAlert(input: BreakoutAlertInput): void {
 
   breakoutHistory.push(snapshot);
   schedulePersist();
+}
+
+export function recordEdgeTuningSample(input: EdgeTuningSampleInput): void {
+  const now = Number.isFinite(input.timestamp) ? Number(input.timestamp) : Date.now();
+  pruneOld(now);
+
+  if (!input.symbol) return;
+
+  const parsedEdge = parseEdgeSnapshot(input.edgeEngine);
+  if (!parsedEdge) return;
+
+  const symbol = String(input.symbol).toUpperCase();
+  const prev = lastEdgeSampleBySymbol.get(symbol);
+  const nextScore = Number.isFinite(parsedEdge.edgeScore as number) ? Number(parsedEdge.edgeScore) : 0;
+
+  if (prev && (now - prev.timestamp) < EDGE_SAMPLE_MIN_INTERVAL_MS) {
+    const stateChanged = prev.state !== parsedEdge.state;
+    const signalChanged = prev.signal !== parsedEdge.signal;
+    const scoreMoved = Math.abs((prev.edgeScore ?? 0) - nextScore) >= 3;
+    if (!stateChanged && !signalChanged && !scoreMoved) {
+      return;
+    }
+  }
+
+  const timeframe = String(input.timeframe || "15m");
+  const signalRaw = String(input.breakoutSignal ?? "").toUpperCase();
+  const breakoutSignal =
+    signalRaw === "BREAKOUT" ||
+    signalRaw === "BREAKDOWN" ||
+    signalRaw === "SQUEEZE" ||
+    signalRaw === "CONSOLIDATING" ||
+    signalRaw === "EXPANSION" ||
+    signalRaw === "BUILDING" ||
+    signalRaw === "MOMENTUM"
+      ? (signalRaw as Exclude<BreakoutSignal, null>)
+      : undefined;
+
+  const sample: EdgeTuningSample = {
+    timestamp: now,
+    symbol,
+    timeframe,
+    breakoutSignal,
+    breakoutScore: Number.isFinite(input.breakoutScore as number) ? parseNum(input.breakoutScore) : undefined,
+    edgeEngine: parsedEdge,
+  };
+
+  edgeSamples.push(sample);
+  lastEdgeSampleBySymbol.set(symbol, {
+    timestamp: now,
+    state: parsedEdge.state,
+    signal: parsedEdge.signal,
+    edgeScore: parsedEdge.edgeScore,
+  });
+
+  scheduleEdgeSamplePersist();
 }
 
 export function updateBreakoutAlertOutcomes(
@@ -710,6 +1260,21 @@ export function getBreakoutAlertSummary(lookbackHours: number = 48): BreakoutAle
     },
     avgResolutionMins,
   };
+}
+
+export function getEdgeTuning2dSnapshot(): EdgeTuning2dLogEntry | null {
+  pruneOld(Date.now());
+  return buildEdgeTuning2dEntry(Date.now());
+}
+
+export function getEdgeTuning2dLog(limit: number = 30): EdgeTuning2dLogEntry[] {
+  const bounded = Number.isFinite(limit) && limit > 0 ? Math.min(EDGE_TUNING_MAX_LOG_ROWS, Math.floor(limit)) : 30;
+  return edgeTuning2dLog.slice(-bounded).reverse();
+}
+
+export function collectEdgeTuning2dNow(): EdgeTuning2dLogEntry | null {
+  pruneOld(Date.now());
+  return maybeRollEdgeTuning2d(Date.now(), { force: true });
 }
 
 export function clearBreakoutAlertLog(symbol?: string): void {

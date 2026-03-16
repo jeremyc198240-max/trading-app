@@ -159,6 +159,8 @@ const CACHE_TTL_BY_TF: Record<string, number> = {
 const SPOT_CACHE_TTL_MS = 2 * 1000;
 const FINNHUB_MAX_STALENESS_MS = 60 * 1000;
 const YAHOO_MAX_STALENESS_MS = 90 * 1000;
+const INTRADAY_SPOT_MAX_STALENESS_MS = 8 * 60 * 1000;
+const STOOQ_MAX_STALENESS_MS = 24 * 60 * 60 * 1000;
 const MAX_CACHED_SPOT_FALLBACK_MS = 120 * 1000;
 const MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS = 10 * 60 * 1000;
 const YAHOO_OHLC_COOLDOWN_MS = 60 * 1000;
@@ -956,7 +958,10 @@ export async function fetchLiveOHLC(
 // LIVE SPOT (Yahoo primary, Finnhub fallback)
 // With 5-second caching for rate limit protection
 // ----------------------
-export async function fetchLiveSpot(symbol: string): Promise<{
+export async function fetchLiveSpot(
+  symbol: string,
+  options?: { mode?: 'default' | 'bulk' },
+): Promise<{
   symbol: string;
   spot: number;
   prevClose: number;
@@ -965,6 +970,7 @@ export async function fetchLiveSpot(symbol: string): Promise<{
   source: 'finnhub' | 'yahoo';
 }> {
   const upperSymbol = symbol.toUpperCase();
+  const mode = options?.mode ?? 'default';
   const cached = spotCache.get(upperSymbol);
 
   const toMs = (raw: unknown): number | null => {
@@ -1047,6 +1053,11 @@ export async function fetchLiveSpot(symbol: string): Promise<{
         const timestampMs =
           sanitizeTimestampMs(parseStooqTimestampMs(cols[1] ?? '', cols[2] ?? '')) ?? Date.now();
 
+        // Ignore stale EOD snapshots so they do not pin intraday spot to old sessions.
+        if (Date.now() - timestampMs > STOOQ_MAX_STALENESS_MS) {
+          continue;
+        }
+
         return {
           symbol: upperSymbol,
           spot: close,
@@ -1069,9 +1080,22 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       if (!intraday.data || intraday.data.length === 0) return null;
       const lastCandle = intraday.data[intraday.data.length - 1];
       if (!lastCandle || !Number.isFinite(lastCandle.close)) return null;
+
+      const timestampMs = sanitizeTimestampMs(
+        Number.isFinite(lastCandle.timeMs)
+          ? Number(lastCandle.timeMs)
+          : Number.isFinite(lastCandle.time)
+          ? Number(lastCandle.time) * 1000
+          : null,
+      );
+      if (timestampMs == null) return null;
+      if (Date.now() - timestampMs > INTRADAY_SPOT_MAX_STALENESS_MS) {
+        return null;
+      }
+
       return {
         price: lastCandle.close,
-        timestampMs: (lastCandle.time ?? Math.floor(Date.now() / 1000)) * 1000,
+        timestampMs,
       };
     } catch {
       return null;
@@ -1086,23 +1110,75 @@ export async function fetchLiveSpot(symbol: string): Promise<{
 
     const finnhubTsMs = finnhubQuote.t ? finnhubQuote.t * 1000 : 0;
     const finnhubIsFresh = finnhubTsMs > 0 && (Date.now() - finnhubTsMs) <= FINNHUB_MAX_STALENESS_MS;
-    if (!finnhubIsFresh) {
-      return null;
-    }
+    // Finnhub free-tier timestamps can lag even when quote value is current; treat stale-ts
+    // quotes as usable by stamping with now so the UI keeps polling a live provider value.
+    const effectiveTsMs = finnhubIsFresh ? finnhubTsMs : Date.now();
 
     return {
       symbol: upperSymbol,
       spot: finnhubQuote.c,
       prevClose: Number.isFinite(finnhubQuote.pc) && finnhubQuote.pc > 0 ? finnhubQuote.pc : finnhubQuote.c,
       marketState: 'REGULAR',
-      timestamp: new Date(finnhubTsMs).toISOString(),
+      timestamp: new Date(effectiveTsMs).toISOString(),
       source: 'finnhub',
     };
   };
+
+  const cachedQuoteAgeMs = (): number => {
+    if (!cached) return Number.POSITIVE_INFINITY;
+    const ts = sanitizeTimestampMs(toMs(cached.data.timestamp));
+    if (ts == null) return Number.POSITIVE_INFINITY;
+    return Date.now() - ts;
+  };
+
+  const hasFreshCachedQuote = (maxAgeMs: number): boolean => {
+    const age = cachedQuoteAgeMs();
+    return Number.isFinite(age) && age >= 0 && age <= maxAgeMs;
+  };
   
   // Check spot cache first (5-second TTL for real-time feel without rate limiting)
-  if (cached && Date.now() - cached.timestamp < SPOT_CACHE_TTL_MS) {
+  if (
+    cached &&
+    Date.now() - cached.timestamp < SPOT_CACHE_TTL_MS &&
+    hasFreshCachedQuote(INTRADAY_SPOT_MAX_STALENESS_MS)
+  ) {
     return cached.data;
+  }
+
+  // Background/bulk routes should avoid Yahoo quote calls so they don't trigger cooldown
+  // that can degrade accuracy for primary spot/analyze endpoints.
+  if (mode === 'bulk') {
+    const finnhubFallback = await resolveFinnhubFallback();
+    if (finnhubFallback) {
+      spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
+      return finnhubFallback;
+    }
+
+    if (cached && hasFreshCachedQuote(MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS)) {
+      return cached.data;
+    }
+
+    const stooqFallback = await resolveStooqFallback();
+    if (stooqFallback) {
+      spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
+      return stooqFallback;
+    }
+
+    const intradayFallback = await resolveIntradayFallback();
+    if (intradayFallback) {
+      const intradayResult: SpotCache['data'] = {
+        symbol: upperSymbol,
+        spot: intradayFallback.price,
+        prevClose: cached?.data.prevClose ?? intradayFallback.price,
+        marketState: cached?.data.marketState ?? 'REGULAR',
+        timestamp: new Date(intradayFallback.timestampMs).toISOString(),
+        source: 'yahoo',
+      };
+      spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
+      return intradayResult;
+    }
+
+    throw new Error(`Bulk spot unavailable for ${upperSymbol}`);
   }
 
   // Global cooldown after Yahoo 429s to avoid quote hammering loops.
@@ -1128,9 +1204,9 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       return finnhubFallback;
     }
 
-    if (cached && Date.now() - cached.timestamp <= MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS) {
+    if (cached && hasFreshCachedQuote(MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS)) {
       if (process.env.DEBUG_SIGNALS === '1' && (Date.now() - yahooSpotCooldownLogAt > 5_000)) {
-        console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), using cached quote for ${upperSymbol}.`);
+        console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), using cached quote for ${upperSymbol} (${Math.round(cachedQuoteAgeMs() / 1000)}s old).`);
         yahooSpotCooldownLogAt = Date.now();
       }
       return cached.data;
@@ -1138,11 +1214,10 @@ export async function fetchLiveSpot(symbol: string): Promise<{
 
     if (cached) {
       if (process.env.DEBUG_SIGNALS === '1' && (Date.now() - yahooSpotCooldownLogAt > 5_000)) {
-        const ageSec = Math.max(1, Math.floor((Date.now() - cached.timestamp) / 1000));
-        console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), using stale cached quote for ${upperSymbol} (${ageSec}s old).`);
+        const ageSec = Math.max(1, Math.floor(cachedQuoteAgeMs() / 1000));
+        console.warn(`[Spot] Yahoo cooldown active (${remainingSec}s), cached quote for ${upperSymbol} is stale (${ageSec}s quote age).`);
         yahooSpotCooldownLogAt = Date.now();
       }
-      return cached.data;
     }
 
     const stooqFallback = await resolveStooqFallback();
@@ -1187,7 +1262,7 @@ export async function fetchLiveSpot(symbol: string): Promise<{
       }
 
       // GAP PROTECTION: Return last known spot if available
-      if (cached) {
+      if (cached && hasFreshCachedQuote(MAX_CACHED_SPOT_FALLBACK_MS)) {
         console.warn(`[Spot] No quote for ${symbol}, using last known: $${cached.data.spot.toFixed(2)}`);
         return cached.data;
       }
@@ -1279,6 +1354,17 @@ export async function fetchLiveSpot(symbol: string): Promise<{
             if (process.env.DEBUG_SIGNALS === '1') {
               console.warn(`[Spot] Yahoo extended-hours quote stale for ${symbol}; using fresh Finnhub fallback ${spot.toFixed(2)}.`);
             }
+          } else {
+            const stooqFallback = await resolveStooqFallback();
+            if (stooqFallback) {
+              spot = stooqFallback.spot;
+              prevClose = stooqFallback.prevClose;
+              timestampMs = sanitizeTimestampMs(toMs(stooqFallback.timestamp)) ?? Date.now();
+              source = stooqFallback.source;
+              if (process.env.DEBUG_SIGNALS === '1') {
+                console.warn(`[Spot] Yahoo extended-hours quote stale for ${symbol}; using Stooq fallback ${spot.toFixed(2)}.`);
+              }
+            }
           }
         }
       }
@@ -1309,8 +1395,30 @@ export async function fetchLiveSpot(symbol: string): Promise<{
           if (process.env.DEBUG_SIGNALS === '1') {
             console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using intraday fallback ${spot.toFixed(2)}.`);
           }
-        } else if (process.env.DEBUG_SIGNALS === '1') {
-          console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; keeping Yahoo quote to avoid cross-provider drift.`);
+        } else {
+          const finnhubFallback = await resolveFinnhubFallback();
+          if (finnhubFallback) {
+            spot = finnhubFallback.spot;
+            prevClose = finnhubFallback.prevClose;
+            timestampMs = sanitizeTimestampMs(toMs(finnhubFallback.timestamp)) ?? Date.now();
+            source = 'finnhub';
+            if (process.env.DEBUG_SIGNALS === '1') {
+              console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using fresh Finnhub fallback ${spot.toFixed(2)}.`);
+            }
+          } else {
+            const stooqFallback = await resolveStooqFallback();
+            if (stooqFallback) {
+              spot = stooqFallback.spot;
+              prevClose = stooqFallback.prevClose;
+              timestampMs = sanitizeTimestampMs(toMs(stooqFallback.timestamp)) ?? Date.now();
+              source = stooqFallback.source;
+              if (process.env.DEBUG_SIGNALS === '1') {
+                console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using Stooq fallback ${spot.toFixed(2)}.`);
+              }
+            } else if (process.env.DEBUG_SIGNALS === '1') {
+              console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; keeping Yahoo quote to avoid provider drift.`);
+            }
+          }
         }
       }
 
@@ -1387,7 +1495,7 @@ export async function fetchLiveSpot(symbol: string): Promise<{
     const maxFallbackAgeMs = rateLimited
       ? MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS
       : MAX_CACHED_SPOT_FALLBACK_MS;
-    if (cached && (Date.now() - cached.timestamp <= maxFallbackAgeMs || rateLimited)) {
+    if (cached && hasFreshCachedQuote(maxFallbackAgeMs)) {
       console.warn(`[Spot] Error for ${symbol}, using last known: $${cached.data.spot.toFixed(2)}`);
       return cached.data;
     }
@@ -1423,12 +1531,16 @@ export function getCachedSpot(symbol: string): {
     source: 'finnhub' | 'yahoo';
   };
   ageMs: number;
+  quoteAgeMs: number;
 } | null {
   const entry = spotCache.get(symbol.toUpperCase());
   if (!entry) return null;
+  const quoteMs = Date.parse(entry.data.timestamp);
+  const quoteAgeMs = Number.isFinite(quoteMs) ? Date.now() - quoteMs : Number.POSITIVE_INFINITY;
   return {
     data: entry.data,
     ageMs: Date.now() - entry.timestamp,
+    quoteAgeMs,
   };
 }
 
