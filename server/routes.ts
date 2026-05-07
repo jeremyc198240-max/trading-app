@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { type Server } from "http";
+import path from "path";
 import { db } from "./db";
 import { termsAcceptanceLogs } from "@shared/schema";
 import { analyzeSymbol, generateSampleOHLC } from "./finance";
@@ -61,6 +62,13 @@ import {
   getBreakoutThresholdConfig,
   refreshBreakoutThresholdConfig,
 } from "./breakoutThresholds";
+import {
+  trainCompressionModelFromLogs,
+  scoreCompressionOpportunity,
+} from "./compressionAiEngine";
+import { inferLivePrediction } from "../ml/inference/infer";
+import { calculateCalibrationDial } from "./mlCalibrationDial";
+import { predictVolatility } from "./volatilityPredictor";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -196,24 +204,215 @@ export async function registerRoutes(
     const candleSpot = getLastKnownSpotFromCandles(symbol);
     if (candleSpot && candleSpot.ageMs <= 15 * 60 * 1000) return candleSpot.data.spot;
 
-    try {
-      const result = await fetchLiveOHLC(symbol, timeframe, "FULL");
-      if (result.data.length > 0) {
-        const last = result.data[result.data.length - 1];
-        const lastMs = Number.isFinite((last as any)?.timeMs)
-          ? Number((last as any).timeMs)
-          : Number.isFinite((last as any)?.time)
-          ? Number((last as any).time) * 1000
-          : Number.NaN;
-        if (Number.isFinite(lastMs) && Date.now() - lastMs <= 15 * 60 * 1000) {
-          return last.close;
-        }
-      }
-    } catch {
-      // Intentionally swallow and let caller continue to synthetic fallback.
+    return undefined;
+  };
+
+  type ScannerRouteResult = ReturnType<typeof getScannerResults>[number];
+
+  const SCANNER_ROUTE_PRICE_MAX_CACHE_AGE_MS = 15_000;
+  const SCANNER_ROUTE_FRESH_SPOT_MAX_AGE_MS = 2 * 60 * 1000;
+
+  const buildScannerRouteSpotMeta = (
+    quote: {
+      timestamp: string;
+      source: "finnhub" | "yahoo";
+      marketState: string;
+    } | null | undefined,
+    explicitAgeMs?: number,
+  ): ScannerRouteResult["spotMeta"] | undefined => {
+    if (!quote) return undefined;
+
+    const parsedMs = Date.parse(String(quote.timestamp ?? ""));
+    const quoteAgeMs = explicitAgeMs != null
+      ? Math.max(0, explicitAgeMs)
+      : Number.isFinite(parsedMs)
+        ? Math.max(0, Date.now() - parsedMs)
+        : undefined;
+
+    return {
+      timestamp: quote.timestamp,
+      quoteAgeMs,
+      source: quote.source || undefined,
+      marketState: quote.marketState,
+      isFresh: quoteAgeMs != null && quoteAgeMs <= SCANNER_ROUTE_FRESH_SPOT_MAX_AGE_MS,
+    };
+  };
+
+  const resolveScannerSpotQuote = async (
+    symbol: string,
+  ): Promise<{
+    symbol: string;
+    spot: number;
+    prevClose: number;
+    marketState: string;
+    timestamp: string;
+    source: "finnhub" | "yahoo";
+  } | null> => {
+    const upperSymbol = symbol.toUpperCase();
+    const cachedSpot = getCachedSpot(upperSymbol);
+
+    if (
+      cachedSpot &&
+      cachedSpot.quoteAgeMs >= 0 &&
+      cachedSpot.quoteAgeMs <= SCANNER_ROUTE_PRICE_MAX_CACHE_AGE_MS
+    ) {
+      return cachedSpot.data;
     }
 
-    return undefined;
+    const liveSpot = await fetchLiveSpot(upperSymbol, { mode: "bulk" }).catch(() => null);
+    const liveSpotMeta = buildScannerRouteSpotMeta(liveSpot);
+    if (
+      liveSpot &&
+      Number.isFinite(liveSpot.spot) &&
+      liveSpot.spot > 0 &&
+      liveSpotMeta?.isFresh
+    ) {
+      return liveSpot;
+    }
+
+    if (
+      cachedSpot &&
+      cachedSpot.quoteAgeMs >= 0 &&
+      cachedSpot.quoteAgeMs <= SCANNER_ROUTE_FRESH_SPOT_MAX_AGE_MS
+    ) {
+      return cachedSpot.data;
+    }
+
+    return null;
+  };
+
+  const ENGINE_SPOT_TIMEOUT_MS = 1500;
+  const ENGINE_OHLC_TIMEOUT_MS = 1800;
+
+  const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race<T>([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  const fetchEngineSpot = async (symbol: string): Promise<number | undefined> => {
+    try {
+      const spotData = await withTimeout(fetchLiveSpot(symbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
+      return Number.isFinite(spotData.spot) ? spotData.spot : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const fetchEngineSpotQuote = async (
+    symbol: string,
+  ): Promise<{
+    data: {
+      symbol: string;
+      spot: number;
+      prevClose: number;
+      marketState: string;
+      timestamp: string;
+      source: "finnhub" | "yahoo";
+      degraded?: boolean;
+      degradedReason?: string;
+    };
+    isDegraded: boolean;
+  } | null> => {
+    try {
+      const spotData = await withTimeout(fetchLiveSpot(symbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
+      if (Number.isFinite(spotData.spot) && spotData.spot > 0) {
+        return { data: spotData, isDegraded: false };
+      }
+    } catch {
+      // Fall through to cached fallback.
+    }
+
+    const cachedSpot = getCachedSpot(symbol);
+    if (cachedSpot && cachedSpot.quoteAgeMs <= 2 * 60 * 1000) {
+      return {
+        data: {
+          ...cachedSpot.data,
+          degraded: true,
+          degradedReason: 'cached-spot',
+        },
+        isDegraded: true,
+      };
+    }
+
+    const candleFallback = getLastKnownSpotFromCandles(symbol);
+    if (candleFallback && candleFallback.ageMs <= 15 * 60 * 1000) {
+      return {
+        data: {
+          ...candleFallback.data,
+          degraded: true,
+          degradedReason: 'last-known-candle',
+        },
+        isDegraded: true,
+      };
+    }
+
+    return null;
+  };
+
+  const fetchEngineOhlc = async (
+    symbol: string,
+    timeframe: string,
+    fallbackCount: number,
+    fallbackPrice?: number,
+  ): Promise<{ data: any[]; isSimulated: boolean }> => {
+    try {
+      const result = await withTimeout(fetchLiveOHLC(symbol, timeframe, 'FULL'), ENGINE_OHLC_TIMEOUT_MS, `ohlc ${symbol} ${timeframe}`);
+      if (result.data.length > 0) {
+        return { data: result.data, isSimulated: false };
+      }
+    } catch {
+      // Fall through to synthetic fallback.
+    }
+
+    return {
+      data: generateSampleOHLC(symbol, fallbackCount, fallbackPrice),
+      isSimulated: true,
+    };
+  };
+
+  const withLiveScannerPrice = async (
+    result: ScannerRouteResult,
+  ): Promise<ScannerRouteResult> => {
+    const liveSpot = await resolveScannerSpotQuote(result.symbol);
+    if (!liveSpot || !Number.isFinite(liveSpot.spot) || liveSpot.spot <= 0) {
+      return result;
+    }
+
+    const liveSpotMeta = buildScannerRouteSpotMeta(liveSpot);
+
+    const baselineFromResult = result.lastPrice - result.priceChange;
+    const prevClose =
+      Number.isFinite(liveSpot.prevClose) && liveSpot.prevClose > 0
+        ? liveSpot.prevClose
+        : Number.isFinite(baselineFromResult) && baselineFromResult > 0
+          ? baselineFromResult
+          : result.lastPrice;
+    const lastPrice = liveSpot.spot;
+    const priceChange = lastPrice - prevClose;
+    const priceChangePercent = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
+
+    return {
+      ...result,
+      lastPrice,
+      priceChange,
+      priceChangePercent,
+      spotMeta: liveSpotMeta ?? result.spotMeta,
+    };
+  };
+
+  const withLiveScannerPrices = async (
+    results: ScannerRouteResult[],
+  ): Promise<ScannerRouteResult[]> => {
+    return Promise.all(results.map((result) => withLiveScannerPrice(result)));
   };
 
   // ---------- Core analysis ----------
@@ -230,19 +429,25 @@ export async function registerRoutes(
       const analyzeCacheKey = `${upperSymbol}-${tf}`;
       
       // Fetch live spot price first - this is always needed
-      let spotPrice: number | undefined;
-      try {
-        const spotData = await fetchLiveSpot(upperSymbol);
-        spotPrice = spotData.spot;
-      } catch (e) {
-        // Fall through to cache/candle fallback.
-      }
+      let spotPrice = await fetchEngineSpot(upperSymbol);
 
       if (spotPrice == null) {
         spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
       }
-      
-      const liveResult = await fetchLiveOHLC(upperSymbol, tf, "FULL");
+
+      let liveResult: Awaited<ReturnType<typeof fetchLiveOHLC>>;
+      try {
+        liveResult = await withTimeout(fetchLiveOHLC(upperSymbol, tf, "FULL"), ENGINE_OHLC_TIMEOUT_MS, `analyze ${upperSymbol} ${tf}`);
+      } catch (error) {
+        liveResult = {
+          data: [],
+          isLive: false,
+          error: error instanceof Error ? error.message : 'analysis ohlc timeout',
+          rth: [],
+          overnight: [],
+          prevDayRth: [],
+        };
+      }
       
       let ohlc: any[];
       let isLive = false;
@@ -449,6 +654,152 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: "Failed to analyze symbol" });
+    }
+  });
+
+  app.get("/api/compression-ai/:symbol/:timeframe?", async (req, res) => {
+    try {
+      const { symbol, timeframe } = req.params;
+      if (!symbol || symbol.length < 1 || symbol.length > 10) {
+        return res.status(400).json({ error: "Invalid symbol" });
+      }
+
+      const upperSymbol = symbol.toUpperCase();
+      const tf = timeframe || "15m";
+
+      let spotPrice = await fetchEngineSpot(upperSymbol);
+      if (spotPrice == null) {
+        spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
+      }
+
+      const liveResult = await fetchEngineOhlc(upperSymbol, tf, getCandleCount(tf), spotPrice);
+      const ohlc = liveResult.data;
+      const sessionSplit = { rth: ohlc, overnight: [] as any[], prevDayRth: [] as any[] };
+      const analysis = analyzeSymbol(
+        upperSymbol,
+        ohlc,
+        { maxAbsGammaStrike: null },
+        sessionSplit,
+        spotPrice
+      );
+
+      const logsDir = path.resolve(process.cwd(), "logs");
+      const model = trainCompressionModelFromLogs(logsDir);
+
+      const scoring = scoreCompressionOpportunity(model, {
+        symbol: upperSymbol,
+        timeframe: tf,
+        breakoutScore: analysis.breakoutScore,
+        edgeScore: analysis.edgeEngine?.edgeScore,
+        confidence: analysis.edgeEngine?.confidence,
+        triggerProbability: analysis.edgeEngine?.triggerProbability,
+        momentum: analysis.momentumStrength,
+        bbWidth: analysis.marketHealth?.bollingerBands?.width,
+        rangePct: analysis.trendExhaustion?.rangeCompression,
+        atrPercent: analysis.marketHealth?.atr?.percent,
+        phase: analysis.marketHealth?.bollingerBands?.squeeze
+          ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
+          : "PREPARE",
+        mode: analysis.signalQuality === "HIGH" ? "EXECUTE" : "PREPARE",
+        directionalBias: analysis.directionalBias,
+        otmDelta: analysis.tactical?.otm?.delta,
+      });
+
+      const mlInference = (() => {
+        try {
+          return inferLivePrediction({
+            symbol: upperSymbol,
+            timeframe: tf,
+            breakoutScore: analysis.breakoutScore,
+            edgeScore: analysis.edgeEngine?.edgeScore,
+            confidence: analysis.edgeEngine?.confidence,
+            triggerProbability: analysis.edgeEngine?.triggerProbability,
+            momentum: analysis.momentumStrength,
+            bbWidth: analysis.marketHealth?.bollingerBands?.width,
+            rangePct: analysis.trendExhaustion?.rangeCompression,
+            atrPercent: analysis.marketHealth?.atr?.percent,
+            phase: analysis.marketHealth?.bollingerBands?.squeeze
+              ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
+              : "PREPARE",
+            mode: analysis.signalQuality === "HIGH" ? "EXECUTE" : "PREPARE",
+            directionalBias: analysis.directionalBias,
+            otmDelta: analysis.tactical?.otm?.delta,
+            macdHistogram: analysis.momentumStrength,
+            rsi: analysis.marketHealth?.rsi?.value,
+            volumeRatio: analysis.marketHealth?.volume?.ratio,
+            vwapDistance: analysis.marketHealth?.vwapDistance,
+            priceVelocity: analysis.momentumStrength,
+            priceAcceleration: analysis.momentumStrength ? analysis.momentumStrength * 0.5 : undefined,
+            candleOpen: ohlc.length ? ohlc[ohlc.length - 1].open : undefined,
+            candleHigh: ohlc.length ? ohlc[ohlc.length - 1].high : undefined,
+            candleLow: ohlc.length ? ohlc[ohlc.length - 1].low : undefined,
+            candleClose: ohlc.length ? ohlc[ohlc.length - 1].close : undefined,
+            failedReclaim: Boolean(analysis.failedVwapReclaim),
+            liquiditySweep: Boolean(analysis.liquiditySweep),
+            microTrend: analysis.momentumStrength,
+            ageMs: 0,
+          });
+        } catch (err) {
+          console.warn("ML inference fallback:", err);
+          return {
+            prediction: scoring.modelProb,
+            confidence: scoring.confidence ?? 0,
+            regime_probs: { low: 33, high: 33, chop: 34 },
+            pattern_score: 0,
+            freshness: 1,
+            calibrated_confidence: scoring.modelProb,
+            stable_confidence: scoring.modelProb,
+            rawFeatures: [],
+          };
+        }
+      })();
+
+      const liveDelta = Number(analysis.tactical?.otm?.delta);
+      const inTargetBand = Number.isFinite(liveDelta)
+        ? liveDelta >= scoring.targetDeltaBand.min && liveDelta <= scoring.targetDeltaBand.max
+        : null;
+      const trainingConfig = (scoring.modelStats as { trainingConfig?: unknown }).trainingConfig ?? null;
+
+      return res.json({
+        symbol: upperSymbol,
+        timeframe: tf,
+        aiScore: scoring.aiScore,
+        modelProbability: Number((scoring.modelProb * 100).toFixed(2)),
+        confidenceBand: scoring.confidenceBand,
+        decision: scoring.decision,
+        direction: scoring.direction,
+        reasons: scoring.reasons,
+        deltaPlan: {
+          targetMin: scoring.targetDeltaBand.min,
+          targetMax: scoring.targetDeltaBand.max,
+          liveDelta: Number.isFinite(liveDelta) ? liveDelta : null,
+          inBand: inTargetBand,
+        },
+        priors: {
+          symbolWinRate: scoring.priors.symbolWinRate,
+          timeframeWinRate: scoring.priors.timeframeWinRate,
+        },
+        mlPrediction: Number((mlInference.prediction * 100).toFixed(2)),
+        mlCalibratedConfidence: Number((mlInference.calibrated_confidence * 100).toFixed(2)),
+        mlStableConfidence: Number((mlInference.stable_confidence * 100).toFixed(2)),
+        mlFreshness: Number((mlInference.freshness * 100).toFixed(2)),
+        mlPatternScore: Number((mlInference.pattern_score * 100).toFixed(2)),
+        mlRegimeProbabilities: {
+          low: Number((mlInference.regime_probs.low * 100).toFixed(1)),
+          high: Number((mlInference.regime_probs.high * 100).toFixed(1)),
+          chop: Number((mlInference.regime_probs.chop * 100).toFixed(1)),
+        },
+        training: {
+          sampleCount: scoring.modelStats.sampleCount,
+          positiveRate: scoring.modelStats.positiveRate,
+          trainedAt: model.trainedAt,
+          validation: scoring.modelStats.validation ?? null,
+          config: trainingConfig,
+        },
+      });
+    } catch (error) {
+      console.error("Compression AI error:", error);
+      return res.status(500).json({ error: "Failed to compute compression AI signal" });
     }
   });
 
@@ -970,69 +1321,12 @@ export async function registerRoutes(
       Expires: "0",
     });
     
-    try {
-      const spotData = await fetchLiveSpot(upperSymbol);
-      res.json(spotData);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (isRateLimitedMessage(message)) {
-        console.warn(`[Spot] Rate-limited for ${upperSymbol}.`);
-
-        const cachedSpot = getCachedSpot(upperSymbol);
-        if (cachedSpot && cachedSpot.quoteAgeMs <= 2 * 60 * 1000) {
-          return res.json({
-            ...cachedSpot.data,
-            degraded: true,
-            degradedReason: "cached-spot",
-          });
-        }
-
-        // Degraded fallback: use latest candle close from the freshest timeframe available.
-        const fallbackTimeframes: Array<"5m" | "15m" | "30m"> = ["5m", "15m", "30m"];
-        for (const tf of fallbackTimeframes) {
-          try {
-            const intraday = await fetchLiveOHLC(upperSymbol, tf, "FULL");
-            if (intraday.data.length > 0) {
-              const last = intraday.data[intraday.data.length - 1];
-              const lastMs = Number.isFinite((last as any)?.timeMs)
-                ? Number((last as any).timeMs)
-                : Number.isFinite((last as any)?.time)
-                ? Number((last as any).time) * 1000
-                : Number.NaN;
-              if (!Number.isFinite(lastMs) || Date.now() - lastMs > 8 * 60 * 1000) {
-                continue;
-              }
-              const prev = intraday.data.length > 1 ? intraday.data[intraday.data.length - 2] : last;
-              return res.json({
-                symbol: upperSymbol,
-                spot: last.close,
-                prevClose: prev.close,
-                marketState: "REGULAR",
-                timestamp: new Date(lastMs).toISOString(),
-                source: "yahoo",
-                degraded: true,
-                degradedReason: `intraday-${tf}`,
-              });
-            }
-          } catch {
-            // Continue to the next degraded fallback option.
-          }
-        }
-
-        const candleFallback = getLastKnownSpotFromCandles(upperSymbol);
-        if (candleFallback && candleFallback.ageMs <= 15 * 60 * 1000) {
-          return res.json({
-            ...candleFallback.data,
-            degraded: true,
-            degradedReason: "last-known-candle",
-          });
-        }
-
-        return res.status(503).json({ error: "Spot provider rate-limited. Please retry shortly." });
-      }
-      console.error(`[Spot] Error fetching ${upperSymbol}:`, error);
-      res.status(500).json({ error: "Failed to fetch spot price" });
+    const spotQuote = await fetchEngineSpotQuote(upperSymbol);
+    if (spotQuote) {
+      return res.json(spotQuote.data);
     }
+
+    res.status(503).json({ error: "Spot provider unavailable. Please retry shortly." });
   });
 
   // ---------- Scanner ----------
@@ -1280,24 +1574,14 @@ export async function registerRoutes(
       
       const upperSymbol = symbol.toUpperCase();
 
-      // Get live spot price first
-      let lastPrice: number | undefined;
-      try {
-        const spotData = await fetchLiveSpot(upperSymbol);
-        lastPrice = spotData.spot;
-      } catch (e) {
-        // Fall through to cache/candle fallback.
-      }
+      let lastPrice = await fetchEngineSpot(upperSymbol);
 
       if (lastPrice == null) {
         lastPrice = await resolveFallbackSpotPrice(upperSymbol, '15m');
       }
 
-      // Fetch OHLC for analysis
-      const tfResult = await fetchLiveOHLC(upperSymbol, '15m', 'FULL');
-      const ohlc = tfResult.data.length > 0
-        ? tfResult.data
-        : generateSampleOHLC(upperSymbol, 100, lastPrice);
+      const tfResult = await fetchEngineOhlc(upperSymbol, '15m', 100, lastPrice);
+      const ohlc = tfResult.data;
 
       // Get panel data with synthetic chain
       const panelData = getMonsterOTMPanelData(ohlc, upperSymbol, lastPrice);
@@ -1375,14 +1659,9 @@ export async function registerRoutes(
     try {
       const upperSymbol = req.params.symbol.toUpperCase();
 
-      // Get live spot price first
-      let lastPrice: number;
-      try {
-        const spotData = await fetchLiveSpot(upperSymbol);
-        lastPrice = spotData.spot;
-      } catch (e) {
-        // Fallback to candle close if spot fetch fails
-        const liveResult = await fetchLiveOHLC(upperSymbol, '15m', 'FULL');
+      let lastPrice = await fetchEngineSpot(upperSymbol);
+      if (lastPrice == null) {
+        const liveResult = await fetchEngineOhlc(upperSymbol, '15m', 2);
         if (liveResult.data.length > 0) {
           lastPrice = liveResult.data[liveResult.data.length - 1].close;
         } else {
@@ -1436,11 +1715,20 @@ export async function registerRoutes(
     try {
       const upperSymbol = req.params.symbol.toUpperCase();
       
-      // Get live spot price first
       let lastPrice: number | undefined;
+      let spotQuoteMeta:
+        | {
+            timestamp?: string;
+            quoteAgeMs?: number;
+            source: "finnhub" | "yahoo";
+            marketState: string;
+            isFresh: boolean;
+          }
+        | undefined;
       try {
-        const spotData = await fetchLiveSpot(upperSymbol);
+        const spotData = await withTimeout(fetchLiveSpot(upperSymbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `fusion spot ${upperSymbol}`);
         lastPrice = spotData.spot;
+        spotQuoteMeta = buildScannerRouteSpotMeta(spotData);
       } catch (e) {
         // Fall through to cache/candle fallback.
       }
@@ -1460,15 +1748,8 @@ export async function registerRoutes(
       ];
 
       const ohlcPromises = tfConfigs.map(async ({ tf, count }) => {
-        try {
-          const result = await fetchLiveOHLC(upperSymbol, tf, "FULL");
-          if (result.data.length > 0) {
-            return { tf, ohlc: result.data, isSimulated: false };
-          }
-          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice), isSimulated: true };
-        } catch (e) {
-          return { tf, ohlc: generateSampleOHLC(upperSymbol, count, lastPrice), isSimulated: true };
-        }
+        const result = await fetchEngineOhlc(upperSymbol, tf, count, lastPrice);
+        return { tf, ohlc: result.data, isSimulated: result.isSimulated };
       });
 
       const ohlcResults = await Promise.all(ohlcPromises);
@@ -1562,10 +1843,11 @@ export async function registerRoutes(
           upperSymbol,
           finalLastPrice,
           snapshot.unifiedSignal,
-          snapshot.monsterGateDecision
+          snapshot.monsterGateDecision,
+          { quoteMeta: spotQuoteMeta }
         );
         // Update outcomes for all previous signals
-        updateOutcomes(upperSymbol, finalLastPrice);
+        updateOutcomes(upperSymbol, finalLastPrice, { quoteMeta: spotQuoteMeta });
       }
 
       // Use the unifiedSignal directly from fusion.ts (single source of truth)
@@ -1729,11 +2011,9 @@ export async function registerRoutes(
       const limit = parseInt(req.query.limit as string) || 50;
       
       // Update outcomes with current price
-      try {
-        const spotData = await fetchLiveSpot(symbol);
-        updateOutcomes(symbol, spotData.spot);
-      } catch (e) {
-        // Continue without update
+      const spotQuote = await fetchEngineSpotQuote(symbol);
+      if (spotQuote && Number.isFinite(spotQuote.data.spot) && spotQuote.data.spot > 0) {
+        updateOutcomes(symbol, spotQuote.data.spot, { quoteMeta: buildScannerRouteSpotMeta(spotQuote.data) });
       }
       
       const history = getSignalHistory(symbol, limit);
@@ -1757,11 +2037,9 @@ export async function registerRoutes(
       const requested = Number(req.query.hours);
       const lookbackHours = Number.isFinite(requested) && requested > 0 ? Math.min(48, requested) : 24;
 
-      try {
-        const spotData = await fetchLiveSpot(symbol);
-        updateOutcomes(symbol, spotData.spot);
-      } catch (e) {
-        // Continue without update.
+      const spotQuote = await fetchEngineSpotQuote(symbol);
+      if (spotQuote && Number.isFinite(spotQuote.data.spot) && spotQuote.data.spot > 0) {
+        updateOutcomes(symbol, spotQuote.data.spot, { quoteMeta: buildScannerRouteSpotMeta(spotQuote.data) });
       }
 
       const metrics = getSignalMetrics(symbol, lookbackHours);
@@ -1784,11 +2062,9 @@ export async function registerRoutes(
       const limit = parseInt(req.query.limit as string) || 20;
       
       // Update outcomes with current price
-      try {
-        const spotData = await fetchLiveSpot(symbol);
-        updateOutcomes(symbol, spotData.spot);
-      } catch (e) {
-        // Continue without update
+      const spotQuote = await fetchEngineSpotQuote(symbol);
+      if (spotQuote && Number.isFinite(spotQuote.data.spot) && spotQuote.data.spot > 0) {
+        updateOutcomes(symbol, spotQuote.data.spot, { quoteMeta: buildScannerRouteSpotMeta(spotQuote.data) });
       }
       
       const goldHotSignals = getGoldHotSignals(symbol, limit);
@@ -1811,11 +2087,9 @@ export async function registerRoutes(
       const symbol = req.params.symbol.toUpperCase();
       
       // Update outcomes with current price
-      try {
-        const spotData = await fetchLiveSpot(symbol);
-        updateOutcomes(symbol, spotData.spot);
-      } catch (e) {
-        // Continue without update
+      const spotQuote = await fetchEngineSpotQuote(symbol);
+      if (spotQuote && Number.isFinite(spotQuote.data.spot) && spotQuote.data.spot > 0) {
+        updateOutcomes(symbol, spotQuote.data.spot, { quoteMeta: buildScannerRouteSpotMeta(spotQuote.data) });
       }
       
       const summary = getDailySummary(symbol);
@@ -1914,6 +2188,68 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Terms acceptance logging error:", error);
       res.status(500).json({ error: "Failed to log acceptance" });
+    }
+  });
+
+  // ---------- ML Calibration Gauge ----------
+  app.get("/api/ml/calibration", async (_req, res) => {
+    try {
+      const calibrationData = await calculateCalibrationDial();
+      
+      res.json({
+        success: true,
+        calibration: calibrationData,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error("ML calibration error:", error);
+      res.status(500).json({ error: "Failed to get ML calibration data" });
+    }
+  });
+
+  // ---------- Volatility Prediction ----------
+  app.get("/api/volatility/:symbol/:timeframe?", async (req, res) => {
+    try {
+      const { symbol, timeframe } = req.params;
+      if (!symbol || symbol.length < 1 || symbol.length > 10) {
+        return res.status(400).json({ error: "Invalid symbol" });
+      }
+
+      const upperSymbol = symbol.toUpperCase();
+      const tf = timeframe || "15m";
+
+      // Get analysis data first
+      let spotPrice = await fetchEngineSpot(upperSymbol);
+      if (spotPrice == null) {
+        spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
+      }
+
+      const liveResult = await fetchEngineOhlc(upperSymbol, tf, getCandleCount(tf), spotPrice);
+      const ohlc = liveResult.data;
+      const sessionSplit = { rth: ohlc, overnight: [] as any[], prevDayRth: [] as any[] };
+      const analysis = analyzeSymbol(
+        upperSymbol,
+        ohlc,
+        { maxAbsGammaStrike: null },
+        sessionSplit,
+        spotPrice
+      );
+
+      // Predict volatility
+      const volatilityPrediction = predictVolatility(analysis);
+
+      res.json({
+        symbol: upperSymbol,
+        timeframe: tf,
+        predictedVolatility: volatilityPrediction.predictedVolatility,
+        predictedVolatilityPercent: (volatilityPrediction.predictedVolatility * 100).toFixed(2) + '%',
+        confidence: volatilityPrediction.confidence,
+        features: volatilityPrediction.features,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error("Volatility prediction error:", error);
+      res.status(500).json({ error: "Failed to predict volatility" });
     }
   });
 

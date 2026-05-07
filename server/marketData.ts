@@ -155,8 +155,15 @@ const CACHE_TTL_BY_TF: Record<string, number> = {
   '1D': 10 * 60 * 1000,
 };
 
-// Spot price cache TTL: 2 seconds for faster quote refresh
-const SPOT_CACHE_TTL_MS = 2 * 1000;
+// Spot price cache TTL: 1 second during market hours, 5 seconds otherwise for faster quote refresh
+const getSpotCacheTTL = (): number => {
+  const nowEt = toEST(new Date());
+  const day = nowEt.getDay();
+  const minutesEt = nowEt.getHours() * 60 + nowEt.getMinutes();
+  const isWeekdayEt = day >= 1 && day <= 5;
+  const isLikelyRegularHoursEt = isWeekdayEt && minutesEt >= (9 * 60 + 30) && minutesEt < (16 * 60);
+  return isLikelyRegularHoursEt ? 1 * 1000 : 5 * 1000;
+};
 const FINNHUB_MAX_STALENESS_MS = 60 * 1000;
 const YAHOO_MAX_STALENESS_MS = 90 * 1000;
 const INTRADAY_SPOT_MAX_STALENESS_MS = 8 * 60 * 1000;
@@ -1110,16 +1117,16 @@ export async function fetchLiveSpot(
 
     const finnhubTsMs = finnhubQuote.t ? finnhubQuote.t * 1000 : 0;
     const finnhubIsFresh = finnhubTsMs > 0 && (Date.now() - finnhubTsMs) <= FINNHUB_MAX_STALENESS_MS;
-    // Finnhub free-tier timestamps can lag even when quote value is current; treat stale-ts
-    // quotes as usable by stamping with now so the UI keeps polling a live provider value.
-    const effectiveTsMs = finnhubIsFresh ? finnhubTsMs : Date.now();
+    if (!finnhubIsFresh) {
+      return null;
+    }
 
     return {
       symbol: upperSymbol,
       spot: finnhubQuote.c,
       prevClose: Number.isFinite(finnhubQuote.pc) && finnhubQuote.pc > 0 ? finnhubQuote.pc : finnhubQuote.c,
       marketState: 'REGULAR',
-      timestamp: new Date(effectiveTsMs).toISOString(),
+      timestamp: new Date(finnhubTsMs).toISOString(),
       source: 'finnhub',
     };
   };
@@ -1136,10 +1143,10 @@ export async function fetchLiveSpot(
     return Number.isFinite(age) && age >= 0 && age <= maxAgeMs;
   };
   
-  // Check spot cache first (5-second TTL for real-time feel without rate limiting)
+  // Check spot cache first (dynamic TTL for real-time feel without rate limiting)
   if (
     cached &&
-    Date.now() - cached.timestamp < SPOT_CACHE_TTL_MS &&
+    Date.now() - cached.timestamp < getSpotCacheTTL() &&
     hasFreshCachedQuote(INTRADAY_SPOT_MAX_STALENESS_MS)
   ) {
     return cached.data;

@@ -928,7 +928,7 @@ function computeWeightedFusion(signals: NormalizedSignal[], volRegime?: string):
   const isLowVol = volRegime === 'low';
 
   const trendBonus = isHighVol ? TREND_ALIGNED_BONUS * 0.6 : isLowVol ? TREND_ALIGNED_BONUS * 1.3 : TREND_ALIGNED_BONUS;
-  const reversalWeight = isHighVol ? REVERSAL_CONFIRMED_BONUS * 1.4 : isLowVol ? REVERSAL_CONFIRMED_BONUS * 0.7 : REVERSAL_CONFIRMED_BONUS;
+  const reversalWeight = isHighVol ? REVERSAL_CONFIRMED_BONUS * 0.85 : isLowVol ? REVERSAL_CONFIRMED_BONUS * 0.7 : REVERSAL_CONFIRMED_BONUS;
   const volMinEdge = isHighVol ? 18 : isLowVol ? 8 : 12;
 
   for (const signal of signals) {

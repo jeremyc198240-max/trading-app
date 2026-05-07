@@ -1909,12 +1909,18 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   // CRITICAL: Use 5m OHLC for bounce detection - 15m is too slow to catch momentum reversals
   const reversalOhlc = ohlcByTF['5m'] ?? ohlcByTF['15m'] ?? primaryOhlc;
   
+  // Determine dominant trend for reversal context (NEW: prevent pullback false signals)
+  const dominantTrend: 'bullish' | 'bearish' | 'neutral' = 
+    mtfConsensus.trendConsensus === 'bullish' ? 'bullish' :
+    mtfConsensus.trendConsensus === 'bearish' ? 'bearish' : 'neutral';
+  
   const reversalSignal = computeReversalSignal({
     ohlc: reversalOhlc,
     currentPrice,
     corvona: corvonaLevels,
     emaTrend,
-    breakoutLifecycle
+    breakoutLifecycle,
+    dominantTrend  // NEW parameter for trend-aware gating
   });
 
   let gatedReversalAlert: GatedReversalAlert | undefined;

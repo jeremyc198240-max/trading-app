@@ -80,13 +80,13 @@ const SYMBOLS = Array.from(new Set([
 ]));
 
 const DEFAULT_CONFIG: BreakoutThresholdConfig = {
-  version: 1,
+  version: 2,
   generatedAt: new Date(0).toISOString(),
   source: "default",
   modes: {
-    TREND: { setupScoreMin: 68, setupTraitsMin: 4, requireSweetSpotStack: false },
-    BALANCED: { setupScoreMin: 78, setupTraitsMin: 5, requireSweetSpotStack: true },
-    CHOPPY: { setupScoreMin: 76, setupTraitsMin: 5, requireSweetSpotStack: true },
+    TREND: { setupScoreMin: 64, setupTraitsMin: 3, requireSweetSpotStack: false },
+    BALANCED: { setupScoreMin: 70, setupTraitsMin: 4, requireSweetSpotStack: false },
+    CHOPPY: { setupScoreMin: 72, setupTraitsMin: 4, requireSweetSpotStack: false },
   },
 };
 
@@ -106,25 +106,26 @@ function applyLiveTuningBias(config: BreakoutThresholdConfig): BreakoutThreshold
     if (completed < 6 || decisive < 4) return config;
 
     const winRate = decisive > 0 ? live.scanner.wins / decisive : 0.5;
-    const error = 0.55 - winRate;
-    const scoreShift = clampInt(error * 12, -4, 6);
-    const traitsShift = clampInt(error * 3, -1, 1);
+    const targetWinRate = 0.60; // raised from 0.55 to catch more plays
+    const error = targetWinRate - winRate;
+    const scoreShift = clampInt(error * 15, -6, 8); // increased sensitivity
+    const traitsShift = clampInt(error * 4, -2, 2);
 
     const adjustedModes: Record<MarketMode, ModeSetupThreshold> = {
       TREND: {
         ...config.modes.TREND,
-        setupScoreMin: clampInt(config.modes.TREND.setupScoreMin + Math.round(scoreShift * 0.5), 56, 86),
-        setupTraitsMin: clampInt(config.modes.TREND.setupTraitsMin + (traitsShift > 0 ? 0 : traitsShift), 3, 6),
+        setupScoreMin: clampInt(config.modes.TREND.setupScoreMin + Math.round(scoreShift * 0.6), 52, 84),
+        setupTraitsMin: clampInt(config.modes.TREND.setupTraitsMin + (traitsShift > 0 ? 0 : traitsShift), 2, 6),
       },
       BALANCED: {
         ...config.modes.BALANCED,
-        setupScoreMin: clampInt(config.modes.BALANCED.setupScoreMin + scoreShift, 58, 90),
-        setupTraitsMin: clampInt(config.modes.BALANCED.setupTraitsMin + traitsShift, 3, 6),
+        setupScoreMin: clampInt(config.modes.BALANCED.setupScoreMin + scoreShift, 54, 88),
+        setupTraitsMin: clampInt(config.modes.BALANCED.setupTraitsMin + traitsShift, 2, 6),
       },
       CHOPPY: {
         ...config.modes.CHOPPY,
-        setupScoreMin: clampInt(config.modes.CHOPPY.setupScoreMin + Math.round(scoreShift * 1.15), 60, 92),
-        setupTraitsMin: clampInt(config.modes.CHOPPY.setupTraitsMin + traitsShift, 3, 6),
+        setupScoreMin: clampInt(config.modes.CHOPPY.setupScoreMin + Math.round(scoreShift * 1.2), 56, 90),
+        setupTraitsMin: clampInt(config.modes.CHOPPY.setupTraitsMin + traitsShift, 2, 6),
       },
     };
 
@@ -310,8 +311,8 @@ function fitThresholds(samples: Sample[], mode: MarketMode): FitResult {
 
   if (positives.length === 0 || negatives.length === 0) return best;
 
-  for (let scoreThreshold = 52; scoreThreshold <= 84; scoreThreshold += 2) {
-    for (let traitsThreshold = 3; traitsThreshold <= 6; traitsThreshold += 1) {
+  for (let scoreThreshold = 48; scoreThreshold <= 80; scoreThreshold += 2) {
+    for (let traitsThreshold = 2; traitsThreshold <= 6; traitsThreshold += 1) {
       let tp = 0;
       let fp = 0;
       let fn = 0;

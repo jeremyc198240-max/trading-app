@@ -1,0 +1,37 @@
+{
+  "trainedAt": "2026-04-11T22:58:31.587Z",
+  "trainingSamples": 799,
+  "holdoutSamples": 201,
+  "metrics": {
+    "mae": 0.016262347797452864,
+    "mse": 0.00030046624415234514,
+    "rmse": 0.01733396215965482,
+    "r2": -7.345754078846856,
+    "sampleCount": 201
+  },
+  "featureImportance": {
+    "rsi": 1.710933090832358,
+    "macd_signal": 1.7900831724611335,
+    "bb_position": 10.998321425380485,
+    "bb_width": 4.596935291466391,
+    "atr_percent": 3.8708524339613826,
+    "vwap_distance": 0.44054381441587553,
+    "ema_alignment": 5.03461969086633,
+    "momentum_3bar": 2.779811135507627,
+    "momentum_5bar": 0.8589240368934187,
+    "volume_ratio": 2.9174116887308874,
+    "cmf": 1.661448012562234,
+    "compression_score": 43.76968337101568,
+    "breakout_probability": 0.6084306321443164,
+    "directional_bias": 0.075324491995848,
+    "confidence_score": 1.1746982374305077,
+    "risk_score": 0.9928872318049753,
+    "monster_gate_score": 2.7730743228573376,
+    "execution_phase": 2.284035661601028,
+    "otm_delta": 5.275746307905589,
+    "gamma_exposure": 4.998093959553428,
+    "adx": 1.2190125500745153,
+    "regime_filter": 0.16912944053867243
+  },
+  "modelPath": "C:\\Users\\jerem\\Desktop\\New folder\\app march 9 th\\app march 4 th\\logs\\volatility_predictor_model.json"
+}

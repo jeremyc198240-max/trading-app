@@ -7,6 +7,7 @@ import {
 	getBreakoutAlertSummary,
 	recordBreakoutAlert,
 	recordEdgeTuningSample,
+	type BreakoutOptionsReadinessSnapshot,
 	updateBreakoutAlertOutcomes,
 } from "./breakoutAlertHistory";
 
@@ -102,6 +103,14 @@ interface ScannerTradePlan {
 	timeline?: string;
 }
 
+interface ScannerSpotMeta {
+	timestamp?: string;
+	quoteAgeMs?: number;
+	source?: "finnhub" | "yahoo";
+	marketState?: string;
+	isFresh: boolean;
+}
+
 type EdgeSignal = "BREAK_UP" | "BREAK_DOWN" | "WAIT";
 type EdgeState = "STANDBY" | "ARMING" | "PRIMED" | "TRIGGERED";
 type SarBias = "above" | "below" | "neutral";
@@ -178,6 +187,7 @@ interface ScannerResult {
 	lastPrice: number;
 	priceChange: number;
 	priceChangePercent: number;
+	spotMeta?: ScannerSpotMeta;
 	volume: number;
 	scanTime: number;
 	healthScore: number;
@@ -205,6 +215,7 @@ interface ScannerResult {
 	dailyVolume?: number;
 	pattern?: string;
 	optionPlays?: ScannerOptionPlay[];
+	optionsReadiness?: BreakoutOptionsReadinessSnapshot;
 	timeframeStack?: ScannerTimeframeStack;
 	preBreakoutSetup?: ScannerPreBreakoutSetup;
 	tradePlan?: ScannerTradePlan;
@@ -309,6 +320,8 @@ const DEFAULT_WATCHLIST = [
 
 const DEFAULT_TIMEFRAME = "15m";
 const SCAN_INTERVAL_MS = 60_000;
+const SCANNER_LIVE_SPOT_MAX_AGE_MS = 2 * 60 * 1000;
+const SCANNER_STALE_OHLC_SPOT_DIVERGENCE_PCT = 0.015;
 const DEGRADED_RESULT_HOLD_MS = 5 * 60 * 1000;
 const DEGRADED_RESULT_STRONG_SHIFT_SCORE = 14;
 const SCANNER_STABILITY_HISTORY_LIMIT = 32;
@@ -430,7 +443,8 @@ function toStabilityScore(result: ScannerResult): number {
 }
 
 function toStabilityBias(result: ScannerResult): DirectionalBias | "neutral" | "n/a" {
-	return result.timeframeStack?.bias ?? result.expansionDirection ?? "n/a";
+	const stackBias = result.timeframeStack?.bias;
+	return stackBias === "mixed" ? "neutral" : (stackBias ?? result.expansionDirection ?? "n/a");
 }
 
 function pushScannerStabilitySnapshot(capturedAt: number): void {
@@ -474,9 +488,126 @@ function toNumber(value: string | number | null | undefined): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function roundTo(value: number, decimals: number): number {
+type ScannerSpotQuote = {
+	symbol: string;
+	spot: number;
+	prevClose: number;
+	marketState: string;
+	timestamp: string;
+	source: "finnhub" | "yahoo";
+};
+
+export function roundTo(value: number, decimals: number): number {
 	const factor = Math.pow(10, Math.max(0, decimals));
 	return Math.round(value * factor) / factor;
+}
+
+function getOhlcTimeMs(candle: OHLC | undefined): number | null {
+	if (!candle) return null;
+	const raw = Number.isFinite(candle.timeMs as number)
+		? Number(candle.timeMs)
+		: Number.isFinite(candle.time as number)
+			? Number(candle.time)
+			: Number.NaN;
+	if (!Number.isFinite(raw) || raw <= 0) return null;
+	return raw >= 1_000_000_000_000 ? raw : raw * 1000;
+}
+
+function isFlatOhlcCandle(candle: OHLC | undefined): boolean {
+	if (!candle) return false;
+	const open = toNumber(candle.open);
+	const high = toNumber(candle.high);
+	const low = toNumber(candle.low);
+	const close = toNumber(candle.close);
+	if (close <= 0) return false;
+	const rangePct = Math.abs(high - low) / close;
+	const bodyPct = Math.abs(open - close) / close;
+	return rangePct <= 0.0002 && bodyPct <= 0.0001;
+}
+
+function hasBrokenOhlcTape(params: {
+	lastCandle: OHLC | undefined;
+	freshSpot: ScannerSpotQuote | null;
+	spotMeta?: ScannerSpotMeta;
+}): boolean {
+	const { lastCandle, freshSpot, spotMeta } = params;
+	if (!lastCandle || !freshSpot || spotMeta?.isFresh !== true) return false;
+
+	const close = toNumber(lastCandle.close);
+	if (close <= 0) return false;
+
+	const spot = toNumber(freshSpot.spot);
+	if (spot <= 0) return false;
+
+	const divergencePct = Math.abs(spot - close) / close;
+	if (divergencePct < SCANNER_STALE_OHLC_SPOT_DIVERGENCE_PCT) return false;
+
+	const candleTimeMs = getOhlcTimeMs(lastCandle);
+	return candleTimeMs == null || isFlatOhlcCandle(lastCandle);
+}
+
+function isExecuteLikeBreakoutSignal(signal: string | null | undefined): boolean {
+	const upper = String(signal ?? "").toUpperCase();
+	return upper === "BREAKOUT" || upper === "BREAKDOWN" || upper === "EXPANSION" || upper === "MOMENTUM";
+}
+
+function getStrongAlignedStackExecuteComponent(
+	stack: ScannerTimeframeStack | undefined,
+): ScannerTimeframeStackComponent | null {
+	if (!stack) return null;
+	if (stack.bias !== "bullish" && stack.bias !== "bearish") return null;
+	if ((stack.agreement ?? 0) < 75) return null;
+
+	const candidates = (stack.components ?? [])
+		.filter((component) => {
+			return (
+				component.timeframe !== stack.primary &&
+				component.direction === stack.bias &&
+				isExecuteLikeBreakoutSignal(component.breakoutSignal) &&
+				(
+					(component.breakoutScore ?? 0) >= 45 ||
+					Math.abs(component.momentumStrength ?? 0) >= 40
+				)
+			);
+		})
+		.sort((left, right) => {
+			const scoreDelta = (right.breakoutScore ?? 0) - (left.breakoutScore ?? 0);
+			if (scoreDelta !== 0) return scoreDelta;
+			return Math.abs(right.momentumStrength ?? 0) - Math.abs(left.momentumStrength ?? 0);
+		});
+
+	return candidates[0] ?? null;
+}
+
+function buildScannerSpotMeta(
+	quote: ScannerSpotQuote | null | undefined,
+	nowMs: number = Date.now(),
+): ScannerSpotMeta | undefined {
+	if (!quote) return undefined;
+
+	const quoteTimeMs = Date.parse(String(quote.timestamp ?? ""));
+	const quoteAgeMs = Number.isFinite(quoteTimeMs)
+		? Math.max(0, nowMs - quoteTimeMs)
+		: undefined;
+
+	return {
+		timestamp: quote.timestamp,
+		quoteAgeMs,
+		source: quote.source,
+		marketState: quote.marketState,
+		isFresh: quoteAgeMs != null && quoteAgeMs <= SCANNER_LIVE_SPOT_MAX_AGE_MS,
+	};
+}
+
+function getFreshScannerSpot(
+	quote: ScannerSpotQuote | null | undefined,
+	nowMs: number = Date.now(),
+): { quote: ScannerSpotQuote | null; meta?: ScannerSpotMeta } {
+	const meta = buildScannerSpotMeta(quote, nowMs);
+	return {
+		quote: meta?.isFresh ? (quote ?? null) : null,
+		meta,
+	};
 }
 
 function normalizeSymbol(symbol: string): string {
@@ -686,6 +817,44 @@ function computeMomentumStrength(candles: OHLC[]): number {
 	return Math.round(clamp(score, -100, 100));
 }
 
+function blendScannerMomentumStrength(params: {
+	primaryMomentum: number;
+	microMomentum?: number | null;
+	microBreakoutSignal?: BreakoutSignal;
+	microBreakoutScore?: number;
+	priceChangePercent: number;
+}): number {
+	const primaryMomentum = clamp(toNumber(params.primaryMomentum), -100, 100);
+	const microMomentumRaw = params.microMomentum;
+	if (!Number.isFinite(microMomentumRaw as number)) return Math.round(primaryMomentum);
+
+	const microMomentum = clamp(toNumber(microMomentumRaw), -100, 100);
+	const primaryDirection = primaryMomentum >= 8 ? "bullish" : primaryMomentum <= -8 ? "bearish" : "neutral";
+	const microDirection = microMomentum >= 8 ? "bullish" : microMomentum <= -8 ? "bearish" : "neutral";
+	if (primaryDirection === "neutral" || microDirection === "neutral" || primaryDirection === microDirection) {
+		return Math.round(primaryMomentum);
+	}
+
+	const dayMovePct = toNumber(params.priceChangePercent);
+	const dayDirection = dayMovePct >= 0.75 ? "bullish" : dayMovePct <= -0.75 ? "bearish" : "neutral";
+	const microSignal = String(params.microBreakoutSignal ?? "").toUpperCase();
+	const microBreakoutScore = clamp(toNumber(params.microBreakoutScore), 0, 100);
+	const microSupportsReversal =
+		Math.abs(microMomentum) >= 40 ||
+		microSignal === "BREAKOUT" ||
+		microSignal === "BREAKDOWN" ||
+		microSignal === "EXPANSION" ||
+		microSignal === "MOMENTUM" ||
+		microBreakoutScore >= 40;
+
+	if (dayDirection !== microDirection || !microSupportsReversal) {
+		return Math.round(primaryMomentum);
+	}
+
+	const blended = primaryMomentum * 0.35 + microMomentum * 0.65;
+	return Math.round(clamp(blended, -100, 100));
+}
+
 function computeVolumeSpike(candles: OHLC[]): number {
 	if (candles.length < 6) return 1;
 	const recent = candles[candles.length - 1]?.volume ?? 0;
@@ -862,10 +1031,13 @@ function computeParabolicSarBias(candles: OHLC[]): SarBias {
 
 function computeEdgeEngineSnapshot(params: {
 	breakoutSignal: BreakoutSignal;
+	breakoutScore?: number;
+	priceChangePercent?: number;
 	compression: CompressionSnapshot | undefined;
 	momentumStrength: number;
 	volumeSpike: number;
 	timeframeStack?: ScannerTimeframeStack;
+	preBreakoutSetup?: ScannerPreBreakoutSetup;
 	tvRsi?: number | null;
 	tvAdx?: number | null;
 	tvRecommendAll?: number | null;
@@ -881,19 +1053,96 @@ function computeEdgeEngineSnapshot(params: {
 	sarBias?: SarBias;
 }): EdgeEngineSnapshot {
 	const rsi = clamp(toNumber(params.rsi ?? params.tvRsi ?? 50), 0, 100);
-	const macdHistogram = clamp(toNumber(params.macdHistogram, 0), -2.5, 2.5);
+	const macdHistogram = clamp(toNumber(params.macdHistogram ?? 0), -2.5, 2.5);
 	const macdTrend = params.macdTrend ?? "neutral";
-	const bbPercentB = clamp(toNumber(params.bbPercentB, 50), 0, 100);
+	const bbPercentB = clamp(toNumber(params.bbPercentB ?? 50), 0, 100);
 	const bbSqueeze = Boolean(params.bbSqueeze);
-	const stochasticK = clamp(toNumber(params.stochasticK, rsi), 0, 100);
-	const stochasticD = clamp(toNumber(params.stochasticD, stochasticK), 0, 100);
+	const stochasticK = clamp(toNumber(params.stochasticK ?? rsi), 0, 100);
+	const stochasticD = clamp(toNumber(params.stochasticD ?? stochasticK), 0, 100);
 	const adx = clamp(toNumber(params.adx ?? params.tvAdx ?? 15), 0, 100);
-	const tvRsi = clamp(toNumber(params.tvRsi, rsi), 0, 100);
-	const tvAdx = clamp(toNumber(params.tvAdx, adx), 0, 100);
-	const tvRecommendAll = clamp(toNumber(params.tvRecommendAll, 0), -1, 1);
-	const momentum = clamp(toNumber(params.momentumStrength, 0), -100, 100);
-	const volumeSpike = clamp(toNumber(params.volumeSpike, 1), 0, 4);
+	const tvRsi = clamp(toNumber(params.tvRsi ?? rsi), 0, 100);
+	const tvAdx = clamp(toNumber(params.tvAdx ?? adx), 0, 100);
+	const tvRecommendAll = clamp(toNumber(params.tvRecommendAll ?? 0), -1, 1);
+	const momentum = clamp(toNumber(params.momentumStrength ?? 0), -100, 100);
+	const volumeSpike = clamp(toNumber(params.volumeSpike ?? 1), 0, 4);
 	const sarBias = params.sarBias ?? "neutral";
+	const breakoutScore = clamp(toNumber(params.breakoutScore ?? 0), 0, 100);
+	const dayMovePct = toNumber(params.priceChangePercent ?? 0);
+	const dayMoveAbsPct = Math.abs(dayMovePct);
+	const setupScore = clamp(toNumber(params.preBreakoutSetup?.score ?? 0), 0, 100);
+	const setupTraits = Array.isArray(params.preBreakoutSetup?.traits) ? params.preBreakoutSetup.traits.length : 0;
+	const setupEtaRaw = Number(params.preBreakoutSetup?.etaMinutes);
+	const setupEta = Number.isFinite(setupEtaRaw) ? setupEtaRaw : null;
+	const stackBias = params.timeframeStack?.bias ?? "neutral";
+	const stackAgreement = clamp(toNumber(params.timeframeStack?.agreement ?? 0), 0, 100);
+	const momentumAbs = Math.abs(momentum);
+	const phase = String(params.compression?.phase ?? "WAIT").toUpperCase();
+	const spark = clamp(toNumber(params.compression?.sparkScore ?? 0), 0, 100);
+	const bbWidth = clamp(toNumber(params.compression?.bbWidth ?? 1.2), 0, 10);
+	const strongAlignedExecuteComponent = getStrongAlignedStackExecuteComponent(params.timeframeStack);
+	const stackExecuteDirection = strongAlignedExecuteComponent?.direction ?? "neutral";
+	const microCompressionComponent = (params.timeframeStack?.components ?? []).find((component) => {
+		if (component.timeframe !== "5m") return false;
+		if (component.direction !== "bullish" && component.direction !== "bearish") return false;
+		return (
+			component.breakoutSignal === "BUILDING" ||
+			component.breakoutSignal === "SQUEEZE" ||
+			component.breakoutSignal === "CONSOLIDATING" ||
+			(component.breakoutScore ?? 0) >= 24 ||
+			Math.abs(component.momentumStrength ?? 0) >= 8
+		);
+	});
+	const microCompressionDirection = microCompressionComponent?.direction ?? "neutral";
+	const primaryDirectionalRelease =
+		(stackBias === "bullish" || stackBias === "bearish") &&
+		stackAgreement >= 60 &&
+		isExecuteLikeBreakoutSignal(params.breakoutSignal) &&
+		momentumAbs >= 40 &&
+		(
+			(stackBias === "bullish" && momentum >= 24 && params.breakoutSignal !== "BREAKDOWN") ||
+			(stackBias === "bearish" && momentum <= -24 && params.breakoutSignal !== "BREAKOUT")
+		);
+	const stackExecuteConfirmed =
+		(stackExecuteDirection === "bullish" || stackExecuteDirection === "bearish") &&
+		stackExecuteDirection === stackBias &&
+		stackAgreement >= 75;
+	const stackExecuteStrong =
+		stackExecuteConfirmed &&
+		(
+			(strongAlignedExecuteComponent?.breakoutScore ?? 0) >= 60 ||
+			Math.abs(strongAlignedExecuteComponent?.momentumStrength ?? 0) >= 55 ||
+			momentumAbs >= 40
+		);
+	const preBreakoutSignal =
+		params.breakoutSignal === "BUILDING" ||
+		params.breakoutSignal === "SQUEEZE" ||
+		params.breakoutSignal === "CONSOLIDATING";
+	const releasedSignal =
+		params.breakoutSignal === "BREAKOUT" ||
+		params.breakoutSignal === "BREAKDOWN" ||
+		params.breakoutSignal === "EXPANSION" ||
+		params.breakoutSignal === "MOMENTUM";
+	const strongTrendConflict =
+		(stackBias === "bullish" && params.tvTrendDirection === "bearish") ||
+		(stackBias === "bearish" && params.tvTrendDirection === "bullish");
+	const strongDayMoveConflict =
+		(stackBias === "bullish" && dayMovePct <= -0.45) ||
+		(stackBias === "bearish" && dayMovePct >= 0.45);
+	const alignedCompressionPressure =
+		preBreakoutSignal &&
+		(phase === "PREPARE" || phase === "READY") &&
+		(stackBias === "bullish" || stackBias === "bearish") &&
+		stackAgreement >= 60 &&
+		microCompressionComponent != null &&
+		microCompressionDirection === stackBias &&
+		(spark >= 34 || setupScore >= 40 || breakoutScore >= 28) &&
+		!strongTrendConflict &&
+		!strongDayMoveConflict;
+	const compressionAlignmentBonus = alignedCompressionPressure
+		? spark >= 45 && setupScore >= 45
+			? 10
+			: 6
+		: 0;
 
 	let bullishVotes = 0;
 	let bearishVotes = 0;
@@ -917,16 +1166,61 @@ function computeEdgeEngineSnapshot(params: {
 	if (sarBias === "below") bullishVotes += 1;
 	if (sarBias === "above") bearishVotes += 1;
 
+	const trendNotConfirmed = adx < 20 || tvAdx < 20;
+	const bullishExhaustion = bbPercentB >= 78 && stochasticK >= 78 && rsi >= 58;
+	const bearishExhaustion = bbPercentB <= 22 && stochasticK <= 22 && rsi <= 42;
+
+	if (stackAgreement >= 58 && stackBias === "bullish") bullishVotes += 1;
+	if (stackAgreement >= 58 && stackBias === "bearish") bearishVotes += 1;
+	if (dayMovePct >= 0.35 && stackBias === "bullish") bullishVotes += 1;
+	if (dayMovePct <= -0.35 && stackBias === "bearish") bearishVotes += 1;
+	if (stackExecuteConfirmed && stackExecuteDirection === "bullish") bullishVotes += 4;
+	if (stackExecuteConfirmed && stackExecuteDirection === "bearish") bearishVotes += 4;
+	if (stackExecuteStrong && stackExecuteDirection === "bullish") bullishVotes += 2;
+	if (stackExecuteStrong && stackExecuteDirection === "bearish") bearishVotes += 2;
+	if (alignedCompressionPressure && stackBias === "bullish") bullishVotes += 4;
+	if (alignedCompressionPressure && stackBias === "bearish") bearishVotes += 4;
+	if (alignedCompressionPressure && spark >= 40 && stackBias === "bullish") bullishVotes += 1;
+	if (alignedCompressionPressure && spark >= 40 && stackBias === "bearish") bearishVotes += 1;
+
+	if (trendNotConfirmed && bullishExhaustion) bullishVotes = Math.max(0, bullishVotes - 1);
+	if (trendNotConfirmed && bearishExhaustion) bearishVotes = Math.max(0, bearishVotes - 1);
+	if (trendNotConfirmed && bullishExhaustion && tvRecommendAll <= -0.18) bearishVotes += 3;
+	if (trendNotConfirmed && bearishExhaustion && tvRecommendAll >= 0.18) bullishVotes += 3;
+
 	const voteDelta = bullishVotes - bearishVotes;
-	const direction: DirectionalBias | "neutral" = voteDelta >= 2
+	let direction: DirectionalBias | "neutral" = voteDelta >= 2
 		? "bullish"
 		: voteDelta <= -2
 			? "bearish"
 			: "neutral";
+	const weakSetup = setupScore < 70 || setupTraits < 3 || (setupEta != null && setupEta > 10);
+	const strongBearContext =
+		(stackAgreement >= 60 && stackBias === "bearish") ||
+		params.tvTrendDirection === "bearish" ||
+		tvRecommendAll <= -0.28 ||
+		dayMovePct <= -0.45;
+	const strongBullContext =
+		(stackAgreement >= 60 && stackBias === "bullish") ||
+		params.tvTrendDirection === "bullish" ||
+		tvRecommendAll >= 0.28 ||
+		dayMovePct >= 0.45;
+	const intradayExecuteOverride =
+		stackExecuteConfirmed &&
+		(
+			(stackExecuteDirection === "bullish" && momentum >= 24) ||
+			(stackExecuteDirection === "bearish" && momentum <= -24) ||
+			breakoutScore >= 42
+		);
+	const directionalReleaseOverride = intradayExecuteOverride || primaryDirectionalRelease;
 
-	const phase = String(params.compression?.phase ?? "WAIT").toUpperCase();
-	const spark = clamp(toNumber(params.compression?.sparkScore, 0), 0, 100);
-	const bbWidth = clamp(toNumber(params.compression?.bbWidth, 1.2), 0, 10);
+	if (direction === "bullish" && strongBearContext && weakSetup && breakoutScore < 72 && !directionalReleaseOverride) {
+		direction = "neutral";
+	}
+	if (direction === "bearish" && strongBullContext && weakSetup && breakoutScore < 72 && !directionalReleaseOverride) {
+		direction = "neutral";
+	}
+
 	const phaseWeight = phase === "NOW"
 		? 20
 		: phase === "READY"
@@ -946,25 +1240,119 @@ function computeEdgeEngineSnapshot(params: {
 	const momentumScore = clamp(Math.abs(momentum) * 0.2 + Math.abs(macdHistogram) * 40, 0, 20);
 	const volumeScore = clamp(volumeSpike >= 1.2 ? 12 : volumeSpike >= 1.0 ? 8 : volumeSpike >= 0.85 ? 5 : 2, 0, 12);
 	const consensusScore = clamp((Math.abs(voteDelta) / 10) * 11, 0, 11);
+	const setupScoreContribution = clamp(
+		(setupScore - 55) * 0.18 +
+			Math.min(4, setupTraits * 1.25) +
+			(setupEta == null ? 0 : setupEta <= 5 ? 4 : setupEta <= 10 ? 2 : -2),
+		-8,
+		12,
+	);
+	const counterTrendPenalty = directionalReleaseOverride
+		? (
+			direction === "bullish" && strongBearContext
+				? 2
+				: direction === "bearish" && strongBullContext
+					? 2
+					: 0
+		)
+		: direction === "bullish" && strongBearContext
+			? weakSetup ? 10 : 5
+			: direction === "bearish" && strongBullContext
+				? weakSetup ? 10 : 5
+				: 0;
+	const exhaustionPenalty =
+		direction === "bullish" && trendNotConfirmed && bullishExhaustion
+			? 8
+			: direction === "bearish" && trendNotConfirmed && bearishExhaustion
+				? 8
+				: 0;
 
-	const edgeScore = Math.round(clamp(compressionScore + trendScore + momentumScore + volumeScore + consensusScore, 0, 100));
+	const edgeScore = Math.round(
+		clamp(
+			compressionScore +
+				trendScore +
+				momentumScore +
+				volumeScore +
+				consensusScore +
+				compressionAlignmentBonus +
+				setupScoreContribution -
+				counterTrendPenalty -
+				exhaustionPenalty,
+			0,
+			100,
+		),
+	);
 	const confidence = Math.round(
 		clamp(
 			edgeScore +
-				(direction !== "neutral" ? 5 : -6) +
+				(direction !== "neutral" ? 5 : -8) +
+				(alignedCompressionPressure ? 6 : 0) +
 				(phase === "READY" || phase === "NOW" ? 4 : 0) +
-				(tvAdx >= 25 ? 2 : 0),
+				(tvAdx >= 25 ? 2 : 0) +
+				Math.max(-4, Math.min(6, Math.round(setupScoreContribution * 0.6))) -
+				Math.round(counterTrendPenalty * 0.6) -
+				Math.round(exhaustionPenalty * 0.5),
 			0,
 			99,
 		),
 	);
 
+	const setupEligible =
+		preBreakoutSignal &&
+		(phase === "PREPARE" || phase === "READY") &&
+		setupScore >= 62 &&
+		setupTraits >= 2 &&
+		(setupEta == null || setupEta <= 10);
+	const compressionSetupEligible =
+		alignedCompressionPressure &&
+		setupScore >= 40 &&
+		(setupEta == null || setupEta <= 15);
+	const strongSetupEligible =
+		preBreakoutSignal &&
+		(phase === "PREPARE" || phase === "READY") &&
+		setupScore >= 72 &&
+		setupTraits >= 3 &&
+		(setupEta == null || setupEta <= 10);
+	const breakoutReleased =
+		(releasedSignal && breakoutScore >= 68 && Math.abs(momentum) >= 22 && volumeSpike >= 1.05) ||
+		directionalReleaseOverride;
+	const directionalPressure =
+		direction !== "neutral" &&
+		edgeScore >= (alignedCompressionPressure ? 54 : 60) &&
+		(
+			phase === "PREPARE" ||
+			phase === "READY" ||
+			phase === "NOW" ||
+			momentumAbs >= 26 ||
+			dayMoveAbsPct >= 0.6 ||
+			stackAgreement >= 55
+		);
+	const elevatedDirectionalPressure =
+		direction !== "neutral" &&
+		edgeScore >= (alignedCompressionPressure ? 66 : 72) &&
+		(
+			strongSetupEligible ||
+			(alignedCompressionPressure && spark >= 42 && setupScore >= 44) ||
+			breakoutReleased ||
+			phase === "PREPARE" ||
+			phase === "READY" ||
+			phase === "NOW" ||
+			momentumAbs >= 34 ||
+			dayMoveAbsPct >= 0.8 ||
+			stackAgreement >= 58
+		);
+
 	let state: EdgeState = "STANDBY";
-	if (direction !== "neutral" && edgeScore >= 80 && (phase === "READY" || phase === "NOW")) {
+	if (
+		direction !== "neutral" &&
+		breakoutReleased &&
+		edgeScore >= 82 &&
+		(setupScore >= 78 || momentumAbs >= 40 || dayMoveAbsPct >= 1)
+	) {
 		state = "TRIGGERED";
-	} else if (direction !== "neutral" && edgeScore >= 68 && (phase === "PREPARE" || phase === "READY" || phase === "NOW")) {
+	} else if (elevatedDirectionalPressure) {
 		state = "PRIMED";
-	} else if (edgeScore >= 52) {
+	} else if ((direction !== "neutral" && (setupEligible || compressionSetupEligible) && edgeScore >= 52) || directionalPressure) {
 		state = "ARMING";
 	}
 
@@ -1002,14 +1390,32 @@ function computeEdgeEngineSnapshot(params: {
 	);
 
 	const reasons: string[] = [];
+	if (setupScore >= 70) reasons.push(`Setup score ${Math.round(setupScore)}${setupEta != null ? `, ETA ${Math.round(setupEta)}m.` : "."}`);
 	if (phase === "READY" || phase === "NOW") reasons.push(`Compression phase ${phase} with spark ${Math.round(spark)}.`);
 	if (bbSqueeze || bbWidth <= 0.8) reasons.push(`Bollinger squeeze active (width ${roundTo(bbWidth, 2)}).`);
 	if (adx >= 25) reasons.push(`Trend strength confirmed (ADX ${Math.round(adx)}).`);
 	if (Math.abs(momentum) >= 30) reasons.push(`Momentum pressure elevated (${Math.round(momentum)}).`);
 	if (volumeSpike >= 1.0) reasons.push(`Participation rising (volume x${roundTo(volumeSpike, 2)}).`);
+	if (alignedCompressionPressure && microCompressionComponent) {
+		reasons.push(
+			`5m compression leg aligned ${stackBias} ` +
+			`(${String(microCompressionComponent.breakoutSignal ?? "").toUpperCase()} ${Math.round(microCompressionComponent.breakoutScore ?? 0)}).`,
+		);
+	}
 	if (tvRecommendAll <= -0.35 || tvRecommendAll >= 0.35) reasons.push(`TradingView directional pressure ${roundTo(tvRecommendAll, 2)}.`);
 	if (stochasticK > stochasticD + 2 || stochasticK < stochasticD - 2) reasons.push(`Stochastic rotation K/D ${Math.round(stochasticK)}/${Math.round(stochasticD)}.`);
 	if (sarBias !== "neutral") reasons.push(`SAR is ${sarBias === "below" ? "below" : "above"} price.`);
+	if (intradayExecuteOverride && strongAlignedExecuteComponent) {
+		reasons.push(
+			`${strongAlignedExecuteComponent.timeframe} execute leg confirmed ${stackExecuteDirection} ` +
+				`(${String(strongAlignedExecuteComponent.breakoutSignal ?? "").toUpperCase()} ${Math.round(strongAlignedExecuteComponent.breakoutScore ?? 0)}).`,
+		);
+	}
+	if (primaryDirectionalRelease) reasons.push(`Primary ${String(params.breakoutSignal ?? "").toUpperCase()} release is aligned ${stackBias}.`);
+	if (direction === "bullish" && strongBearContext) reasons.push("Broader context is still leaning bearish.");
+	if (direction === "bearish" && strongBullContext) reasons.push("Broader context is still leaning bullish.");
+	if (direction === "bullish" && trendNotConfirmed && bullishExhaustion) reasons.push("Bullish move is extended without strong trend confirmation.");
+	if (direction === "bearish" && trendNotConfirmed && bearishExhaustion) reasons.push("Bearish move is extended without strong trend confirmation.");
 	if (reasons.length === 0) reasons.push("Edge engine is monitoring for directional compression release.");
 
 	return {
@@ -1051,11 +1457,14 @@ function buildTimeframeSignalSnapshot(candles: OHLC[]): TimeframeSignalSnapshot 
 	else if (momentumStrength <= -8 || isNewLow) expansionDirection = "bearish";
 
 	const absMomentum = Math.abs(momentumStrength);
+	const strongDirectionalMomentum = expansionDirection != null && absMomentum >= 36;
 	let breakoutSignal: BreakoutSignal = "CONSOLIDATING";
 	if ((isNewHigh || isNewLow) && volumeSpike >= 1.05 && absMomentum >= 14) {
 		breakoutSignal = isNewHigh ? "BREAKOUT" : "BREAKDOWN";
 	} else if ((compression.phase === "READY" || compression.phase === "NOW") && absMomentum >= 20 && volumeSpike >= 1.0) {
 		breakoutSignal = "EXPANSION";
+	} else if (strongDirectionalMomentum) {
+		breakoutSignal = "MOMENTUM";
 	} else if (absMomentum >= 26 && volumeSpike >= 1.05) {
 		breakoutSignal = "MOMENTUM";
 	} else if (compression.phase === "PREPARE" || compression.phase === "READY") {
@@ -1092,7 +1501,27 @@ function buildTimeframeStack(
 	const inputs = [primary, micro].filter((entry): entry is TimeframeStackInput => Boolean(entry));
 	const totalWeight = Math.max(0.0001, inputs.reduce((sum, entry) => sum + entry.weight, 0));
 	const components: ScannerTimeframeStackComponent[] = inputs.map((entry) => {
-		const direction = entry.candleDirection ?? resolveDirectionalBias(entry.breakoutSignal, entry.expansionDirection, entry.momentumStrength);
+		const resolvedDirection = resolveDirectionalBias(entry.breakoutSignal, entry.expansionDirection, entry.momentumStrength);
+		const candleDirection = entry.candleDirection && entry.candleDirection !== "neutral"
+			? entry.candleDirection
+			: null;
+		const strongResolvedDirection =
+			resolvedDirection !== "neutral" &&
+			(
+				Math.abs(entry.momentumStrength) >= 10 ||
+				entry.breakoutSignal === "BREAKOUT" ||
+				entry.breakoutSignal === "BREAKDOWN" ||
+				entry.breakoutSignal === "EXPANSION" ||
+				entry.breakoutSignal === "MOMENTUM" ||
+				entry.breakoutScore >= 24
+			);
+		const direction = candleDirection == null
+			? resolvedDirection
+			: resolvedDirection === "neutral" || resolvedDirection === candleDirection
+				? candleDirection
+				: strongResolvedDirection
+					? resolvedDirection
+					: "neutral";
 		return {
 			timeframe: entry.timeframe,
 			breakoutSignal: entry.breakoutSignal,
@@ -1157,6 +1586,9 @@ function computePreBreakoutSetup(params: {
 	expansionDirection: "bullish" | "bearish" | null;
 	compression: CompressionSnapshot;
 	timeframeStack: ScannerTimeframeStack;
+	tvAdx?: number;
+	tvRecommendAll?: number;
+	tvTrendDirection?: DirectionalBias | "neutral";
 }): ScannerPreBreakoutSetup | undefined {
 	const {
 		primaryCandles,
@@ -1168,6 +1600,9 @@ function computePreBreakoutSetup(params: {
 		expansionDirection,
 		compression,
 		timeframeStack,
+		tvAdx,
+		tvRecommendAll,
+		tvTrendDirection,
 	} = params;
 
 	if (primaryCandles.length < 24) return undefined;
@@ -1208,6 +1643,21 @@ function computePreBreakoutSetup(params: {
 	const microVwap = computeVwapFromCandles(micro);
 	const preAboveVwap = last.close >= microVwap;
 	const preVolumeRatio = microCandles.length > 0 ? computeVolumeSpike(microCandles) : volumeSpike;
+	const compressionBbWidth = clamp(Number.parseFloat(String(compression.bbWidth ?? "0")), 0, 10);
+	const normalizedTvAdx = clamp(Number.isFinite(tvAdx as number) ? Number(tvAdx) : 0, 0, 100);
+	const normalizedTvRecommend = clamp(Number.isFinite(tvRecommendAll as number) ? Number(tvRecommendAll) : 0, -1, 1);
+	const tvDirectionAligned =
+		(direction === "bullish" && tvTrendDirection === "bullish") ||
+		(direction === "bearish" && tvTrendDirection === "bearish");
+	const tvDirectionConflict =
+		(direction === "bullish" && tvTrendDirection === "bearish") ||
+		(direction === "bearish" && tvTrendDirection === "bullish");
+	const tvPressureSupport =
+		(direction === "bullish" && normalizedTvRecommend >= 0.18) ||
+		(direction === "bearish" && normalizedTvRecommend <= -0.18);
+	const tvPressureConflict =
+		(direction === "bullish" && normalizedTvRecommend <= -0.35) ||
+		(direction === "bearish" && normalizedTvRecommend >= 0.35);
 
 	const traits: string[] = [];
 	let score = 0;
@@ -1244,6 +1694,14 @@ function computePreBreakoutSetup(params: {
 		score += 6;
 	}
 
+	if (compressionBbWidth >= 0.75 && compressionBbWidth <= 1.15) {
+		score += 10;
+		traits.push("BB_SWEET_SPOT");
+	} else if (compressionBbWidth > 0 && compressionBbWidth < 0.5) {
+		score -= 6;
+		traits.push("BB_TOO_EARLY");
+	}
+
 	if (preNearSessionHigh) {
 		score += 10;
 		traits.push("PRE_NEAR_SESSION_EXTREME");
@@ -1267,6 +1725,32 @@ function computePreBreakoutSetup(params: {
 		traits.push("MTF_ALIGNMENT");
 	}
 
+	if (tvDirectionAligned) {
+		score += 12;
+		traits.push("TV_DIRECTION_MATCH");
+	} else if (tvDirectionConflict && normalizedTvAdx >= 20) {
+		score -= 12;
+		traits.push("TV_DIRECTION_CONFLICT");
+	}
+
+	if (normalizedTvAdx >= 25) {
+		score += 12;
+		traits.push("TV_ADX_SUPPORT");
+	} else if (normalizedTvAdx >= 20) {
+		score += 6;
+	} else if (normalizedTvAdx > 0) {
+		score -= 8;
+		traits.push("TV_LOW_ADX");
+	}
+
+	if (tvPressureSupport) {
+		score += 8;
+		traits.push("TV_PRESSURE_SUPPORT");
+	} else if (tvPressureConflict) {
+		score -= 10;
+		traits.push("TV_PRESSURE_CONFLICT");
+	}
+
 	const sweetSpot =
 		directionalCloseLocation >= 82 &&
 		preRangeCompression <= 0.72 &&
@@ -1287,13 +1771,13 @@ function computePreBreakoutSetup(params: {
 	const setupSignal = breakoutSignal === "BUILDING" || breakoutSignal === "SQUEEZE" || breakoutSignal === "CONSOLIDATING";
 	if (
 		setupSignal &&
-		score >= 74 &&
+		score >= 70 &&
 		Math.abs(momentumStrength) >= 12 &&
-		preVolumeRatio >= 1.0 &&
+		(preVolumeRatio >= 0.9 || normalizedTvAdx >= 25 || tvDirectionAligned) &&
 		(compression.phase === "PREPARE" || compression.phase === "READY" || compression.phase === "NOW")
 	) {
 		etaMinutes = 5;
-	} else if (setupSignal && score >= 62) {
+	} else if (setupSignal && score >= 60) {
 		etaMinutes = 10;
 	}
 
@@ -1556,6 +2040,8 @@ function buildOptionPlaysFromAnalysis(
 
 		plays.push({
 			score,
+			openInterest: Number.isFinite(Number(otm.openInterest ?? otm.oi)) ? Number(otm.openInterest ?? otm.oi) : undefined,
+			oi: Number.isFinite(Number(otm.oi ?? otm.openInterest)) ? Number(otm.oi ?? otm.openInterest) : undefined,
 			direction,
 			strike: Number.isFinite(Number(otm.strike)) ? Number(otm.strike) : undefined,
 			premium: Number.isFinite(Number(otm.premium)) ? Number(otm.premium) : undefined,
@@ -1581,6 +2067,12 @@ function buildOptionPlaysFromAnalysis(
 
 		plays.push({
 			score: Math.round(clamp(baseScore + monsterBoost, 0, 100)),
+			openInterest: Number.isFinite(Number(monsterPlay.openInterest ?? monsterPlay.oi))
+				? Number(monsterPlay.openInterest ?? monsterPlay.oi)
+				: undefined,
+			oi: Number.isFinite(Number(monsterPlay.oi ?? monsterPlay.openInterest))
+				? Number(monsterPlay.oi ?? monsterPlay.openInterest)
+				: undefined,
 			direction,
 			strike: Number.isFinite(Number(monsterPlay.strike)) ? Number(monsterPlay.strike) : undefined,
 			premium: Number.isFinite(Number(monsterPlay.premium)) ? Number(monsterPlay.premium) : undefined,
@@ -1612,6 +2104,123 @@ function buildOptionPlaysFromAnalysis(
 	}
 
 	return sortedPlays.slice(0, 3);
+}
+
+function getOptionOpenInterest(play: ScannerOptionPlay | undefined): number | undefined {
+	if (!play) return undefined;
+	const raw = toNumber(play.openInterest ?? play.oi);
+	return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+}
+
+function getOptionRiskRewardPercent(play: ScannerOptionPlay | undefined): number | undefined {
+	if (!play) return undefined;
+	const raw = toNumber(play.riskReward ?? play.rr);
+	if (!Number.isFinite(raw) || raw <= 0) return undefined;
+	return raw <= 20 ? raw * 100 : raw;
+}
+
+function getBestOptionPlay(
+	plays: ScannerOptionPlay[] | undefined,
+	expectedDirection: "CALL" | "PUT" | null,
+): ScannerOptionPlay | undefined {
+	if (!Array.isArray(plays) || plays.length === 0) return undefined;
+
+	const ranked = [...plays].sort((a, b) => {
+		const scoreGap = toNumber(b.score) - toNumber(a.score);
+		if (scoreGap !== 0) return scoreGap;
+		return toNumber(b.riskReward ?? b.rr) - toNumber(a.riskReward ?? a.rr);
+	});
+
+	if (!expectedDirection) return ranked[0];
+	return ranked.find((play) => play.direction === expectedDirection) ?? ranked[0];
+}
+
+function computeOptionsReadiness(params: {
+	breakoutScore?: number;
+	momentumStrength?: number;
+	preBreakoutSetup?: ScannerPreBreakoutSetup;
+	edgeEngine?: EdgeEngineSnapshot;
+	timeframeStack?: ScannerTimeframeStack;
+	signalQuality?: ScannerResult["signalQuality"];
+	optionPlays?: ScannerOptionPlay[];
+	expectedDirection: "CALL" | "PUT" | null;
+}): BreakoutOptionsReadinessSnapshot | undefined {
+	const breakoutScore = clamp(toNumber(params.breakoutScore), 0, 100);
+	const momentumScore = clamp(Math.abs(toNumber(params.momentumStrength)), 0, 100);
+	const setupScore = clamp(toNumber(params.preBreakoutSetup?.score), 0, 100);
+	const confidenceScore = clamp(toNumber(params.edgeEngine?.confidence), 0, 100);
+	const triggerScore = clamp(toNumber(params.edgeEngine?.triggerProbability), 0, 100);
+	const stackScore = clamp(toNumber(params.timeframeStack?.aggregateScore), 0, 100);
+	const qualityBonus = params.signalQuality === "HIGH"
+		? 6
+		: params.signalQuality === "MEDIUM"
+			? 2
+			: params.signalQuality === "LOW"
+				? -6
+				: params.signalQuality === "UNRELIABLE"
+					? -12
+					: 0;
+
+	const moveScore = clamp(
+		breakoutScore * 0.34 +
+			momentumScore * 0.22 +
+			setupScore * 0.18 +
+			triggerScore * 0.12 +
+			confidenceScore * 0.08 +
+			stackScore * 0.06 +
+			qualityBonus,
+		0,
+		100,
+	);
+
+	const bestPlay = getBestOptionPlay(params.optionPlays, params.expectedDirection);
+	const optionScore = clamp(toNumber(bestPlay?.score), 0, 100);
+	const optionOpenInterest = getOptionOpenInterest(bestPlay);
+	const riskRewardPercent = getOptionRiskRewardPercent(bestPlay);
+	const oiScore = optionOpenInterest == null
+		? 28
+		: clamp((Math.log10(optionOpenInterest + 1) / 3) * 100, 0, 100);
+	const rrScore = riskRewardPercent == null
+		? 35
+		: clamp((riskRewardPercent / 250) * 100, 0, 100);
+	const alignedDirection = params.expectedDirection == null || !bestPlay
+		? undefined
+		: bestPlay.direction === params.expectedDirection;
+	const alignmentScore = params.expectedDirection == null
+		? 50
+		: alignedDirection === true
+			? 100
+			: bestPlay
+				? 15
+				: 35;
+
+	const chainScore = clamp(
+		bestPlay
+			? optionScore * 0.55 + oiScore * 0.2 + rrScore * 0.15 + alignmentScore * 0.1
+			: params.expectedDirection
+				? 28
+				: 18,
+		0,
+		100,
+	);
+
+	const score = clamp(
+		moveScore * (bestPlay ? 0.6 : 0.72) + chainScore * (bestPlay ? 0.4 : 0.28),
+		0,
+		100,
+	);
+
+	return {
+		score: roundTo(score, 1),
+		moveScore: roundTo(moveScore, 1),
+		chainScore: roundTo(chainScore, 1),
+		optionScore: bestPlay ? roundTo(optionScore, 1) : undefined,
+		optionOpenInterest,
+		riskRewardPercent: riskRewardPercent != null ? roundTo(riskRewardPercent, 1) : undefined,
+		hasOptionData: Boolean(bestPlay),
+		expectedDirection: params.expectedDirection,
+		alignedDirection,
+	};
 }
 
 function parseTvNumber(value: unknown): number | null {
@@ -2134,6 +2743,15 @@ function computeSignalAndSqueezeState(
 		28,
 		momentumSignalMin + tuning.directionalMomentumOffset[momentumDirection],
 	);
+	const strongDirectionalMomentum =
+		expansionDirection != null &&
+		Math.abs(momentumStrength) >= Math.max(36, momentumThreshold + 6) &&
+		(volumeSpike >= 0.95 || Math.abs(momentumStrength) >= 45) &&
+		(
+			trend.trendDirection === "neutral" ||
+			trend.trendDirection === expansionDirection ||
+			trend.trendStrength <= 12
+		);
 	const momentumVolumeThreshold = clamp(
 		(momentumDirection === "bullish" ? bullishVolumeMin : bearishVolumeMin) + 0.1,
 		1.05,
@@ -2153,6 +2771,14 @@ function computeSignalAndSqueezeState(
 	const breakoutDownMomentumMax = trend.trendDirection === "bullish"
 		? -Math.max(12, breakdownMomentumFloor + 4)
 		: -breakdownMomentumFloor;
+	const breakoutUpWithoutVolume =
+		hasBreakoutUp &&
+		momentumStrength >= Math.max(18, breakoutUpMomentumMin + 8) &&
+		(trend.trendDirection !== "bearish" || trend.trendStrength <= 12);
+	const breakoutDownWithoutVolume =
+		hasBreakoutDown &&
+		momentumStrength <= Math.min(-18, breakoutDownMomentumMax - 8) &&
+		(trend.trendDirection !== "bullish" || trend.trendStrength <= 12);
 
 	let breakoutSignal: BreakoutSignal = null;
 	if (wasInSqueeze && (hasBreakoutUp || hasBreakoutDown || Math.abs(momentumStrength) >= expansionMomentumThreshold)) {
@@ -2161,6 +2787,12 @@ function computeSignalAndSqueezeState(
 		breakoutSignal = "BREAKOUT";
 	} else if (hasBreakoutDown && volumeSpike >= breakoutDownVolumeMin && momentumStrength <= breakoutDownMomentumMax) {
 		breakoutSignal = "BREAKDOWN";
+	} else if (breakoutUpWithoutVolume && strongDirectionalMomentum) {
+		breakoutSignal = "BREAKOUT";
+	} else if (breakoutDownWithoutVolume && strongDirectionalMomentum) {
+		breakoutSignal = "BREAKDOWN";
+	} else if (strongDirectionalMomentum) {
+		breakoutSignal = "MOMENTUM";
 	} else if (inSqueeze && squeezeCandles >= 2) {
 		breakoutSignal = "SQUEEZE";
 	} else if (Math.abs(momentumStrength) >= momentumThreshold && volumeSpike >= momentumVolumeThreshold) {
@@ -2404,21 +3036,24 @@ async function scanSymbol(
 		const upperSymbol = normalizeSymbol(symbol);
 		if (!upperSymbol) return null;
 		const tvSnapshot = tvSnapshotInput ?? (await getTradingViewIndicatorMap([upperSymbol])).get(upperSymbol);
+		const nowMs = Date.now();
 
 		const liveSpot = await fetchLiveSpot(upperSymbol, { mode: "bulk" }).catch(() => {
 			const cached = getCachedSpot(upperSymbol);
 			if (cached && cached.quoteAgeMs <= 15 * 60 * 1000) return cached.data;
 			const candleSpot = getLastKnownSpotFromCandles(upperSymbol);
-			return candleSpot && candleSpot.ageMs <= 15 * 60 * 1000 ? candleSpot.data : null;
+			if (candleSpot && candleSpot.ageMs <= 15 * 60 * 1000) return candleSpot.data;
+			return null;
 		});
+		const { quote: freshSpot, meta: spotMeta } = getFreshScannerSpot(liveSpot, nowMs);
 		const live = await fetchLiveOHLC(upperSymbol, timeframe, "FULL");
 		const hasOhlcData = live.data.length > 0;
 		if (!hasOhlcData) {
 			const snapshotClose = Number.isFinite(tvSnapshot?.close as number) && (tvSnapshot?.close as number) > 0
 				? (tvSnapshot?.close as number)
 				: null;
-			const fallbackPrice = Number.isFinite(liveSpot?.spot as number) && (liveSpot?.spot as number) > 0
-				? (liveSpot?.spot as number)
+			const fallbackPrice = Number.isFinite(freshSpot?.spot as number) && (freshSpot?.spot as number) > 0
+				? (freshSpot?.spot as number)
 				: snapshotClose;
 			if (!Number.isFinite(fallbackPrice as number) || (fallbackPrice as number) <= 0) {
 				// If we have neither candles nor spot, skip this cycle for this symbol.
@@ -2438,8 +3073,8 @@ async function scanSymbol(
 			if (!Number.isFinite(prevClose as number) || (prevClose as number) <= 0) {
 				prevClose = fallbackPrice as number;
 			}
-			const priceChange = (fallbackPrice as number) - prevClose;
-			const priceChangePercent = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
+			const priceChange = (fallbackPrice as number) - (prevClose as number);
+			const priceChangePercent = (prevClose as number) > 0 ? (priceChange / (prevClose as number)) * 100 : 0;
 
 			const tvRsi = Number.isFinite(tvSnapshot?.rsi as number) ? (tvSnapshot?.rsi as number) : null;
 			const tvAdx = Number.isFinite(tvSnapshot?.adx as number) ? (tvSnapshot?.adx as number) : 0;
@@ -2568,6 +3203,7 @@ async function scanSymbol(
 				breakoutSignal,
 				compression: {
 					sparkScore: breakoutScore,
+					triggers: [],
 					phase: tvAdx >= 22 ? "READY" : tvAdx >= 18 ? "PREPARE" : "WAIT",
 					bbWidth: tvAdx >= 22 ? "0.80" : "1.20",
 					rangePct: "0.00",
@@ -2691,6 +3327,21 @@ async function scanSymbol(
 						rationale: "TV-derived directional setup while OHLC candles are unavailable.",
 					},
 				];
+			const fallbackExpectedOptionDirection = fallbackDirection === "bullish"
+				? "CALL"
+				: fallbackDirection === "bearish"
+					? "PUT"
+					: null;
+			const fallbackOptionsReadiness = computeOptionsReadiness({
+				breakoutScore,
+				momentumStrength,
+				preBreakoutSetup: fallbackPreBreakoutSetup,
+				edgeEngine: fallbackEdgeEngine,
+				timeframeStack: fallbackTimeframeStack,
+				signalQuality,
+				optionPlays: fallbackOptionPlays,
+				expectedDirection: fallbackExpectedOptionDirection,
+			});
 
 			const fallbackReasoning = [
 				"Intraday OHLC feed is delayed; using TradingView-derived structure.",
@@ -2704,6 +3355,7 @@ async function scanSymbol(
 				lastPrice: fallbackPrice as number,
 				priceChange,
 				priceChangePercent,
+				spotMeta,
 				volume: 0,
 				scanTime: Date.now(),
 				healthScore,
@@ -2737,6 +3389,7 @@ async function scanSymbol(
 				timeframeStack: fallbackTimeframeStack,
 				preBreakoutSetup: fallbackPreBreakoutSetup,
 				optionPlays: fallbackOptionPlays,
+				optionsReadiness: fallbackOptionsReadiness,
 				tradePlan: fallbackTradePlan,
 				edgeEngine: fallbackEdgeEngine,
 				setupReasoning: fallbackReasoning,
@@ -2760,7 +3413,7 @@ async function scanSymbol(
 			ohlc,
 			{ maxAbsGammaStrike: null },
 			sessionSplit,
-			liveSpot?.spot
+			freshSpot?.spot
 		);
 
 		const sortedPatterns = detectAllPatterns(ohlc, timeframe)
@@ -2769,21 +3422,17 @@ async function scanSymbol(
 
 		const lastCandle = ohlc[ohlc.length - 1];
 		const prevCandle = ohlc[ohlc.length - 2] ?? lastCandle;
-		const lastPrice = liveSpot?.spot ?? lastCandle.close;
+		const lastPrice = freshSpot?.spot ?? lastCandle.close;
 		const prevClose = liveSpot?.prevClose ?? prevCandle.close;
 		const priceChange = lastPrice - prevClose;
 		const priceChangePercent = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
-
-		const compression = analyzeCompression(ohlc);
-		const momentumStrength = computeMomentumStrength(ohlc);
-		const volumeSpike = computeVolumeSpike(ohlc);
-		const { isNewHigh, isNewLow } = computeRangeBreaks(ohlc);
-		const trendContext = computeTrendContext(ohlc);
-		const adaptiveTuning = getAdaptiveBreakoutTuning();
+		const brokenOhlcTape = hasBrokenOhlcTape({ lastCandle, freshSpot, spotMeta });
 
 		let microCandles: OHLC[] = [];
 		try {
-			if (timeframe === "5m") {
+			if (brokenOhlcTape) {
+				microCandles = [];
+			} else if (timeframe === "5m") {
 				microCandles = ohlc;
 			} else {
 				const micro = await fetchLiveOHLC(upperSymbol, "5m", "FULL");
@@ -2791,6 +3440,26 @@ async function scanSymbol(
 			}
 		} catch {
 			microCandles = [];
+		}
+
+		const compression = analyzeCompression(ohlc);
+		const baseMomentumStrength = brokenOhlcTape ? 0 : computeMomentumStrength(ohlc);
+		const volumeSpike = brokenOhlcTape ? 1 : computeVolumeSpike(ohlc);
+		const { isNewHigh, isNewLow } = brokenOhlcTape ? { isNewHigh: false, isNewLow: false } : computeRangeBreaks(ohlc);
+		const trendContext = computeTrendContext(ohlc);
+		const adaptiveTuning = getAdaptiveBreakoutTuning();
+		const stableMicroCandles = getStableClosedCandles(microCandles, "5m");
+		const microStackCandles = stableMicroCandles.length >= 24 ? stableMicroCandles : microCandles;
+		const microSnapshot = microStackCandles.length >= 24 ? buildTimeframeSignalSnapshot(microStackCandles) : null;
+		let momentumStrength = blendScannerMomentumStrength({
+			primaryMomentum: baseMomentumStrength,
+			microMomentum: microSnapshot?.momentumStrength,
+			microBreakoutSignal: microSnapshot?.breakoutSignal,
+			microBreakoutScore: microSnapshot?.breakoutScore,
+			priceChangePercent,
+		});
+		if (brokenOhlcTape) {
+			momentumStrength = 0;
 		}
 
 		const breakoutState = computeSignalAndSqueezeState(
@@ -2803,6 +3472,11 @@ async function scanSymbol(
 			adaptiveTuning,
 			trendContext
 		);
+		if (brokenOhlcTape) {
+			breakoutState.breakoutSignal = "CONSOLIDATING";
+			breakoutState.breakoutScore = Math.min(breakoutState.breakoutScore, 12);
+			breakoutState.expansionDirection = null;
+		}
 		const scanTime = Date.now();
 		const tvSignalContext = deriveTradingViewSignalContext(
 			tvSnapshot,
@@ -2869,7 +3543,7 @@ async function scanSymbol(
 			lastPrice
 		);
 
-		const { warnings, signalQuality } = computeWarningsAndQuality({
+		const warningPayload = computeWarningsAndQuality({
 			volumeSpike,
 			momentumStrength,
 			breakoutSignal: breakoutSignalForResult,
@@ -2883,13 +3557,21 @@ async function scanSymbol(
 			additionalWarnings: [...tvSignalContext.warnings, ...timeWindowWarnings],
 			timeWindowBias,
 		});
+		const warnings = [...warningPayload.warnings];
+		let signalQuality = warningPayload.signalQuality;
+		if (brokenOhlcTape) {
+			if (!warnings.includes("STALE_OHLC_SPOT_DIVERGENCE")) {
+				warnings.push("STALE_OHLC_SPOT_DIVERGENCE");
+			}
+			signalQuality = "UNRELIABLE";
+			breakoutSignalForResult = "CONSOLIDATING";
+			breakoutScoreForResult = Math.min(breakoutScoreForResult, 12);
+		}
 
 		const stablePrimaryCandles = getStableClosedCandles(ohlc, timeframe);
 		const primaryStackCandles = stablePrimaryCandles.length > 0 ? stablePrimaryCandles : ohlc;
-		const primaryCandleDirection = getLastCandleDirection(primaryStackCandles);
-		const stableMicroCandles = getStableClosedCandles(microCandles, "5m");
-		const microStackCandles = stableMicroCandles.length >= 24 ? stableMicroCandles : microCandles;
-		const microCandleDirection = getLastCandleDirection(microStackCandles);
+		const primaryCandleDirection = brokenOhlcTape ? "neutral" : getLastCandleDirection(primaryStackCandles);
+		const microCandleDirection = brokenOhlcTape ? "neutral" : getLastCandleDirection(microStackCandles);
 
 		const primaryStackInput: TimeframeStackInput = {
 			timeframe,
@@ -2900,8 +3582,7 @@ async function scanSymbol(
 			candleDirection: primaryCandleDirection,
 			weight: 0.64,
 		};
-		const microSnapshot = microStackCandles.length >= 24 ? buildTimeframeSignalSnapshot(microStackCandles) : null;
-		const microStackInput: TimeframeStackInput | null = microSnapshot
+		const microStackInput: TimeframeStackInput | null = !brokenOhlcTape && microSnapshot
 			? {
 				timeframe: "5m",
 				breakoutSignal: microSnapshot.breakoutSignal,
@@ -2914,28 +3595,8 @@ async function scanSymbol(
 			: null;
 		const timeframeStack = buildTimeframeStack(primaryStackInput, microStackInput);
 		const liveSarBias = computeParabolicSarBias(primaryStackCandles);
-		const edgeEngine = computeEdgeEngineSnapshot({
-			breakoutSignal: breakoutSignalForResult,
-			compression,
-			momentumStrength,
-			volumeSpike,
-			timeframeStack,
-			tvRsi: tvSnapshot?.rsi,
-			tvAdx: tvSnapshot?.adx,
-			tvRecommendAll: tvSnapshot?.recommendAll,
-			tvTrendDirection: tvSignalContext.trendDirection,
-			rsi: analysis.marketHealth?.rsi?.value,
-			macdHistogram: analysis.marketHealth?.macd?.histogram,
-			macdTrend: analysis.marketHealth?.macd?.trend,
-			bbPercentB: analysis.marketHealth?.bollingerBands?.percentB,
-			bbSqueeze: analysis.marketHealth?.bollingerBands?.squeeze,
-			stochasticK: analysis.marketHealth?.stochastic?.k,
-			stochasticD: analysis.marketHealth?.stochastic?.d,
-			adx: analysis.marketHealth?.adx?.value,
-			sarBias: liveSarBias,
-		});
 
-		let preBreakoutSetup = computePreBreakoutSetup({
+		let preBreakoutSetup = brokenOhlcTape ? undefined : computePreBreakoutSetup({
 			primaryCandles: ohlc,
 			microCandles,
 			breakoutSignal: breakoutSignalForResult,
@@ -2945,6 +3606,9 @@ async function scanSymbol(
 			expansionDirection: breakoutState.expansionDirection,
 			compression,
 			timeframeStack,
+			tvAdx: tvSnapshot?.adx,
+			tvRecommendAll: tvSnapshot?.recommendAll,
+			tvTrendDirection: tvSignalContext.trendDirection,
 		});
 
 		if (preBreakoutSetup && repeatedPatternSignal?.sampleSize != null && repeatedPatternSignal.sampleSize >= 3) {
@@ -2985,15 +3649,86 @@ async function scanSymbol(
 			warnings.push("PRE_BREAKOUT_IMMINENT");
 		}
 
-		const optionPlays = buildOptionPlaysFromAnalysis(
-			analysis,
-			monster,
-			resolveDirectionalBias(
+		const edgeEngine = computeEdgeEngineSnapshot({
+			breakoutSignal: breakoutSignalForResult,
+			breakoutScore: breakoutScoreForResult,
+			priceChangePercent,
+			compression,
+			momentumStrength,
+			volumeSpike,
+			timeframeStack,
+			preBreakoutSetup,
+			tvRsi: tvSnapshot?.rsi,
+			tvAdx: tvSnapshot?.adx,
+			tvRecommendAll: tvSnapshot?.recommendAll,
+			tvTrendDirection: tvSignalContext.trendDirection,
+			rsi: analysis.marketHealth?.rsi?.value,
+			macdHistogram: analysis.marketHealth?.macd?.histogram,
+			macdTrend: analysis.marketHealth?.macd?.trend,
+			bbPercentB: analysis.marketHealth?.bollingerBands?.percentB,
+			bbSqueeze: analysis.marketHealth?.bollingerBands?.squeeze,
+			stochasticK: analysis.marketHealth?.stochastic?.k,
+			stochasticD: analysis.marketHealth?.stochastic?.d,
+			adx: analysis.marketHealth?.adx?.value,
+			sarBias: liveSarBias,
+		});
+		const safeEdgeEngine = brokenOhlcTape
+			? {
+				signal: "WAIT" as EdgeSignal,
+				direction: "neutral" as DirectionalBias | "neutral",
+				state: "STANDBY" as EdgeState,
+				edgeScore: 0,
+				confidence: 0,
+				leadMinutes: 25,
+				triggerProbability: 0,
+				reasons: ["Directional tape invalid: fresh spot diverges from stale OHLC candles."],
+				indicators: {
+					rsi: roundTo(analysis.marketHealth?.rsi?.value ?? 50, 2),
+					macdHistogram: roundTo(analysis.marketHealth?.macd?.histogram ?? 0, 3),
+					macdTrend: analysis.marketHealth?.macd?.trend ?? "neutral",
+					bbPercentB: roundTo(analysis.marketHealth?.bollingerBands?.percentB ?? 50, 2),
+					bbSqueeze: Boolean(analysis.marketHealth?.bollingerBands?.squeeze),
+					stochasticK: roundTo(analysis.marketHealth?.stochastic?.k ?? 50, 2),
+					stochasticD: roundTo(analysis.marketHealth?.stochastic?.d ?? 50, 2),
+					adx: roundTo(analysis.marketHealth?.adx?.value ?? 0, 2),
+					tvRsi: roundTo(tvSnapshot?.rsi ?? analysis.marketHealth?.rsi?.value ?? 50, 2),
+					tvAdx: roundTo(tvSnapshot?.adx ?? analysis.marketHealth?.adx?.value ?? 0, 2),
+					tvRecommendAll: roundTo(tvSnapshot?.recommendAll ?? 0, 3),
+					momentum: 0,
+					volumeSpike: roundTo(volumeSpike, 2),
+					sarBias: liveSarBias,
+				},
+			}
+			: edgeEngine;
+
+		const optionDirectionHint = safeEdgeEngine.direction !== "neutral"
+			? safeEdgeEngine.direction
+			: resolveDirectionalBias(
 				breakoutSignalForResult,
 				breakoutState.expansionDirection,
 				momentumStrength,
-			),
+			);
+
+		const optionPlays = buildOptionPlaysFromAnalysis(
+			analysis,
+			monster,
+			optionDirectionHint,
 		);
+		const expectedOptionDirection = optionDirectionHint === "bullish"
+			? "CALL"
+			: optionDirectionHint === "bearish"
+				? "PUT"
+				: null;
+		const optionsReadiness = computeOptionsReadiness({
+			breakoutScore: breakoutScoreForResult,
+			momentumStrength,
+			preBreakoutSetup,
+			edgeEngine: safeEdgeEngine,
+			timeframeStack,
+			signalQuality,
+			optionPlays,
+			expectedDirection: expectedOptionDirection,
+		});
 		const tradePlan = analysis?.tactical?.tradePlan as ScannerTradePlan | undefined;
 		const baseSetupReasoning = Array.isArray(tradePlan?.confidenceReasons)
 			? tradePlan.confidenceReasons
@@ -3017,6 +3752,7 @@ async function scanSymbol(
 			lastPrice,
 			priceChange,
 			priceChangePercent,
+			spotMeta,
 			volume: lastCandle.volume ?? 0,
 			scanTime,
 			healthScore: analysis.marketHealth?.overallHealth ?? analysis.overall ?? 50,
@@ -3043,7 +3779,8 @@ async function scanSymbol(
 			timeframeStack,
 			preBreakoutSetup,
 			optionPlays,
-			edgeEngine,
+			optionsReadiness,
+			edgeEngine: safeEdgeEngine,
 			tradePlan,
 			setupReasoning,
 		};
@@ -3112,6 +3849,7 @@ async function scanSymbol(
 				tvRecommendAll: result.tvRecommendAll,
 				tvTrendDirection: result.tvTrendDirection,
 				tvTrendStrength: result.tvTrendStrength,
+				optionsReadiness: result.optionsReadiness,
 				edgeEngine: result.edgeEngine
 					? {
 						signal: result.edgeEngine.signal,
@@ -3141,7 +3879,12 @@ async function runScanCycle(): Promise<void> {
 
 	try {
 		const symbols = Array.from(state.watchlist);
-		const tvBySymbol = await getTradingViewIndicatorMap(symbols);
+		let tvBySymbol = new Map<string, TradingViewSnapshot>();
+		try {
+			tvBySymbol = await getTradingViewIndicatorMap(symbols);
+		} catch (error) {
+			console.warn("[Scanner] TradingView snapshot fetch failed; continuing without TV overlay.", error);
+		}
 		const now = Date.now();
 		for (const symbol of symbols) {
 			const upperSymbol = normalizeSymbol(symbol);
@@ -3162,6 +3905,8 @@ async function runScanCycle(): Promise<void> {
 
 		state.lastScanTime = Date.now();
 		pushScannerStabilitySnapshot(state.lastScanTime);
+	} catch (error) {
+		console.error("[Scanner] Scan cycle failed:", error);
 	} finally {
 		state.scanInFlight = false;
 	}
@@ -3176,6 +3921,10 @@ export function startScanner(): void {
 }
 
 export function getScannerStatus(): ScannerStatus {
+	if (!state.scanTimer) {
+		startScanner();
+	}
+
 	return {
 		isScanning: state.scanTimer !== null,
 		lastScanTime: state.lastScanTime,
@@ -3291,6 +4040,10 @@ export function getScannerStability(
 }
 
 export function getScannerResults(): ScannerResult[] {
+	if (!state.scanTimer) {
+		startScanner();
+	}
+
 	const watchlistOrder = new Map<string, number>();
 	Array.from(state.watchlist).forEach((symbol, idx) => {
 		watchlistOrder.set(symbol, idx);

@@ -10,6 +10,13 @@ export type DisplayOutcome = 'win' | 'loss' | 'pending';
 export type HitTarget = 'T1' | 'T2' | 'T3' | 'STOP' | 'MISS';
 export type SignalSource = 'fusion' | 'scanner';
 
+export interface SignalQuoteMeta {
+  timestamp?: string;
+  source?: string;
+  quoteAgeMs?: number;
+  isFresh?: boolean;
+}
+
 type ScannerRecordGate = {
   minConfidencePct: number;
   minGatingScore: number;
@@ -163,6 +170,7 @@ const SCANNER_ADAPTIVE_MAX_EDGE_SHIFT = 0.05;
 const SCANNER_ADAPTIVE_MAX_INTERVAL_SHIFT = 8;
 const SIGNAL_OUTCOME_TIMEOUT_MINS = 75;
 const SIGNAL_OUTCOME_TIMEOUT_MOVE_PCT = 0.1;
+const OPPOSITE_SIGNAL_PRICE_DRIFT_PCT = 0.0015;
 
 const HARD_BLOCK_REASON_PATTERN = /risk override|global gate failed|late move|no new setups|monster gate conflict|suppressing continuation|low_live_coverage|wait for breakout|consolidation/i;
 
@@ -785,7 +793,7 @@ export function recordSignal(
   price: number,
   unifiedSignal: UnifiedSignal,
   monsterGate?: { value: number; direction: string },
-  options?: { source?: SignalSource }
+  options?: { source?: SignalSource; quoteMeta?: SignalQuoteMeta }
 ): void {
   const now = Date.now();
   ensureDailyRollover(now);
@@ -815,6 +823,7 @@ export function recordSignal(
     ? Number(unifiedSignal.gatingScore)
     : Number(unifiedSignal.gatingState?.gatingScore || 0) * 100;
   const reasons = unifiedSignal.gatingState?.reasons || [];
+  const quoteMeta = options?.quoteMeta;
   
   const directionalProbs = unifiedSignal.directionalProbs || { up: 0, down: 0, chop: 1 };
   const upProb = Number.isFinite(directionalProbs.up) ? directionalProbs.up : 0;
@@ -850,6 +859,14 @@ export function recordSignal(
     if (!Number.isFinite(prev)) return true;
     return Math.abs(confidencePct - Number(prev)) >= 8;
   })();
+
+  if (quoteMeta && quoteMeta.isFresh === false) {
+    if (process.env.DEBUG_SIGNALS === '1') {
+      const ageSec = quoteMeta.quoteAgeMs != null ? Math.round(quoteMeta.quoteAgeMs / 1000) : 'unknown';
+      console.warn(`[SignalHistory] Skipping ${sym} ${currentDirection} record on stale quote (${ageSec}s, ${quoteMeta.source ?? 'unknown'}).`);
+    }
+    return;
+  }
   
   // Record only actionable directional signals that pass hard quality constraints.
   if (!actionableState || !actionableDirection) return;
@@ -865,6 +882,14 @@ export function recordSignal(
     if (existing.direction !== 'CALL' && existing.direction !== 'PUT') return false;
     if (existing.direction === snapshotDirection) return false;
     return (now - existing.timestamp) / 60000 < DIRECTION_FLIP_COOLDOWN_MINS;
+  });
+  const hasRecentOppositePendingNearPrice = signalHistory[sym].some((existing) => {
+    if (existing.outcome !== 'pending') return false;
+    if (existing.direction !== 'CALL' && existing.direction !== 'PUT') return false;
+    if (existing.direction === snapshotDirection) return false;
+    if ((now - existing.timestamp) / 60000 >= DIRECTION_FLIP_COOLDOWN_MINS) return false;
+    const baseline = Math.max(Math.abs(existing.priceAtCapture), Math.abs(price), 1);
+    return Math.abs(existing.priceAtCapture - price) / baseline <= OPPOSITE_SIGNAL_PRICE_DRIFT_PCT;
   });
   const flipNeedsConfirmation =
     isDirectionFlip &&
@@ -882,6 +907,7 @@ export function recordSignal(
     !hasHardBlockReason;
 
   if (!passesQualityGate) return;
+  if (hasRecentOppositePendingNearPrice) return;
   if (flipNeedsConfirmation && !flipConfirmed) return;
   const rawTargets = (
     Array.isArray(unifiedSignal.targets) && unifiedSignal.targets.length > 0
@@ -945,6 +971,9 @@ export function recordSignal(
   appendSystemAudit('signal.recorded', {
     symbol: sym,
     source,
+    quoteSource: quoteMeta?.source ?? null,
+    quoteTimestamp: quoteMeta?.timestamp ?? null,
+    quoteAgeMs: quoteMeta?.quoteAgeMs ?? null,
     direction: snapshot.direction,
     grade: snapshot.grade,
     state: snapshot.state,
@@ -978,9 +1007,11 @@ export function recordSignal(
 export function updateOutcomes(
   symbol: string,
   currentPrice: number,
-  context?: { high?: number; low?: number; now?: number }
+  context?: { high?: number; low?: number; now?: number; quoteMeta?: SignalQuoteMeta }
 ): void {
   ensureDailyRollover(context?.now ?? Date.now());
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+  if (context?.quoteMeta && context.quoteMeta.isFresh === false) return;
   const sym = symbol.toUpperCase();
   const history = signalHistory[sym];
   if (!history) return;
@@ -1102,6 +1133,9 @@ export function updateOutcomes(
       appendSystemAudit('signal.resolved', {
         symbol: signal.symbol,
         source: signal.source || 'fusion',
+        quoteSource: context?.quoteMeta?.source ?? null,
+        quoteTimestamp: context?.quoteMeta?.timestamp ?? null,
+        quoteAgeMs: context?.quoteMeta?.quoteAgeMs ?? null,
         direction: signal.direction,
         grade: signal.grade,
         outcome: signal.outcome,

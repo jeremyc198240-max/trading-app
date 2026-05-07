@@ -1,0 +1,290 @@
+
+> rest-express@1.0.0 build
+> tsx script/build.ts
+
+[36mvite v6.4.1 [32mbuilding for production...[36m[39m
+transforming...
+cmd : [33m[vite:css][postcss] @import must precede all other statements 
+(besides @charset or empty @layer)
+At line:1 char:72
++ ... app march 4 th" ; cmd /c npm run build > build-error.txt 2>&1 ; type  ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33m[vite:css]...r empty @layer) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+3  |  @tailwind utilities;
+4  |  
+5  |  @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@
+400;500;600;700&family=Sora:wght@500;600;700;800&family=JetBrains+Mono:wght@400
+;500;600&display=swap");
+   |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^
+6  |  
+7  |  @layer base {[39m
+[32mΓ£ô[39m 149 modules transformed.
+[31mΓ£ù[39m Build failed in 3.10s
+Build failed [31m[vite:esbuild] Transform failed with 1 error:
+C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MLCalibrationGauge.tsx:447:19: ERROR: Expected 
+identifier but found "/"[39m
+file: [36mC:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MLCalibrationGauge.tsx:447:19[39m
+[33m
+[33mExpected identifier but found "/"[33m
+445|  }
+446|  
+447|                    </div>
+   |                     ^
+448|                    <p className="mt-1 text-sm font-semibold 
+text-slate-100">{calibrationData.unifiedOptionsPlay.direction === 'CALLS' ? 
+'Call Play' : 'Put Play'}</p>
+449|                  </div>
+[39m
+    at failureErrorWithLog (C:\Users\jerem\Desktop\New folder\app march 9 
+th\app march 4 th\node_modules\esbuild\lib\main.js:1467:15)
+    at C:\Users\jerem\Desktop\New folder\app march 9 th\app march 4 
+th\node_modules\esbuild\lib\main.js:736:50
+    at responseCallbacks.<computed> (C:\Users\jerem\Desktop\New folder\app 
+march 9 th\app march 4 th\node_modules\esbuild\lib\main.js:603:9)
+    at handleIncomingPacket (C:\Users\jerem\Desktop\New folder\app march 9 
+th\app march 4 th\node_modules\esbuild\lib\main.js:658:12)
+    at Socket.readFromStdout (C:\Users\jerem\Desktop\New folder\app march 9 
+th\app march 4 th\node_modules\esbuild\lib\main.js:581:7)
+    at Socket.emit (node:events:508:28)
+    at addChunk (node:internal/streams/readable:563:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:514:3)
+    at Readable.push (node:internal/streams/readable:394:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23) {
+  errors: [Getter/Setter],
+  warnings: [Getter/Setter],
+  frame: '\n' +
+    '\x1B[33mExpected identifier but found "/"\x1B[39m\n' +
+    '445|  }\n' +
+    '446|  \n' +
+    '447|                    </div>\n' +
+    '   |                     ^\n' +
+    `448|                    <p className="mt-1 text-sm font-semibold 
+text-slate-100">{calibrationData.unifiedOptionsPlay.direction === 'CALLS' ? 
+'Call Play' : 'Put Play'}</p>\n` +
+    '449|                  </div>\n',
+  loc: {
+    column: 19,
+    file: 'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MLCalibrationGauge.tsx',
+    length: 1,
+    line: 447,
+    lineText: '                  </div>',
+    namespace: '',
+    suggestion: ''
+  },
+  code: 'PLUGIN_ERROR',
+  plugin: 'vite:esbuild',
+  hook: 'transform',
+  id: 'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MLCalibrationGauge.tsx',
+  watchFiles: [
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/index.html',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/main.tsx',
+    'C:\\Users\\jerem\\Desktop\\New folder\\app march 9 th\\app march 4 
+th\\package.json',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/node_modules/react/jsx-runtime.js',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/node_modules/react-dom/client.js',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/App.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/index.css',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/hooks/use-toast.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/lib/compressionSignal.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/lib/queryClient.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/lib/utils.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/patterns/patternRegistry.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/patterns/patternToGeometry.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/patterns/smcGeometry.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/vite-env.d.ts',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/CompressionStatusCard.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ConfidenceMeter.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/EdgeAlertBar.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/EdgeTuningCard.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/FusionPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/GammaGhostPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/GradeDisplay.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/LoadingSkeleton.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MarketHealth.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MetaEnginePanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MetaSignalPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MetricCard.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MLCalibrationGauge.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/MonsterOTMPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/OptionPlayDropdown.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/PatternDetailPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/PatternDetails.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/PatternListPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/PatternOverlay.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/PriceChart.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ProtectedRoute.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ScannerPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/SignalCard.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/SignalHistoryPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/TacticalAdvicePanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/TermsAcceptanceModal.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ThemeProvider.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ThemeToggle.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/TickerInput.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/TimeframeSelector.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/TradeAnalysisPanel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/accordion.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/alert-dialog.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/alert.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/aspect-ratio.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/avatar.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/badge.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/breadcrumb.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/button.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/calendar.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/card.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/carousel.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/chart.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/checkbox.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/collapsible.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/command.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/context-menu.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/dialog.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/drawer.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/dropdown-menu.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/form.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/hover-card.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/input-otp.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/input.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/label.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/menubar.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/navigation-menu.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/pagination.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/popover.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/progress.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/radio-group.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/resizable.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/scroll-area.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/select.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/separator.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/sheet.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/sidebar.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/skeleton.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/slider.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/switch.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/table.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/tabs.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/textarea.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/toast.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/toaster.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/toggle-group.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/toggle.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/components/ui/tooltip.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/hooks/use-mobile.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/CheckoutSuccess.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/Dashboard.pre-restore-20260309_193106.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/Dashboard.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/LandingPage.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/LoginPage.tsx',
+    'C:/Users/jerem/Desktop/New folder/app march 9 th/app march 4 
+th/client/src/pages/ManageSubscription.tsx',
+    ... 113 more items
+  ]
+}

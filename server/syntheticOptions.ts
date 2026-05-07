@@ -234,14 +234,14 @@ function scoreContract(
     monsterGate = 8;
   }
   
-  // Delta score (0-20) - Sweet spot is 0.20-0.40
+  // Delta score (0-20) - Sweet spot is low-delta momentum (0.14-0.30)
   let deltaScore = 0;
-  if (delta >= 0.20 && delta <= 0.40) {
+  if (delta >= 0.14 && delta <= 0.30) {
     deltaScore = 20;
-    reasons.push('Optimal delta range');
-  } else if (delta >= 0.15 && delta <= 0.50) {
+    reasons.push('Low-delta sweet spot');
+  } else if (delta >= 0.10 && delta <= 0.36) {
     deltaScore = 15;
-  } else if (delta >= 0.10 && delta <= 0.60) {
+  } else if (delta >= 0.08 && delta <= 0.45) {
     deltaScore = 10;
   } else {
     deltaScore = 5;
@@ -328,15 +328,21 @@ function modelPremiumExpansion(
   // Vega impact from volatility expansion
   const vegaBoost = volatilityRegime > 0.6 ? premium * 0.1 : 0;
   
-  const netGain = deltaGain + gammaGain - thetaLoss + vegaBoost;
-  const targetPremium = premium + netGain;
-  const expansionPercent = (netGain / premium) * 100;
+  let netGain = deltaGain + gammaGain - thetaLoss + vegaBoost;
+  const maxGain = premium * 1.35;
+  const maxLoss = premium * 0.65;
+  netGain = Math.max(-maxLoss, Math.min(maxGain, netGain));
+
+  const rawTargetPremium = premium + netGain;
+  const targetPremium = Math.min(premium * 2.35, Math.max(premium * 1.05, rawTargetPremium));
+  const expansionPercent = ((targetPremium - premium) / premium) * 100;
   
   // Stop loss at 40% of premium
-  const riskAmount = premium * 0.4;
-  const stopPremium = premium * 0.6;
+  const riskAmount = premium * 0.45;
+  const stopPremium = premium * 0.55;
   
-  const rrRatio = netGain > 0 ? netGain / riskAmount : 0;
+  const rrRatioRaw = targetPremium > premium ? (targetPremium - premium) / riskAmount : 0;
+  const rrRatio = Math.max(0, Math.min(4.5, rrRatioRaw));
   
   // Confidence based on setup quality
   let confidence = 50;
@@ -355,6 +361,16 @@ function modelPremiumExpansion(
   if (volatilityRegime > 0.7) {
     confidence -= 10;
     notes.push('High volatility risk');
+  }
+
+  if (premium < 0.15) {
+    confidence -= 12;
+    notes.push('Very low premium uncertainty');
+  }
+
+  if (delta < 0.1) {
+    confidence -= 8;
+    notes.push('Delta too low for reliable fill');
   }
   
   confidence = Math.max(0, Math.min(100, confidence));
@@ -489,8 +505,20 @@ export function generateSyntheticChain(
     c.rank = i + 1;
   });
   
-  // Top 5 plays
-  const topPlays = allContracts.slice(0, 5);
+  const preferred = allContracts
+    .filter((c) => c.greeks.delta >= 0.1 && c.greeks.delta <= 0.32)
+    .filter((c) => c.expansion.confidence >= 55)
+    .filter((c) => c.expansion.rrRatio >= 1.2)
+    .filter((c) => c.score.total >= 50)
+    .filter((c) => (c.side === 'call' ? c.strike >= lastPrice : c.strike <= lastPrice))
+    .sort((a, b) => {
+      const aBlend = a.score.total + a.expansion.confidence * 0.4 + a.expansion.rrRatio * 8 - Math.abs(a.greeks.delta - 0.22) * 40;
+      const bBlend = b.score.total + b.expansion.confidence * 0.4 + b.expansion.rrRatio * 8 - Math.abs(b.greeks.delta - 0.22) * 40;
+      return bBlend - aBlend;
+    });
+
+  // Top 5 plays, preferring low-delta high-probability contracts.
+  const topPlays = (preferred.length > 0 ? preferred : allContracts).slice(0, 5);
   topPlays.forEach(c => { c.isRecommended = true; });
   
   // Monster play (if available)
@@ -499,7 +527,9 @@ export function generateSyntheticChain(
     const side = pce.direction === 'bullish' ? 'call' : 'put';
     const candidates = (side === 'call' ? calls : puts)
       .filter(c => c.expiration.type === '0DTE' || c.expiration.daysToExpiry <= 2)
-      .filter(c => c.greeks.delta >= 0.20 && c.greeks.delta <= 0.45);
+      .filter(c => c.greeks.delta >= 0.12 && c.greeks.delta <= 0.30)
+      .filter(c => c.expansion.confidence >= 60)
+      .filter(c => c.expansion.rrRatio >= 1.3);
     
     if (candidates.length > 0) {
       candidates.sort((a, b) => b.score.total - a.score.total);
@@ -551,9 +581,9 @@ export function getMonsterOTMPanelData(
   let summary = '';
   if (hasMonsterPlay && chain.monsterPlay) {
     const mp = chain.monsterPlay;
-    summary = `MONSTER ${mp.side.toUpperCase()} $${mp.strike} (${mp.expiration.label}) - Score ${mp.score.total}/100 - ${mp.expansion.expansionPercent.toFixed(0)}% expansion potential`;
+    summary = `MONSTER ${mp.side.toUpperCase()} $${mp.strike} (${mp.expiration.label}) - Score ${mp.score.total}/100 - Model confidence ${Math.round(mp.expansion.confidence)}%`;
   } else if (topPlay) {
-    summary = `Top play: ${topPlay.side.toUpperCase()} $${topPlay.strike} (${topPlay.expiration.label}) - Score ${topPlay.score.total}/100`;
+    summary = `Top play: ${topPlay.side.toUpperCase()} $${topPlay.strike} (${topPlay.expiration.label}) - Score ${topPlay.score.total}/100 - Delta ${Math.round(topPlay.greeks.delta * 100)}`;
   } else {
     summary = 'No high-conviction plays detected. Wait for PCE setup.';
   }

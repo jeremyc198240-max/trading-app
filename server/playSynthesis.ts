@@ -22,6 +22,10 @@ interface SynthesizePlayParams {
   isSynthetic: boolean;
 }
 
+const LOW_DELTA_MIN = 0.1;
+const LOW_DELTA_MAX = 0.32;
+const DELTA_TARGET = 0.22;
+
 function fusedScore(
   contract: SyntheticContract,
   pce: PCESignal,
@@ -32,9 +36,10 @@ function fusedScore(
   const gateScore = pce.quality === 'A' ? 100 : pce.quality === 'B' ? 75 : pce.quality === 'C' ? 50 : 25;
   
   const delta = contract.greeks.delta;
-  const deltaScore = Math.max(0, 20 - Math.abs(delta - 0.3) * 100);
+  const deltaScore = Math.max(0, 20 - Math.abs(delta - DELTA_TARGET) * 140);
   
   const rrScore = Math.max(0, Math.min(20, (contract.expansion.rrRatio - 1) * 10));
+  const expansionConfidence = Math.max(0, Math.min(100, contract.expansion.confidence));
   
   const total =
     contractScore * 0.35 +
@@ -42,7 +47,8 @@ function fusedScore(
     gateScore * 0.15 +
     unifiedConfidence * 0.15 +
     rrScore * 0.10 +
-    deltaScore * 0.10;
+    deltaScore * 0.10 +
+    expansionConfidence * 0.10;
 
   return Math.round(Math.max(0, Math.min(100, total)));
 }
@@ -58,18 +64,30 @@ export function synthesizeMonsterPlay(params: SynthesizePlayParams): UnifiedOpti
 
   if (!contracts || contracts.length === 0) return null;
 
-  const expectedMovePercent = expectedMove / spot;
-
   const viable = contracts.filter((c) => {
     const delta = c.greeks.delta;
-    const deltaOk = delta >= 0.15 && delta <= 0.50;
+    const deltaOk = delta >= LOW_DELTA_MIN && delta <= LOW_DELTA_MAX;
 
     const strikeDistance = Math.abs(c.strike - spot);
-    const withinExpectedMove = strikeDistance <= expectedMove * 1.5;
+    const minDistance = Math.max(0.01, expectedMove * 0.12);
+    const maxDistance = Math.max(0.1, expectedMove * 1.1);
+    const withinExpectedMove = strikeDistance >= minDistance && strikeDistance <= maxDistance;
 
-    const rrOk = c.expansion.rrRatio >= 1.0;
+    const directionalOTM =
+      (direction === 'CALLS' && c.strike >= spot) ||
+      (direction === 'PUTS' && c.strike <= spot);
 
-    return deltaOk && withinExpectedMove && rrOk;
+    const confidenceOk = c.expansion.confidence >= 55;
+    const scoreOk = c.score.total >= 50;
+
+    if (isSynthetic) {
+      const premiumOk = c.premium >= 0.08 && c.premium <= spot * 0.12;
+      if (!premiumOk) return false;
+    }
+
+    const rrOk = c.expansion.rrRatio >= 1.2;
+
+    return deltaOk && withinExpectedMove && directionalOTM && rrOk && confidenceOk && scoreOk;
   });
 
   if (viable.length === 0) return null;
@@ -113,7 +131,12 @@ export function synthesizeMonsterPlay(params: SynthesizePlayParams): UnifiedOpti
   }
 
   reasons.push({
-    label: `Delta ${Math.round(c.greeks.delta * 100)} in optimal range`,
+    label: `Low-delta lane ${Math.round(c.greeks.delta * 100)} (${Math.round(LOW_DELTA_MIN * 100)}-${Math.round(LOW_DELTA_MAX * 100)})`,
+    weight: 0.1,
+  });
+
+  reasons.push({
+    label: `Model confidence ${Math.round(c.expansion.confidence)}%`,
     weight: 0.1,
   });
 

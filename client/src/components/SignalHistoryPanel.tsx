@@ -118,6 +118,30 @@ interface BreakoutSummarySlice {
   winRate: number;
 }
 
+type AlertCardMode = 'PREPARE' | 'EXECUTE';
+
+interface BreakoutPrepareSummary extends BreakoutSummarySlice {
+  promoted: number;
+  promotionRate: number;
+  avgResolutionMins: number;
+}
+
+interface BreakoutLeadProfileSummary extends BreakoutSummarySlice {
+  key: string;
+  label: string;
+  signal: string;
+  direction: 'bullish' | 'bearish' | 'neutral';
+  etaBucket: string;
+  setupBucket: string;
+  edgeState: string;
+  readinessBucket: string;
+  promoted: number;
+  promotionRate: number;
+  avgResolutionMins: number;
+  avgBreakoutScore: number;
+  avgOptionsReadiness: number;
+}
+
 interface BreakoutSummaryData {
   success: boolean;
   summary: {
@@ -125,7 +149,10 @@ interface BreakoutSummaryData {
     sample: BreakoutSummarySlice;
     bySignal: Record<string, BreakoutSummarySlice>;
     byDirection: Record<string, BreakoutSummarySlice>;
+    byMode: Record<AlertCardMode, BreakoutSummarySlice>;
+    prepare: BreakoutPrepareSummary;
     avgResolutionMins: number;
+    topLeadProfiles: BreakoutLeadProfileSummary[];
   };
   timestamp: number;
 }
@@ -140,6 +167,13 @@ interface BreakoutLogEntry {
   breakoutScore: number;
   momentumStrength: number;
   volumeSpike: number;
+  signal: 'BREAKOUT' | 'BREAKDOWN' | 'SQUEEZE' | 'CONSOLIDATING' | 'EXPANSION' | 'BUILDING' | 'MOMENTUM';
+  mode?: AlertCardMode;
+  prepareOutcome?: 'pending' | 'promoted' | 'win_t1' | 'win_t2' | 'loss' | 'missed';
+  promotedFromId?: string;
+  optionsReadiness?: {
+    score?: number;
+  };
   outcome: 'win_t1' | 'win_t2' | 'loss' | 'pending' | 'missed';
 }
 
@@ -148,6 +182,13 @@ interface BreakoutLogData {
   symbol: string | null;
   entries: BreakoutLogEntry[];
   timestamp: number;
+}
+
+function getBreakoutMode(entry: Pick<BreakoutLogEntry, 'mode' | 'signal'>): AlertCardMode {
+  if (entry.mode === 'PREPARE' || entry.mode === 'EXECUTE') return entry.mode;
+  return entry.signal === 'BUILDING' || entry.signal === 'SQUEEZE' || entry.signal === 'CONSOLIDATING'
+    ? 'PREPARE'
+    : 'EXECUTE';
 }
 
 export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
@@ -268,14 +309,51 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
   const breakoutSummary = breakoutSummaryData?.summary;
   const breakoutSample = breakoutSummary?.sample;
   const breakoutEntries = breakoutLogData?.entries ?? [];
+  const executeEntries = breakoutEntries.filter((entry) => getBreakoutMode(entry) === 'EXECUTE');
+  const uniqueBreakoutKeys = new Set(
+    breakoutEntries.map((entry) => [getBreakoutMode(entry), entry.symbol, entry.signal, entry.direction].join('|')),
+  );
   const breakoutLookbackHours = breakoutSummary?.lookbackHours ?? 48;
   const breakoutCompleted = breakoutSample?.completed ?? 0;
-  const breakoutWinRate = breakoutSample?.winRate ?? 0;
+  const breakoutWinRate = breakoutSummary?.byMode?.EXECUTE?.winRate ?? breakoutSample?.winRate ?? 0;
   const breakoutAvgResolutionMins = breakoutSummary?.avgResolutionMins ?? 0;
+  const prepareSummary = breakoutSummary?.prepare;
+  const prepareCards = breakoutSummary?.byMode?.PREPARE;
+  const executeCards = breakoutSummary?.byMode?.EXECUTE;
+  const topLeadProfiles = breakoutSummary?.topLeadProfiles ?? [];
 
-  const resolvedBreakouts = breakoutEntries.filter((entry) => entry.outcome !== 'pending');
+  const resolvedBreakouts = executeEntries.filter((entry) => entry.outcome !== 'pending');
+  const uniqueResolvedBreakoutKeys = new Set(
+    resolvedBreakouts.map((entry) => [getBreakoutMode(entry), entry.symbol, entry.signal, entry.direction].join('|')),
+  );
   const breakoutWins = resolvedBreakouts.filter((entry) => entry.outcome === 'win_t1' || entry.outcome === 'win_t2');
   const breakoutLossLike = resolvedBreakouts.filter((entry) => entry.outcome === 'loss' || entry.outcome === 'missed');
+  const executeCompleted = executeCards?.completed ?? resolvedBreakouts.length;
+  const executeHitRate = executeCompleted > 0
+    ? ((executeCards?.wins ?? breakoutWins.length) / executeCompleted) * 100
+    : 0;
+  const executeMissRate = executeCompleted > 0
+    ? ((executeCards?.missed ?? resolvedBreakouts.filter((entry) => entry.outcome === 'missed').length) / executeCompleted) * 100
+    : 0;
+  const duplicateResolvedShare = resolvedBreakouts.length > 0
+    ? Math.max(0, (resolvedBreakouts.length - uniqueResolvedBreakoutKeys.size) / resolvedBreakouts.length)
+    : 0;
+  const directionalCounts = breakoutEntries.reduce(
+    (acc, entry) => {
+      if (entry.direction === 'bullish') acc.bullish += 1;
+      if (entry.direction === 'bearish') acc.bearish += 1;
+      return acc;
+    },
+    { bullish: 0, bearish: 0 },
+  );
+  const directionalTotal = directionalCounts.bullish + directionalCounts.bearish;
+  const dominantDirection = directionalCounts.bullish >= directionalCounts.bearish ? 'bullish' : 'bearish';
+  const dominantDirectionShare = directionalTotal > 0
+    ? Math.max(directionalCounts.bullish, directionalCounts.bearish) / directionalTotal
+    : 0;
+  const preparePendingShare = (prepareCards?.total ?? 0) > 0
+    ? (prepareCards?.pending ?? 0) / (prepareCards?.total ?? 1)
+    : 0;
 
   const average = (values: number[]): number => {
     if (values.length === 0) return 0;
@@ -289,7 +367,12 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
   const winVolume = breakoutWins.map((entry) => entry.volumeSpike).filter((value) => Number.isFinite(value));
   const lossVolume = breakoutLossLike.map((entry) => entry.volumeSpike).filter((value) => Number.isFinite(value));
 
-  const hasKnobSample = breakoutCompleted >= 6 && breakoutWins.length >= 2 && breakoutLossLike.length >= 2;
+  const hasKnobSample =
+    resolvedBreakouts.length >= 6 &&
+    breakoutWins.length >= 2 &&
+    breakoutLossLike.length >= 2 &&
+    duplicateResolvedShare < 0.45 &&
+    dominantDirectionShare < 0.75;
   const suggestedScoreFloor = hasKnobSample
     ? Math.max(58, Math.min(92, Math.round((average(winScores) + average(lossScores)) / 2)))
     : null;
@@ -299,6 +382,32 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
   const suggestedVolumeFloor = hasKnobSample
     ? Math.max(1.0, Math.min(2.2, Math.round(((average(winVolume) + average(lossVolume)) / 2) * 100) / 100))
     : null;
+  const knobSampleMessage = resolvedBreakouts.length < 6
+    ? 'Need at least 6 resolved execute cards before auto-suggesting filter knobs.'
+    : breakoutWins.length < 2 || breakoutLossLike.length < 2
+    ? 'Need a balanced mix of execute wins and failures before trusting auto-suggested filter knobs.'
+    : duplicateResolvedShare >= 0.45
+    ? 'Resolved execute sample is too repetitive right now, so filter knobs would overfit the same symbols.'
+    : dominantDirectionShare >= 0.75
+    ? 'Breakout sample is too one-sided right now, so filter knobs would bias toward one tape regime.'
+    : 'Need at least 6 completed breakout cards with both wins and losses before auto-suggesting filter knobs.';
+  const breakoutWarnings: string[] = [];
+
+  if ((dailyTuningData?.entries?.length ?? 0) === 0) {
+    breakoutWarnings.push('Daily tuning archive is empty, so Daily Tuning Intel is still running live-only and can reset on restart.');
+  }
+  if (duplicateResolvedShare >= 0.45 && resolvedBreakouts.length >= 6) {
+    breakoutWarnings.push(`${Math.round(duplicateResolvedShare * 100)}% of resolved execute cards are repeat symbol buckets, so the sample is less independent than it looks.`);
+  }
+  if (dominantDirectionShare >= 0.75 && directionalTotal >= 8) {
+    breakoutWarnings.push(`${dominantDirection.toUpperCase()} cards make up ${Math.round(dominantDirectionShare * 100)}% of the breakout sample in this window.`);
+  }
+  if (executeCompleted >= 4 && breakoutWinRate - executeHitRate >= 15) {
+    breakoutWarnings.push(`Decisive execute win rate is ${breakoutWinRate.toFixed(0)}%, but effective hit rate drops to ${executeHitRate.toFixed(0)}% once misses are counted.`);
+  }
+  if (preparePendingShare >= 0.3 && (prepareCards?.total ?? 0) >= 6) {
+    breakoutWarnings.push(`${prepareCards?.pending ?? 0} prepare cards are still unresolved, so promotion guidance is still maturing.`);
+  }
 
   const signalLeaderboard = breakoutSummary
     ? Object.entries(breakoutSummary.bySignal)
@@ -466,14 +575,34 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
                   tone="neutral"
                 />
                 <MetricPill
-                  label="Completed"
-                  value={`${breakoutCompleted}`}
-                  tone={breakoutCompleted >= 6 ? 'good' : 'warn'}
+                  label="Unique"
+                  value={`${uniqueBreakoutKeys.size}`}
+                  tone={uniqueBreakoutKeys.size >= 8 ? 'good' : uniqueBreakoutKeys.size >= 5 ? 'warn' : 'bad'}
                 />
                 <MetricPill
-                  label="Win %"
-                  value={`${breakoutWinRate.toFixed(0)}%`}
-                  tone={breakoutWinRate >= 60 ? 'good' : breakoutWinRate >= 50 ? 'warn' : 'bad'}
+                  label="Prepare"
+                  value={`${prepareCards?.total ?? 0}`}
+                  tone={(prepareCards?.total ?? 0) >= 4 ? 'good' : 'warn'}
+                />
+                <MetricPill
+                  label="Execute"
+                  value={`${executeCards?.total ?? 0}`}
+                  tone={(executeCards?.total ?? 0) >= 3 ? 'good' : 'warn'}
+                />
+                <MetricPill
+                  label="Promo %"
+                  value={`${prepareSummary?.promotionRate?.toFixed(0) ?? '0'}%`}
+                  tone={(prepareSummary?.promotionRate ?? 0) >= 40 ? 'good' : (prepareSummary?.promotionRate ?? 0) >= 20 ? 'warn' : 'bad'}
+                />
+                <MetricPill
+                  label="Exec Hit %"
+                  value={`${executeHitRate.toFixed(0)}%`}
+                  tone={executeHitRate >= 60 ? 'good' : executeHitRate >= 45 ? 'warn' : 'bad'}
+                />
+                <MetricPill
+                  label="Miss %"
+                  value={`${executeMissRate.toFixed(0)}%`}
+                  tone={executeMissRate <= 15 ? 'good' : executeMissRate <= 30 ? 'warn' : 'bad'}
                 />
                 <MetricPill
                   label="Avg Resolve"
@@ -481,6 +610,49 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
                   tone={breakoutAvgResolutionMins > 0 && breakoutAvgResolutionMins <= 90 ? 'good' : breakoutAvgResolutionMins > 0 ? 'warn' : 'neutral'}
                 />
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="rounded-lg border border-amber-500/25 bg-black/25 p-2">
+                  <div className="mb-1 text-[9px] uppercase tracking-[0.12em] text-amber-200/85">Prepare Flow</div>
+                  <div className="text-sm font-mono font-semibold text-amber-100">
+                    {prepareSummary?.promoted ?? 0} promoted / {prepareSummary?.total ?? 0} prepared
+                  </div>
+                  <div className="mt-1 text-[10px] text-amber-100/75">
+                    {prepareSummary?.pending ?? 0} still pending • avg {prepareSummary?.avgResolutionMins ? `${prepareSummary.avgResolutionMins.toFixed(0)}m` : '--'} to resolve
+                  </div>
+                </div>
+                <div className="rounded-lg border border-cyan-500/25 bg-black/25 p-2">
+                  <div className="mb-1 text-[9px] uppercase tracking-[0.12em] text-cyan-200/85">Execute Quality</div>
+                  <div className="text-sm font-mono font-semibold text-cyan-100">
+                    {executeCards?.wins ?? 0}W / {(executeCards?.losses ?? 0) + (executeCards?.missed ?? 0)}L/M
+                  </div>
+                  <div className="mt-1 text-[10px] text-cyan-100/75">
+                    {executeCards?.completed ?? 0} completed execute cards in the last {breakoutLookbackHours}h • decisive {breakoutWinRate.toFixed(0)}%
+                  </div>
+                </div>
+                <div className="rounded-lg border border-emerald-500/25 bg-black/25 p-2">
+                  <div className="mb-1 text-[9px] uppercase tracking-[0.12em] text-emerald-200/85">Lead Profile</div>
+                  <div className="text-sm font-mono font-semibold text-emerald-100">
+                    {topLeadProfiles[0] ? `${topLeadProfiles[0].signal} ${topLeadProfiles[0].winRate.toFixed(0)}%` : '--'}
+                  </div>
+                  <div className="mt-1 text-[10px] text-emerald-100/75">
+                    {topLeadProfiles[0] ? `${topLeadProfiles[0].label} • promo ${topLeadProfiles[0].promotionRate.toFixed(0)}%` : 'Need more prepare history to rank recurring lead profiles.'}
+                  </div>
+                </div>
+              </div>
+
+              {breakoutWarnings.length > 0 && (
+                <div className="rounded-lg border border-rose-500/25 bg-rose-500/10 p-2">
+                  <div className="mb-1.5 text-[9px] uppercase tracking-[0.12em] text-rose-200/85">Sample Warnings</div>
+                  <div className="space-y-1">
+                    {breakoutWarnings.map((warning) => (
+                      <div key={warning} className="text-[10px] text-rose-100/85">
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-lg border border-amber-500/25 bg-black/25 p-2">
                 <div className="text-[9px] uppercase tracking-[0.12em] text-amber-200/85 mb-1.5">Suggested Filters</div>
@@ -500,7 +672,7 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
                     </div>
                   </div>
                 ) : (
-                  <div className="text-[11px] text-amber-100/85">Need at least 6 completed breakout cards with both wins and losses before auto-suggesting filter knobs.</div>
+                  <div className="text-[11px] text-amber-100/85">{knobSampleMessage}</div>
                 )}
               </div>
 
@@ -521,12 +693,34 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
                 </div>
               )}
 
+              {topLeadProfiles.length > 0 && (
+                <div className="rounded-lg border border-cyan-500/25 bg-black/25 p-2">
+                  <div className="mb-1.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/85">Recurring Lead Profiles</div>
+                  <div className="space-y-1.5">
+                    {topLeadProfiles.slice(0, 4).map((profile) => (
+                      <div key={profile.key} className="grid grid-cols-[auto_58px_58px_58px] items-center gap-2 rounded border border-cyan-500/20 bg-cyan-500/5 px-2 py-1.5">
+                        <div className="min-w-0">
+                          <div className="truncate text-[10px] font-mono text-cyan-100">{profile.label}</div>
+                          <div className="text-[9px] text-slate-400">
+                            {profile.etaBucket} • {profile.setupBucket} • readiness {profile.avgOptionsReadiness.toFixed(0)}
+                          </div>
+                        </div>
+                        <div className="text-center text-[10px] font-mono text-emerald-200">WR {profile.winRate.toFixed(0)}%</div>
+                        <div className="text-center text-[10px] font-mono text-amber-200">PR {profile.promotionRate.toFixed(0)}%</div>
+                        <div className="text-center text-[10px] font-mono text-sky-200">N {profile.total}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1.5">
-                <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/85">Recent Fired Cards</div>
+                <div className="text-[10px] uppercase tracking-[0.12em] text-cyan-200/85">Recent PREP / EXEC Cards</div>
                 {breakoutEntries.length > 0 ? (
                   <div className="max-h-44 overflow-y-auto rounded-md border border-amber-500/20 bg-black/20 p-1.5 space-y-1">
                     {breakoutEntries.slice(0, 8).map((entry) => {
                       const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                      const mode = getBreakoutMode(entry);
                       const outcomeLabel =
                         entry.outcome === 'win_t2'
                           ? 'WIN T2'
@@ -549,15 +743,30 @@ export function SignalHistoryPanel({ symbol }: SignalHistoryPanelProps) {
                           : entry.direction === 'bearish'
                           ? 'text-red-300'
                           : 'text-slate-300';
+                      const readinessScore = Math.round(entry.optionsReadiness?.score ?? 0);
 
                       return (
-                        <div key={entry.id} className="grid grid-cols-[40px_44px_auto_34px_52px_auto] items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/5 px-1.5 py-1">
+                        <div key={entry.id} className="grid grid-cols-[40px_50px_auto_44px_56px_auto] items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/5 px-1.5 py-1">
                           <div className="text-[10px] font-mono text-slate-400">{time}</div>
-                          <div className="text-[10px] font-mono text-cyan-200">{entry.symbol}</div>
-                          <div className="text-[10px] text-amber-100 truncate">{entry.signal}</div>
+                          <div className="space-y-0.5">
+                            <div className="text-[10px] font-mono text-cyan-200">{entry.symbol}</div>
+                            <div className={`inline-flex rounded border px-1 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] ${mode === 'PREPARE' ? 'border-amber-500/35 bg-amber-500/12 text-amber-200' : 'border-cyan-500/35 bg-cyan-500/12 text-cyan-200'}`}>
+                              {mode}
+                            </div>
+                          </div>
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="truncate text-[10px] text-amber-100">{entry.signal}</div>
+                            <div className="flex items-center gap-1">
+                              {entry.promotedFromId ? <Badge className="border-emerald-500/35 bg-emerald-500/12 text-[8px] text-emerald-200 hover:bg-emerald-500/12">PROMOTED</Badge> : null}
+                              {mode === 'PREPARE' && entry.prepareOutcome === 'promoted' ? <Badge className="border-cyan-500/35 bg-cyan-500/12 text-[8px] text-cyan-200 hover:bg-cyan-500/12">TO EXEC</Badge> : null}
+                            </div>
+                          </div>
                           <div className="text-[10px] font-mono text-amber-200 text-right">{entry.breakoutScore.toFixed(0)}</div>
-                          <div className={`text-[10px] uppercase tracking-[0.08em] text-center ${directionClass}`}>
-                            {entry.direction === 'bullish' ? 'LONG' : entry.direction === 'bearish' ? 'SHORT' : 'NEUTRAL'}
+                          <div className="space-y-0.5 text-center">
+                            <div className={`text-[10px] uppercase tracking-[0.08em] ${directionClass}`}>
+                              {entry.direction === 'bullish' ? 'LONG' : entry.direction === 'bearish' ? 'SHORT' : 'NEUTRAL'}
+                            </div>
+                            <div className="text-[9px] font-mono text-sky-200">OPT {readinessScore}</div>
                           </div>
                           <div className={`justify-self-end rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] ${outcomeClass}`}>
                             {outcomeLabel}

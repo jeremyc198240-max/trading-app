@@ -25,7 +25,9 @@ import { DashboardSkeleton, EmptyState, ErrorState } from "@/components/LoadingS
 import { SignalHistoryPanel } from "@/components/SignalHistoryPanel";
 import { PatternListPanel } from "@/components/PatternListPanel";
 import { PatternDetailPanel } from "@/components/PatternDetailPanel";
+import { CompressionStatusCard } from "@/components/CompressionStatusCard";
 import { queryClient } from "@/lib/queryClient";
+import { MLCalibrationGauge } from "@/components/MLCalibrationGauge";
 import type { AnalysisPayload, Timeframe, NormalizedPattern } from "@shared/schema";
 
 export default function Dashboard() {
@@ -44,16 +46,18 @@ export default function Dashboard() {
     enabled: !!searchTicker,
     refetchInterval: 30000, // Refresh every 30 seconds for live price updates
     staleTime: 25000, // Consider data stale after 25 seconds
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const { data: spotData } = useQuery<SpotData>({
     queryKey: ["/api/spot", searchTicker],
     enabled: !!searchTicker,
-    refetchInterval: 5000,
-    refetchIntervalInBackground: true,
-    staleTime: 0,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    refetchInterval: 10000,
+    refetchIntervalInBackground: false,
+    staleTime: 5000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
 
@@ -111,6 +115,8 @@ export default function Dashboard() {
     if (searchTicker) {
       queryClient.invalidateQueries({ queryKey: ["/api/analyze", searchTicker, timeframe] });
       queryClient.invalidateQueries({ queryKey: ["/api/spot", searchTicker] });
+      queryClient.invalidateQueries({ queryKey: ["/api/scanner/results"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/fusion", searchTicker] });
     }
   };
 
@@ -122,21 +128,21 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b border-border/50 bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
-        <div className="h-1 bg-gradient-to-r from-cyan-500 via-blue-500 to-purple-500" />
+    <div className="terminal-shell min-h-screen text-foreground">
+      <header className="terminal-header sticky top-0 z-50 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
+        <div className="neon-divider h-1" />
         <div className="px-4 lg:px-6 py-2.5">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30">
+                <div className="p-1.5 rounded-lg hud-chip">
                   <BarChart3 className="w-5 h-5 text-cyan-400" />
                 </div>
-                <h1 className="text-lg font-black tracking-tight hidden sm:block bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent" data-testid="text-title">
-                  Trading Terminal
+                <h1 className="font-display text-lg font-extrabold tracking-tight hidden sm:block bg-gradient-to-r from-cyan-300 via-teal-300 to-sky-400 bg-clip-text text-transparent" data-testid="text-title">
+                  Aegis Neural Terminal
                 </h1>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/30">
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md hud-chip">
                 <Radio className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
                 <span className="text-[10px] font-bold text-emerald-400 tracking-wider">LIVE</span>
               </div>
@@ -178,8 +184,8 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="flex flex-col lg:flex-row h-[calc(100vh-57px)]">
-        <aside className="hidden lg:block w-80 border-r border-border/50 bg-gradient-to-b from-card/80 to-card/50 p-4 overflow-y-auto space-y-4">
+      <div className="flex flex-col lg:flex-row h-[calc(100vh-57px)] animate-panel-rise">
+        <aside className="quantum-sidebar hidden lg:block w-80 p-4 overflow-y-auto space-y-4">
           <ScannerPanel onSelectSymbol={handleSubmit} selectedSymbol={searchTicker} />
           {analysis?.tactical && (
             <TacticalAdvicePanel
@@ -192,11 +198,11 @@ export default function Dashboard() {
           )}
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
+        <main className="quantum-main flex-1 overflow-y-auto p-4 lg:p-6">
           {!searchTicker && !isLoading ? (
             <div className="h-full flex flex-col">
               <div className="lg:hidden mb-6">
-                <Card>
+                <Card className="glass-panel">
                   <CardContent className="p-4">
                     <ScannerPanel onSelectSymbol={handleSubmit} selectedSymbol={searchTicker} />
                   </CardContent>
@@ -317,9 +323,19 @@ function DashboardContent({
             sectorData={sectorSnapshot?.sectors}
           />
 
+          <CompressionStatusCard
+            symbol={analysis.symbol}
+            timeframe={timeframe}
+            marketHealth={analysis.marketHealth}
+            trendExhaustion={analysis.trendExhaustion}
+            tactical={analysis.tactical}
+            directionalBias={analysis.directionalBias}
+          />
+
           <BreakoutAlertBar
             drawablePatterns={analysis.drawablePatterns}
             marketHealth={analysis.marketHealth}
+            timeframe={timeframe}
           />
 
           <EdgeAlertBar />
@@ -363,8 +379,8 @@ function DashboardContent({
             currentPriceOverride={lastPrice}
           />
 
-          <Card className="overflow-hidden">
-            <div className="h-0.5 bg-gradient-to-r from-cyan-500/50 via-teal-500/50 to-emerald-500/50" />
+          <Card className="overflow-hidden glass-panel">
+            <div className="h-0.5 neon-divider" />
             <CardHeader className="py-3 px-4 border-b border-border/50 bg-gradient-to-r from-cyan-500/5 via-transparent to-teal-500/5">
               <CardTitle className="text-sm font-semibold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4" />
@@ -392,9 +408,11 @@ function DashboardContent({
         <div className="xl:col-span-4 space-y-6">
           <FusionPanel symbol={analysis.symbol} />
 
+          <MLCalibrationGauge symbol={analysis.symbol} timeframe={timeframe} />
+
           <EdgeTuningCard />
-          
-          <Card className="overflow-hidden">
+
+          <Card className="overflow-hidden glass-panel">
             <div className="h-0.5 bg-gradient-to-r from-amber-500/50 via-orange-500/50 to-red-500/50" />
             <CardHeader className="py-3 px-4 border-b border-border/50 bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5">
               <CardTitle className="text-sm font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-2">

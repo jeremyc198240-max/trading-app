@@ -18,6 +18,26 @@ interface EdgeTuningSampleSummary {
   missed: number;
   pending: number;
   winRate: number;
+  execute?: {
+    total: number;
+    completed: number;
+    wins: number;
+    losses: number;
+    missed: number;
+    pending: number;
+    winRate: number;
+  };
+  prepare?: {
+    total: number;
+    completed: number;
+    wins: number;
+    losses: number;
+    missed: number;
+    pending: number;
+    winRate: number;
+    promoted: number;
+    promotionRate: number;
+  };
 }
 
 interface EdgeTuningQuality {
@@ -93,8 +113,8 @@ function formatStateLabel(state: EdgeState): string {
 }
 
 export function EdgeTuningCard() {
-  const { data, isLoading } = useQuery<EdgeTuning2dResponse>({
-    queryKey: ["/api/scanner/edge-tuning/2d", "limit=20"],
+  const { data, error, isLoading, isError } = useQuery<EdgeTuning2dResponse>({
+    queryKey: ["/api/scanner/edge-tuning/2d?limit=20"],
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: false,
@@ -102,8 +122,9 @@ export function EdgeTuningCard() {
 
   const entries = data?.entries ?? [];
   const snapshot = data?.currentWindow ?? data?.latest ?? null;
-  const latest = entries[0] ?? null;
+  const latest = data?.latest ?? entries[0] ?? null;
   const previous = entries[1] ?? null;
+  const errorMessage = error instanceof Error ? error.message : "Failed to load edge tuning data.";
 
   const trend = useMemo(() => {
     if (!latest || !previous) {
@@ -136,6 +157,13 @@ export function EdgeTuningCard() {
   }, [snapshot]);
 
   const topReasons = snapshot?.topReasons?.slice(0, 3) ?? [];
+  const executeStats = snapshot?.sample.execute;
+  const prepareStats = snapshot?.sample.prepare;
+  const executeWinRate = safeNumber(executeStats?.winRate, safeNumber(snapshot?.sample.winRate));
+  const executeWins = safeNumber(executeStats?.wins, safeNumber(snapshot?.sample.wins));
+  const executeLosses = safeNumber(executeStats?.losses, safeNumber(snapshot?.sample.losses));
+  const preparePromotionRate = safeNumber(prepareStats?.promotionRate);
+  const preparePending = safeNumber(prepareStats?.pending);
 
   return (
     <Card
@@ -159,6 +187,10 @@ export function EdgeTuningCard() {
             <div className="h-10 rounded-lg border border-amber-500/20 bg-amber-500/10" />
             <div className="h-16 rounded-lg border border-amber-500/20 bg-amber-500/10" />
           </div>
+        ) : isError ? (
+          <div className="rounded-lg border border-rose-500/35 bg-rose-500/10 p-3 text-sm text-rose-100/85" data-testid="edge-tuning-error">
+            Edge tuning data failed to load. {errorMessage}
+          </div>
         ) : snapshot ? (
           <>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -170,10 +202,10 @@ export function EdgeTuningCard() {
                 <div className="text-amber-200/60 text-[10px]">{safeNumber(snapshot.sample.symbolCount)} symbols</div>
               </div>
               <div className="rounded-lg border border-emerald-500/28 bg-emerald-500/8 p-2">
-                <div className="text-emerald-200/70 uppercase tracking-wider text-[10px]">Win Rate</div>
-                <div className="mt-0.5 text-emerald-100 font-semibold">{formatPercent(snapshot.sample.winRate)}</div>
+                <div className="text-emerald-200/70 uppercase tracking-wider text-[10px]">Exec Win Rate</div>
+                <div className="mt-0.5 text-emerald-100 font-semibold">{formatPercent(executeWinRate)}</div>
                 <div className="text-emerald-200/60 text-[10px]">
-                  {safeNumber(snapshot.sample.wins)}W / {safeNumber(snapshot.sample.losses)}L
+                  {executeWins}W / {executeLosses}L
                 </div>
               </div>
               <div className="rounded-lg border border-cyan-500/28 bg-cyan-500/8 p-2">
@@ -191,6 +223,23 @@ export function EdgeTuningCard() {
                   {formatPercent(snapshot.quality.avgTriggerProbability)}
                 </div>
                 <div className="text-violet-200/60 text-[10px]">Lead {safeNumber(snapshot.quality.avgLeadMinutes).toFixed(1)}m</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-lg border border-cyan-500/22 bg-cyan-500/5 p-2">
+                <div className="text-cyan-200/70 uppercase tracking-wider text-[10px]">Prepare Promo %</div>
+                <div className="mt-0.5 text-cyan-100 font-semibold">{formatPercent(preparePromotionRate)}</div>
+                <div className="text-cyan-200/60 text-[10px]">
+                  {safeNumber(prepareStats?.promoted)} promoted / {safeNumber(prepareStats?.total)} prepare
+                </div>
+              </div>
+              <div className="rounded-lg border border-amber-500/22 bg-amber-500/6 p-2">
+                <div className="text-amber-200/70 uppercase tracking-wider text-[10px]">Prepare Pending</div>
+                <div className="mt-0.5 text-amber-100 font-semibold">{preparePending}</div>
+                <div className="text-amber-200/60 text-[10px]">
+                  Blended 48h WR {formatPercent(snapshot.sample.winRate)} across all alert modes
+                </div>
               </div>
             </div>
 

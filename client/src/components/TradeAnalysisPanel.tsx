@@ -109,6 +109,18 @@ interface ScannerResult {
     rangePct?: string | number;
     triggers?: string[];
   };
+  preBreakoutSetup?: {
+    score?: number;
+    etaMinutes?: number;
+    traits?: string[];
+  };
+  timeframeStack?: {
+    bias?: 'bullish' | 'bearish' | 'neutral' | 'mixed';
+    agreement?: number;
+  };
+  tvTrendDirection?: 'bullish' | 'bearish' | 'neutral';
+  tvRecommendAll?: number;
+  priceChangePercent?: number;
   symbol: string;
   momentumStrength: number;
   rsiValue: number;
@@ -464,7 +476,76 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
   const bestPlayDirection = bestPlayData?.recommendation?.direction;
   const inferredActionFromUnified =
     unifiedSignal.direction === 'bullish' ? 'CALL' : unifiedSignal.direction === 'bearish' ? 'PUT' : 'WAIT';
-  const tradeAction = bestPlayDirection === 'CALL' || bestPlayDirection === 'PUT' ? bestPlayDirection : inferredActionFromUnified;
+  const scannerSignal = String(scannerData?.breakoutSignal ?? '').toUpperCase();
+  const scannerMomentum = scannerData?.momentumStrength ?? 0;
+  const scannerPhase = String(scannerData?.compression?.phase ?? '').toUpperCase();
+  const scannerSetupScore = scannerData?.preBreakoutSetup?.score ?? 0;
+  const scannerSetupTraits = scannerData?.preBreakoutSetup?.traits?.length ?? 0;
+  const scannerSetupEta = scannerData?.preBreakoutSetup?.etaMinutes;
+  const scannerStackAgreement = scannerData?.timeframeStack?.agreement ?? 0;
+  const scannerStackBias = scannerData?.timeframeStack?.bias ?? 'neutral';
+  const scannerTrendDirection = scannerData?.tvTrendDirection ?? 'neutral';
+  const scannerTvRecommendAll = scannerData?.tvRecommendAll ?? 0;
+  const scannerDayMovePct = scannerData?.priceChangePercent ?? 0;
+  let scannerBullVotes = 0;
+  let scannerBearVotes = 0;
+
+  if (scannerSignal === 'BREAKOUT') scannerBullVotes += 3;
+  if (scannerSignal === 'BREAKDOWN') scannerBearVotes += 3;
+  if (scannerData?.expansionDirection === 'bullish') scannerBullVotes += 2;
+  if (scannerData?.expansionDirection === 'bearish') scannerBearVotes += 2;
+  if (scannerMomentum >= 12) scannerBullVotes += 2;
+  if (scannerMomentum <= -12) scannerBearVotes += 2;
+  if (scannerStackAgreement >= 55 && scannerStackBias === 'bullish') scannerBullVotes += 2;
+  if (scannerStackAgreement >= 55 && scannerStackBias === 'bearish') scannerBearVotes += 2;
+  if (scannerTrendDirection === 'bullish') scannerBullVotes += 2;
+  if (scannerTrendDirection === 'bearish') scannerBearVotes += 2;
+  if (scannerTvRecommendAll >= 0.2) scannerBullVotes += 1;
+  if (scannerTvRecommendAll <= -0.2) scannerBearVotes += 1;
+  if (scannerDayMovePct >= 0.35) scannerBullVotes += 1;
+  if (scannerDayMovePct <= -0.35) scannerBearVotes += 1;
+
+  const scannerSetupReady =
+    scannerSetupScore >= 68 &&
+    scannerSetupTraits >= 3 &&
+    (scannerSetupEta == null || scannerSetupEta <= 10) &&
+    (scannerPhase === 'PREPARE' || scannerPhase === 'READY' || scannerSignal === 'BREAKOUT' || scannerSignal === 'BREAKDOWN');
+  const strongBearContext =
+    (scannerStackAgreement >= 55 && scannerStackBias === 'bearish') ||
+    scannerTrendDirection === 'bearish' ||
+    scannerTvRecommendAll <= -0.25 ||
+    scannerDayMovePct <= -0.45;
+  const strongBullContext =
+    (scannerStackAgreement >= 55 && scannerStackBias === 'bullish') ||
+    scannerTrendDirection === 'bullish' ||
+    scannerTvRecommendAll >= 0.25 ||
+    scannerDayMovePct >= 0.45;
+  const scannerAction: 'CALL' | 'PUT' | 'WAIT' =
+    scannerBullVotes >= scannerBearVotes + 2
+      ? (strongBearContext && !scannerSetupReady ? 'WAIT' : 'CALL')
+      : scannerBearVotes >= scannerBullVotes + 2
+        ? (strongBullContext && !scannerSetupReady ? 'WAIT' : 'PUT')
+        : 'WAIT';
+
+  const bestPlayAction: 'CALL' | 'PUT' | 'WAIT' =
+    bestPlayDirection === 'CALL' || bestPlayDirection === 'PUT'
+      ? bestPlayDirection
+      : 'WAIT';
+
+  const directionalVotes = [bestPlayAction, inferredActionFromUnified, scannerAction].filter(
+    (vote): vote is 'CALL' | 'PUT' => vote === 'CALL' || vote === 'PUT'
+  );
+  const callVotes = directionalVotes.filter((vote) => vote === 'CALL').length;
+  const putVotes = directionalVotes.filter((vote) => vote === 'PUT').length;
+
+  const tradeAction: 'CALL' | 'PUT' | 'WAIT' =
+    callVotes > putVotes
+      ? 'CALL'
+      : putVotes > callVotes
+        ? 'PUT'
+        : inferredActionFromUnified !== 'WAIT'
+          ? inferredActionFromUnified
+          : scannerAction;
   const isBullish = tradeAction === 'CALL';
   const isBearish = tradeAction === 'PUT';
   const isActive = unifiedSignal.state === 'ACTIVE';

@@ -17,8 +17,9 @@ export function computeReversalSignal(params: {
   emaTrend?: EMACloudTrend;
   breakoutLifecycle: BreakoutLifecycle;
   vwapPrice?: number;
+  dominantTrend?: 'bullish' | 'bearish' | 'neutral'; // NEW: trend context to prevent pullback false signals
 }): ReversalSignal {
-  const { ohlc, currentPrice, corvona, emaTrend, breakoutLifecycle, vwapPrice } = params;
+  const { ohlc, currentPrice, corvona, emaTrend, breakoutLifecycle, vwapPrice, dominantTrend } = params;
 
   const reasons: string[] = [];
   let score = 0;
@@ -320,10 +321,37 @@ export function computeReversalSignal(params: {
   const reversalSignal = score >= 18;
   const reversalConfidence = Math.min(score, 100);
 
+  // =============== TREND-AWARE GATING ===============
+  // NEW: Don't call pullbacks "reversals" if they're just normal consolidation in a trend
+  // This prevents the system from recommending PUTs during pullbacks in a BULL market
+  
+  let finalDirection = reversalSignal ? direction : 'none';
+  let finalConfidence = reversalConfidence;
+  
+  if (dominantTrend && reversalSignal) {
+    // In a BULLISH trend: don't report DOWN reversals from momentum (pullbacks are normal)
+    // Still report UP reversals (bounces off support) - these are actionable
+    if (dominantTrend === 'bullish' && finalDirection === 'down' && type?.includes('momentum')) {
+      // Downgrade momentum pullbacks in bull trends to weak signals
+      // Still report them but with low confidence for filtering
+      finalConfidence = Math.max(10, finalConfidence * 0.3); // Juice to 30% of original
+      finalDirection = 'none'; // Don't report as reversal
+      reasons.push(`[TREND GATE] Pullback in bull market - not a reversal`);
+    }
+    
+    // In a BEARISH trend: don't report UP reversals from momentum (bounces are normal)
+    // Still report DOWN reversals (bounces off resistance) - these are actionable
+    if (dominantTrend === 'bearish' && finalDirection === 'up' && type?.includes('momentum')) {
+      finalConfidence = Math.max(10, finalConfidence * 0.3); // Reduce to 30%
+      finalDirection = 'none'; // Don't report as reversal
+      reasons.push(`[TREND GATE] Bounce in bear market - not a reversal`);
+    }
+  }
+
   return {
-    reversalSignal,
-    reversalDirection: reversalSignal ? direction : 'none',
-    reversalConfidence,
+    reversalSignal: finalDirection !== 'none',
+    reversalDirection: finalDirection as 'up' | 'down' | 'none',
+    reversalConfidence: finalConfidence,
     reversalType: type,
     reversalReasons: reasons
   };

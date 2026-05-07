@@ -40,9 +40,51 @@ interface EdgeEngineSnapshot {
 
 interface ScannerResult {
   symbol: string;
+  scanTime?: number;
+  isDegraded?: boolean;
   edgeEngine?: EdgeEngineSnapshot;
   breakoutSignal?: string | null;
+  breakoutScore?: number;
   priceChangePercent?: number;
+  spotMeta?: {
+    timestamp?: string;
+    quoteAgeMs?: number;
+    source?: "finnhub" | "yahoo";
+    marketState?: string;
+    isFresh?: boolean;
+  };
+  compression?: {
+    phase?: string;
+    archStrength?: number;
+    sparkScore?: number;
+  };
+  preBreakoutSetup?: {
+    score?: number;
+    etaMinutes?: number;
+    traits?: string[];
+  };
+  timeframeStack?: {
+    bias?: EdgeDirection | "mixed";
+    agreement?: number;
+    primary?: string;
+    components?: {
+      timeframe?: string;
+      breakoutSignal?: string | null;
+      breakoutScore?: number;
+      momentumStrength?: number;
+      direction?: EdgeDirection;
+      weight?: number;
+    }[];
+  };
+  tvTrendDirection?: EdgeDirection;
+  tvRecommendAll?: number;
+  optionsReadiness?: {
+    score?: number;
+    moveScore?: number;
+    chainScore?: number;
+    expectedDirection?: "CALL" | "PUT" | null;
+    hasOptionData?: boolean;
+  };
 }
 
 function scoreTone(score: number): "hot" | "warm" | "cool" {
@@ -56,6 +98,342 @@ function stateRank(state: EdgeState): number {
   if (state === "PRIMED") return 3;
   if (state === "ARMING") return 2;
   return 1;
+}
+
+const EDGE_SCAN_FRESHNESS_MAX_MS = 3 * 60 * 1000;
+const EDGE_COMPRESSION_STACK_AGREEMENT_MIN = 60;
+const EDGE_COMPRESSION_SPARK_MIN = 35;
+const EDGE_COMPRESSION_SETUP_MIN = 35;
+
+function isPrepareSignal(signal?: string | null): boolean {
+  const upper = String(signal ?? "").toUpperCase();
+  return upper === "BUILDING" || upper === "SQUEEZE" || upper === "CONSOLIDATING";
+}
+
+function isExecuteLikeSignal(signal?: string | null): boolean {
+  const upper = String(signal ?? "").toUpperCase();
+  return upper === "BREAKOUT" || upper === "BREAKDOWN" || upper === "EXPANSION" || upper === "MOMENTUM";
+}
+
+function getStrongStackExecuteDirection(row: ScannerResult): EdgeDirection {
+  const stack = row.timeframeStack;
+  const stackBias = stack?.bias ?? "neutral";
+  if (stackBias !== "bullish" && stackBias !== "bearish") return "neutral";
+
+  const primaryDirectionalRelease =
+    (stack?.agreement ?? 0) >= 60 &&
+    isExecuteLikeSignal(row.breakoutSignal) &&
+    Math.abs(row.edgeEngine?.indicators.momentum ?? 0) >= 36;
+  if (primaryDirectionalRelease) return stackBias;
+
+  if ((stack?.agreement ?? 0) < 75) return "neutral";
+
+  const alignedComponent = (stack?.components ?? [])
+    .filter((component) => {
+      return (
+        component.timeframe !== stack?.primary &&
+        component.direction === stackBias &&
+        isExecuteLikeSignal(component.breakoutSignal) &&
+        (
+          (component.breakoutScore ?? 0) >= 45 ||
+          Math.abs(component.momentumStrength ?? 0) >= 40
+        )
+      );
+    })
+    .sort((left, right) => {
+      const scoreGap = (right.breakoutScore ?? 0) - (left.breakoutScore ?? 0);
+      if (scoreGap !== 0) return scoreGap;
+      return Math.abs(right.momentumStrength ?? 0) - Math.abs(left.momentumStrength ?? 0);
+    })[0];
+
+  if (!alignedComponent) return "neutral";
+
+  const edge = row.edgeEngine;
+  const edgeSupports =
+    edge?.direction === stackBias &&
+    (
+      edge.state === "PRIMED" ||
+      edge.state === "TRIGGERED" ||
+      (edge.state === "ARMING" && edge.edgeScore >= 72 && edge.confidence >= 68)
+    );
+  const primaryMomentumSupports = Math.abs(edge?.indicators.momentum ?? 0) >= 28;
+
+  if (!edgeSupports && !primaryMomentumSupports && (row.breakoutScore ?? 0) < 42) return "neutral";
+  return stackBias;
+}
+
+function isExecuteEdgeWindow(row: ScannerResult): boolean {
+  const edge = row.edgeEngine;
+  const executeDirection = getStrongStackExecuteDirection(row);
+  if (!edge || executeDirection === "neutral") return false;
+  if (edge.direction !== executeDirection || edge.signal === "WAIT") return false;
+
+  return (
+    edge.state === "PRIMED" ||
+    edge.state === "TRIGGERED" ||
+    (edge.state === "ARMING" && edge.edgeScore >= 72 && edge.confidence >= 68 && edge.triggerProbability >= 44)
+  );
+}
+
+function getEdgeCardMode(row: ScannerResult): "PREPARE" | "EXECUTE" {
+  return isExecuteEdgeWindow(row) ? "EXECUTE" : "PREPARE";
+}
+
+function getEdgeStatusLabel(row: ScannerResult, mode: "PREPARE" | "EXECUTE"): string {
+  if (mode === "EXECUTE") return "EXECUTE WINDOW";
+
+  const etaMinutes = row.preBreakoutSetup?.etaMinutes;
+  const phase = String(row.compression?.phase ?? "").toUpperCase();
+  if (etaMinutes != null && etaMinutes <= 5) return "PRE-BREAKOUT";
+  if (phase === "READY") return "READY TO ARM";
+  return "BUILDING PRESSURE";
+}
+
+function isActionableEdgeCard(row: ScannerResult): boolean {
+  const edge = row.edgeEngine;
+  if (!edge) return false;
+  if (row.isDegraded) return false;
+  if (row.spotMeta?.isFresh === false) return false;
+  if (edge.signal === "WAIT" || edge.direction === "neutral" || edge.state === "STANDBY") return false;
+
+  const scanAgeMs = Number.isFinite(row.scanTime)
+    ? Math.max(0, Date.now() - (row.scanTime ?? 0))
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(scanAgeMs) || scanAgeMs > EDGE_SCAN_FRESHNESS_MAX_MS) return false;
+
+  const executeEdgeWindow = isExecuteEdgeWindow(row);
+  if (executeEdgeWindow) {
+    return edge.confidence >= 60 && edge.triggerProbability >= 35 && edge.leadMinutes <= 15;
+  }
+
+  if (!isPrepareSignal(row.breakoutSignal)) return false;
+
+  const phase = String(row.compression?.phase ?? "").toUpperCase();
+  if (phase !== "PREPARE" && phase !== "READY") return false;
+
+  const setupScore = row.preBreakoutSetup?.score ?? 0;
+  const setupTraits = row.preBreakoutSetup?.traits?.length ?? 0;
+  const etaMinutes = row.preBreakoutSetup?.etaMinutes;
+  if (setupScore < 72 || setupTraits < 3) return false;
+  if (etaMinutes != null && etaMinutes > 10) return false;
+
+  const stackAgreement = row.timeframeStack?.agreement ?? 0;
+  const stackBias = row.timeframeStack?.bias ?? "neutral";
+  const trendDirection = row.tvTrendDirection ?? "neutral";
+  const dayMovePct = row.priceChangePercent ?? 0;
+  const contextAligned =
+    (stackAgreement >= 55 && stackBias === edge.direction) ||
+    trendDirection === edge.direction ||
+    (edge.direction === "bullish" ? dayMovePct >= 0.12 : dayMovePct <= -0.12);
+  if (!contextAligned) return false;
+
+  if (edge.state === "TRIGGERED" || edge.state === "PRIMED") {
+    return edge.confidence >= 70 && edge.triggerProbability >= 50 && edge.leadMinutes <= 15;
+  }
+
+  return (
+    edge.state === "ARMING" &&
+    edge.edgeScore >= 80 &&
+    edge.confidence >= 78 &&
+    edge.triggerProbability >= 60 &&
+    edge.leadMinutes <= 10 &&
+    (etaMinutes == null || etaMinutes <= 5)
+  );
+}
+
+function isHighConvictionArmingEdgeCard(row: ScannerResult): boolean {
+  const edge = row.edgeEngine;
+  if (!edge || edge.state !== "ARMING") return false;
+  if (row.isDegraded) return false;
+  if (row.spotMeta?.isFresh === false) return false;
+  if (edge.signal === "WAIT" || edge.direction === "neutral") return false;
+
+  const scanAgeMs = Number.isFinite(row.scanTime)
+    ? Math.max(0, Date.now() - (row.scanTime ?? 0))
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(scanAgeMs) || scanAgeMs > EDGE_SCAN_FRESHNESS_MAX_MS) return false;
+
+  const stackAgreement = row.timeframeStack?.agreement ?? 0;
+  const stackBias = row.timeframeStack?.bias ?? "neutral";
+  const trendDirection = row.tvTrendDirection ?? "neutral";
+  const dayMovePct = row.priceChangePercent ?? 0;
+  const breakoutScore = row.breakoutScore ?? 0;
+  const setupScore = row.preBreakoutSetup?.score ?? 0;
+  const setupTraits = row.preBreakoutSetup?.traits?.length ?? 0;
+  const etaMinutes = row.preBreakoutSetup?.etaMinutes;
+  const momentumAbs = Math.abs(row.edgeEngine?.indicators.momentum ?? 0);
+  const contextAligned =
+    (stackAgreement >= 55 && stackBias === edge.direction) ||
+    trendDirection === edge.direction ||
+    (edge.direction === "bullish" ? dayMovePct >= 0.12 : dayMovePct <= -0.12);
+  if (!contextAligned) return false;
+
+  const contextConflict =
+    (stackAgreement >= 55 && stackBias !== "neutral" && stackBias !== edge.direction) ||
+    (trendDirection !== "neutral" && trendDirection !== edge.direction) ||
+    (edge.direction === "bullish" ? dayMovePct <= -0.35 : dayMovePct >= 0.35);
+  if (contextConflict) return false;
+
+  const structuralSupport =
+    isPrepareSignal(row.breakoutSignal) ||
+    isExecuteLikeSignal(row.breakoutSignal) ||
+    breakoutScore >= 52 ||
+    momentumAbs >= 18;
+  if (!structuralSupport) return false;
+
+  const setupSupport =
+    (setupScore >= 70 && setupTraits >= 3 && (etaMinutes == null || etaMinutes <= 10)) ||
+    breakoutScore >= 58 ||
+    momentumAbs >= 24;
+
+  return (
+    setupSupport &&
+    edge.edgeScore >= 60 &&
+    edge.confidence >= 70 &&
+    edge.triggerProbability >= 40 &&
+    edge.leadMinutes <= 15
+  );
+}
+
+function isEarlyDirectionalStandbyEdgeCard(row: ScannerResult): boolean {
+  const edge = row.edgeEngine;
+  if (!edge || edge.state !== "STANDBY") return false;
+  if (row.isDegraded) return false;
+  if (row.spotMeta?.isFresh === false) return false;
+  if (edge.signal === "WAIT" || edge.direction === "neutral") return false;
+
+  const scanAgeMs = Number.isFinite(row.scanTime)
+    ? Math.max(0, Date.now() - (row.scanTime ?? 0))
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(scanAgeMs) || scanAgeMs > EDGE_SCAN_FRESHNESS_MAX_MS) return false;
+
+  const stackAgreement = row.timeframeStack?.agreement ?? 0;
+  const stackBias = row.timeframeStack?.bias ?? "neutral";
+  const trendDirection = row.tvTrendDirection ?? "neutral";
+  const dayMovePct = row.priceChangePercent ?? 0;
+  const breakoutScore = row.breakoutScore ?? 0;
+  const setupScore = row.preBreakoutSetup?.score ?? 0;
+  const momentumAbs = Math.abs(row.edgeEngine?.indicators.momentum ?? 0);
+  const contextAligned =
+    (stackAgreement >= 55 && stackBias === edge.direction) ||
+    trendDirection === edge.direction ||
+    (edge.direction === "bullish" ? dayMovePct >= 0.2 : dayMovePct <= -0.2);
+  if (!contextAligned) return false;
+
+  const contextConflict =
+    (stackAgreement >= 55 && stackBias !== "neutral" && stackBias !== edge.direction) ||
+    (trendDirection !== "neutral" && trendDirection !== edge.direction) ||
+    (edge.direction === "bullish" ? dayMovePct <= -0.4 : dayMovePct >= 0.4);
+  if (contextConflict) return false;
+
+  const structuralSupport =
+    isPrepareSignal(row.breakoutSignal) ||
+    isExecuteLikeSignal(row.breakoutSignal) ||
+    breakoutScore >= 24 ||
+    setupScore >= 24 ||
+    momentumAbs >= 16;
+  if (!structuralSupport) return false;
+
+  return (
+    edge.edgeScore >= 36 &&
+    edge.confidence >= 40 &&
+    edge.triggerProbability >= 12 &&
+    edge.leadMinutes <= 25
+  );
+}
+
+function getFiveMinuteCompressionComponent(row: ScannerResult) {
+  return (row.timeframeStack?.components ?? []).find((component) => component.timeframe === "5m");
+}
+
+function getCompressionCardDirection(row: ScannerResult): EdgeDirection {
+  const component = getFiveMinuteCompressionComponent(row);
+  const componentDirection = component?.direction ?? "neutral";
+  const stackBias = row.timeframeStack?.bias ?? "neutral";
+  const stackAgreement = row.timeframeStack?.agreement ?? 0;
+  const trendDirection = row.tvTrendDirection ?? "neutral";
+
+  if (
+    (stackBias === "bullish" || stackBias === "bearish") &&
+    stackAgreement >= EDGE_COMPRESSION_STACK_AGREEMENT_MIN &&
+    (componentDirection === "neutral" || componentDirection === stackBias)
+  ) {
+    return stackBias;
+  }
+
+  if (
+    (componentDirection === "bullish" || componentDirection === "bearish") &&
+    (trendDirection === "neutral" || trendDirection === componentDirection)
+  ) {
+    return componentDirection;
+  }
+
+  return "neutral";
+}
+
+function isFiveMinuteCompressionEdgeCard(row: ScannerResult): boolean {
+  const edge = row.edgeEngine;
+  if (!edge) return false;
+  if (row.isDegraded) return false;
+  if (row.spotMeta?.isFresh === false) return false;
+
+  const scanAgeMs = Number.isFinite(row.scanTime)
+    ? Math.max(0, Date.now() - (row.scanTime ?? 0))
+    : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(scanAgeMs) || scanAgeMs > EDGE_SCAN_FRESHNESS_MAX_MS) return false;
+
+  if (!isPrepareSignal(row.breakoutSignal)) return false;
+
+  const phase = String(row.compression?.phase ?? "").toUpperCase();
+  if (phase !== "PREPARE" && phase !== "READY") return false;
+
+  const component = getFiveMinuteCompressionComponent(row);
+  if (!component) return false;
+
+  const componentSignal = component.breakoutSignal;
+  const componentScore = component.breakoutScore ?? 0;
+  const componentMomentum = Math.abs(component.momentumStrength ?? 0);
+  if (!isPrepareSignal(componentSignal) && componentScore < 24 && componentMomentum < 12) return false;
+
+  const displayDirection = getCompressionCardDirection(row);
+  if (displayDirection === "neutral") return false;
+
+  const stackBias = row.timeframeStack?.bias ?? "neutral";
+  const trendDirection = row.tvTrendDirection ?? "neutral";
+  const dayMovePct = row.priceChangePercent ?? 0;
+  const compressionSpark = row.compression?.sparkScore ?? 0;
+  const setupScore = row.preBreakoutSetup?.score ?? 0;
+  const contextAligned =
+    stackBias === displayDirection ||
+    trendDirection === displayDirection ||
+    (displayDirection === "bullish" ? dayMovePct >= 0 : dayMovePct <= 0);
+  if (!contextAligned) return false;
+
+  const contextConflict =
+    (stackBias === "bullish" || stackBias === "bearish") && stackBias !== displayDirection ||
+    (trendDirection === "bullish" || trendDirection === "bearish") && trendDirection !== displayDirection;
+  if (contextConflict) return false;
+
+  return (
+    compressionSpark >= EDGE_COMPRESSION_SPARK_MIN ||
+    setupScore >= EDGE_COMPRESSION_SETUP_MIN ||
+    componentScore >= 28
+  );
+}
+
+function getEdgeCardDisplayDirection(row: ScannerResult): EdgeDirection {
+  const edgeDirection = row.edgeEngine?.direction ?? "neutral";
+  if (edgeDirection !== "neutral") return edgeDirection;
+  return getCompressionCardDirection(row);
+}
+
+function getEdgeCardDisplaySignal(row: ScannerResult): EdgeSignal {
+  const edgeSignal = row.edgeEngine?.signal ?? "WAIT";
+  if (edgeSignal !== "WAIT") return edgeSignal;
+
+  const displayDirection = getEdgeCardDisplayDirection(row);
+  if (!isFiveMinuteCompressionEdgeCard(row) || displayDirection === "neutral") return "WAIT";
+  return displayDirection === "bullish" ? "BREAK_UP" : "BREAK_DOWN";
 }
 
 function toneClasses(direction: EdgeDirection): {
@@ -373,13 +751,13 @@ function TriggerRail({
 export function EdgeAlertBar() {
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 30000,
-    staleTime: 10000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 
   const cards = useMemo(() => {
-    const list = (results || [])
-      .filter((row) => row.edgeEngine && row.edgeEngine.state !== "STANDBY")
+    const actionable = (results || [])
+      .filter((row) => isActionableEdgeCard(row))
       .sort((a, b) => {
         const edgeA = a.edgeEngine as EdgeEngineSnapshot;
         const edgeB = b.edgeEngine as EdgeEngineSnapshot;
@@ -388,32 +766,84 @@ export function EdgeAlertBar() {
         return edgeB.triggerProbability - edgeA.triggerProbability;
       });
 
-    return list.slice(0, 3);
+    if (actionable.length > 0) {
+      return actionable.slice(0, 3);
+    }
+
+    const arming = (results || [])
+      .filter((row) => isHighConvictionArmingEdgeCard(row))
+      .sort((a, b) => {
+        const edgeA = a.edgeEngine as EdgeEngineSnapshot;
+        const edgeB = b.edgeEngine as EdgeEngineSnapshot;
+        if (edgeB.edgeScore !== edgeA.edgeScore) return edgeB.edgeScore - edgeA.edgeScore;
+        if (edgeB.confidence !== edgeA.confidence) return edgeB.confidence - edgeA.confidence;
+        return edgeB.triggerProbability - edgeA.triggerProbability;
+      });
+
+    if (arming.length > 0) {
+      return arming.slice(0, 3);
+    }
+
+    return (results || [])
+      .filter((row) => isEarlyDirectionalStandbyEdgeCard(row))
+      .sort((a, b) => {
+        const edgeA = a.edgeEngine as EdgeEngineSnapshot;
+        const edgeB = b.edgeEngine as EdgeEngineSnapshot;
+        if (edgeB.edgeScore !== edgeA.edgeScore) return edgeB.edgeScore - edgeA.edgeScore;
+        if (edgeB.confidence !== edgeA.confidence) return edgeB.confidence - edgeA.confidence;
+        return edgeB.triggerProbability - edgeA.triggerProbability;
+      })
+      .slice(0, 3);
   }, [results]);
 
-  if (!cards.length) {
-    return (
-      <Card className="relative overflow-hidden rounded-2xl border border-cyan-400/35 bg-gradient-to-br from-[#04060d] via-[#050b19] to-[#02030a] p-3 shadow-[0_0_28px_rgba(34,211,238,0.14)]">
-        <div className="pointer-events-none absolute inset-0 opacity-25 [background-image:linear-gradient(rgba(34,211,238,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.12)_1px,transparent_1px)] [background-size:18px_18px]" />
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-500/70 via-sky-400/70 to-fuchsia-500/70" />
-        <div className="pointer-events-none absolute left-2 top-2 h-3 w-3 border-l border-t border-cyan-300/55" />
-        <div className="pointer-events-none absolute right-2 bottom-2 h-3 w-3 border-r border-b border-cyan-300/45" />
-        <div className="relative z-10 flex items-center gap-2 text-cyan-200/90">
-          <Radar className="h-4 w-4 animate-pulse" />
-          <span className="text-xs font-black uppercase tracking-[0.2em]">Edge Engine</span>
-          <span className="ml-auto rounded-full border border-cyan-300/40 bg-cyan-500/10 px-2 py-0.5 text-[9px] font-mono uppercase tracking-wider text-cyan-200/85">arming</span>
-        </div>
-      </Card>
-    );
+  const standbyCards = useMemo(() => {
+    return (results || [])
+      .filter((row) => isEarlyDirectionalStandbyEdgeCard(row))
+      .sort((a, b) => {
+        const edgeA = a.edgeEngine as EdgeEngineSnapshot;
+        const edgeB = b.edgeEngine as EdgeEngineSnapshot;
+        if (edgeB.edgeScore !== edgeA.edgeScore) return edgeB.edgeScore - edgeA.edgeScore;
+        if (edgeB.confidence !== edgeA.confidence) return edgeB.confidence - edgeA.confidence;
+        return edgeB.triggerProbability - edgeA.triggerProbability;
+      });
+  }, [results]);
+
+  const cardsWithCompressionFallback = cards.length
+    ? cards
+    : standbyCards.length
+      ? standbyCards.slice(0, 3)
+      : (results || [])
+          .filter((row) => isFiveMinuteCompressionEdgeCard(row))
+          .sort((a, b) => {
+            const sparkGap = (b.compression?.sparkScore ?? 0) - (a.compression?.sparkScore ?? 0);
+            if (sparkGap !== 0) return sparkGap;
+            const setupGap = (b.preBreakoutSetup?.score ?? 0) - (a.preBreakoutSetup?.score ?? 0);
+            if (setupGap !== 0) return setupGap;
+            return (b.timeframeStack?.agreement ?? 0) - (a.timeframeStack?.agreement ?? 0);
+          })
+          .slice(0, 3);
+
+  if (!cardsWithCompressionFallback.length) {
+    return null;
   }
 
   return (
     <div className="mb-2 flex flex-wrap gap-2">
-      {cards.map((row) => {
+      {cardsWithCompressionFallback.map((row) => {
         const edge = row.edgeEngine as EdgeEngineSnapshot;
-        const tone = toneClasses(edge.direction);
+        const modeLabel = getEdgeCardMode(row);
+        const executeEdgeWindow = modeLabel === "EXECUTE";
+        const isCompressionFallback = isFiveMinuteCompressionEdgeCard(row) && edge.direction === "neutral" && edge.signal === "WAIT";
+        const statusLabel = isCompressionFallback ? "5M COMPRESSION" : getEdgeStatusLabel(row, modeLabel);
+        const displayDirection = getEdgeCardDisplayDirection(row);
+        const displaySignal = getEdgeCardDisplaySignal(row);
+        const tone = toneClasses(displayDirection);
         const toneLevel = scoreTone(edge.edgeScore);
-        const isUp = edge.direction === "bullish";
+        const isUp = displayDirection === "bullish";
+        const readinessScore = Math.max(0, Math.min(100, Number(row.optionsReadiness?.score ?? 0)));
+        const moveScore = Math.max(0, Math.min(100, Number(row.optionsReadiness?.moveScore ?? 0)));
+        const chainScore = Math.max(0, Math.min(100, Number(row.optionsReadiness?.chainScore ?? 0)));
+        const expectedDirection = row.optionsReadiness?.expectedDirection;
         const stateChip = edge.state === "TRIGGERED"
           ? "from-fuchsia-500/35 to-rose-500/35 border-fuchsia-300/45"
           : edge.state === "PRIMED"
@@ -487,13 +917,37 @@ export function EdgeAlertBar() {
                     <Zap className="h-3.5 w-3.5" style={{ color: tone.accentHex, filter: `drop-shadow(0 0 8px ${tone.accentHex})` }} />
                     <span className={cn("font-mono text-base font-black tracking-[0.14em]", tone.text)}>{row.symbol}</span>
                     <Crosshair className="h-3 w-3" style={{ color: tone.accentHex, filter: `drop-shadow(0 0 8px ${tone.accentHex})` }} />
+                    <span className={cn(
+                      "rounded-full border px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.16em] shadow-[0_0_12px_rgba(251,191,36,0.2)]",
+                      executeEdgeWindow
+                        ? "border-emerald-300/45 bg-gradient-to-r from-emerald-500/30 to-cyan-500/25 text-emerald-100"
+                        : "border-amber-300/45 bg-gradient-to-r from-amber-500/30 to-orange-500/25 text-amber-100"
+                    )}>
+                      {modeLabel}
+                    </span>
                     <span className={cn("rounded-full border bg-gradient-to-r px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.16em]", tone.chip)}>
-                      {edge.signal === "BREAK_UP" ? "EDGE UP" : edge.signal === "BREAK_DOWN" ? "EDGE DOWN" : "EDGE WAIT"}
+                      {isCompressionFallback
+                        ? displayDirection === "bullish"
+                          ? "5M COMP UP"
+                          : "5M COMP DOWN"
+                        : displaySignal === "BREAK_UP"
+                          ? "EDGE UP"
+                          : displaySignal === "BREAK_DOWN"
+                            ? "EDGE DOWN"
+                            : "EDGE WAIT"}
+                    </span>
+                    {!executeEdgeWindow && Number.isFinite(row.preBreakoutSetup?.score) ? (
+                      <span className="rounded-full border border-amber-300/40 bg-amber-500/12 px-1.5 py-0.5 text-[8px] font-mono font-black uppercase tracking-[0.16em] text-amber-100">
+                        SETUP {Math.round(row.preBreakoutSetup?.score ?? 0)}
+                      </span>
+                    ) : null}
+                    <span className="rounded-full border border-cyan-300/35 bg-cyan-500/12 px-1.5 py-0.5 text-[8px] font-mono font-black uppercase tracking-[0.16em] text-cyan-100">
+                      OPT {Math.round(readinessScore)}
                     </span>
                     <span className="ml-auto text-[7px] font-mono uppercase tracking-[0.2em]" style={{ color: `${tone.accentHex}cc` }}>QUANT EDGE</span>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-1">
+                  <div className="grid grid-cols-4 gap-1">
                     <div className="rounded-lg border border-white/10 bg-slate-900/55 px-1.5 py-0.5 shadow-[inset_0_0_10px_rgba(255,255,255,0.05)]">
                       <div className="text-[8px] uppercase tracking-[0.14em] text-slate-400">CONF</div>
                       <div className="font-mono text-xs font-black text-slate-100">{edge.confidence}%</div>
@@ -505,6 +959,10 @@ export function EdgeAlertBar() {
                     <div className="rounded-lg border border-white/10 bg-slate-900/55 px-1.5 py-0.5 shadow-[inset_0_0_10px_rgba(255,255,255,0.05)]">
                       <div className="text-[8px] uppercase tracking-[0.14em] text-slate-400">TRG</div>
                       <div className="font-mono text-xs font-black text-slate-100">{edge.triggerProbability}%</div>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-slate-900/55 px-1.5 py-0.5 shadow-[inset_0_0_10px_rgba(255,255,255,0.05)]">
+                      <div className="text-[8px] uppercase tracking-[0.14em] text-slate-400">OPT</div>
+                      <div className="font-mono text-xs font-black text-slate-100">{Math.round(readinessScore)}</div>
                     </div>
                   </div>
 
@@ -526,8 +984,8 @@ export function EdgeAlertBar() {
                   <div className="mb-0.5 flex items-center justify-between text-[8px] font-bold uppercase tracking-[0.16em] text-slate-300/85">
                     <span>Impulse Vector</span>
                     <span className={cn("inline-flex items-center gap-1", tone.subtleText)}>
-                      {isUp ? <ArrowUpRight className="h-3 w-3" /> : edge.direction === "bearish" ? <ArrowDownRight className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
-                      {edge.direction.toUpperCase()}
+                      {isUp ? <ArrowUpRight className="h-3 w-3" /> : displayDirection === "bearish" ? <ArrowDownRight className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+                      {displayDirection.toUpperCase()}
                     </span>
                   </div>
                   <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-0.5">
@@ -558,13 +1016,19 @@ export function EdgeAlertBar() {
                     Edge Driver Stack
                     <span className="ml-auto inline-flex items-center gap-1 text-[8px] text-slate-400">
                       <Timer className="h-3 w-3" />
-                      pre-break
+                      {expectedDirection ?? statusLabel}
                     </span>
                   </div>
                   <div className="max-h-[28px] overflow-hidden text-[10px] leading-snug text-slate-100/90">
                     {edge.reasons.slice(0, 2).join(" • ")}
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-0.5 text-[8px]">
+                    <span className="rounded-full border border-white/10 bg-slate-900/50 px-1.5 py-0.5 font-mono text-slate-200">
+                      MOVE {Math.round(moveScore)}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-slate-900/50 px-1.5 py-0.5 font-mono text-slate-200">
+                      CHAIN {Math.round(chainScore)}
+                    </span>
                     <span className="rounded-full border border-white/10 bg-slate-900/50 px-1.5 py-0.5 font-mono text-slate-200">
                       MACD {edge.indicators.macdHistogram >= 0 ? "+" : ""}{edge.indicators.macdHistogram.toFixed(2)}
                     </span>
@@ -582,7 +1046,7 @@ export function EdgeAlertBar() {
               </div>
 
               <div className="flex items-center justify-between text-[9px] font-mono">
-                <span className={cn("inline-flex items-center gap-1", tone.subtleText)}>Engine state {edge.state}</span>
+                <span className={cn("inline-flex items-center gap-1", tone.subtleText)}>{modeLabel} state {edge.state}</span>
                 <span className="inline-flex items-center gap-1 text-slate-300/80">
                   <Gauge className="h-3 w-3" />
                   breakout signal {String(row.breakoutSignal || "n/a").toUpperCase()}

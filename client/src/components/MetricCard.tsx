@@ -318,6 +318,14 @@ import { useEffect, useRef } from "react";
 interface ScannerResult {
   lastIndex?: number;
   scanTime?: number;
+  isDegraded?: boolean;
+  spotMeta?: {
+    timestamp?: string;
+    quoteAgeMs?: number;
+    source?: 'finnhub' | 'yahoo';
+    marketState?: string;
+    isFresh?: boolean;
+  };
   compression?: {
     phase?: string;
     archStrength?: number;
@@ -369,6 +377,17 @@ interface ScannerResult {
     risk_reward?: number;
     riskToReward?: number;
   }[];
+  optionsReadiness?: {
+    score?: number;
+    moveScore?: number;
+    chainScore?: number;
+    optionScore?: number;
+    optionOpenInterest?: number;
+    riskRewardPercent?: number;
+    hasOptionData?: boolean;
+    expectedDirection?: 'CALL' | 'PUT' | null;
+    alignedDirection?: boolean;
+  };
   timeframeStack?: {
     primary?: string;
     aggregateScore?: number;
@@ -394,6 +413,15 @@ interface ScannerResult {
     preNearSessionHigh?: boolean;
     preAboveVwap?: boolean;
     etaMinutes?: number;
+  };
+  edgeEngine?: {
+    signal?: 'BREAK_UP' | 'BREAK_DOWN' | 'WAIT';
+    direction?: 'bullish' | 'bearish' | 'neutral';
+    state?: 'STANDBY' | 'ARMING' | 'PRIMED' | 'TRIGGERED';
+    edgeScore?: number;
+    confidence?: number;
+    leadMinutes?: number;
+    triggerProbability?: number;
   };
 }
 
@@ -438,12 +466,19 @@ interface BreakoutThresholdConfig {
 
 interface BreakoutLogEntry {
   symbol?: string;
+  signal?: 'BREAKOUT' | 'BREAKDOWN' | 'SQUEEZE' | 'CONSOLIDATING' | 'EXPANSION' | 'BUILDING' | 'MOMENTUM' | string;
+  mode?: 'PREPARE' | 'EXECUTE';
   direction?: 'bullish' | 'bearish' | 'neutral' | string;
   breakoutScore?: number;
   priceAtCapture?: number;
   stopLoss?: number;
   targets?: number[];
   outcome?: string;
+  prepareOutcome?: 'pending' | 'promoted' | 'win_t1' | 'win_t2' | 'loss' | 'missed' | string;
+  promotedFromId?: string;
+  optionsReadiness?: {
+    score?: number;
+  };
   timestamp?: number;
 }
 
@@ -458,8 +493,21 @@ interface SymbolLogStats {
   wins: number;
   losses: number;
   latest?: BreakoutLogEntry;
+  latestPrepare?: BreakoutLogEntry;
+  latestExecute?: BreakoutLogEntry;
   latestBullish?: BreakoutLogEntry;
   latestBearish?: BreakoutLogEntry;
+  latestBullishExecute?: BreakoutLogEntry;
+  latestBearishExecute?: BreakoutLogEntry;
+}
+
+function getBreakoutLogMode(entry: BreakoutLogEntry | undefined): 'PREPARE' | 'EXECUTE' {
+  const mode = String(entry?.mode ?? '').toUpperCase();
+  if (mode === 'PREPARE' || mode === 'EXECUTE') return mode;
+  const signal = String(entry?.signal ?? '').toUpperCase();
+  return signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING'
+    ? 'PREPARE'
+    : 'EXECUTE';
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -517,12 +565,171 @@ function getOptionPlayRiskRewardPercent(play: Record<string, unknown> | undefine
   return Number.isFinite(rrPct) ? rrPct : null;
 }
 
-function getAlertDirection(alert: ScannerResult): 'bullish' | 'bearish' {
-  if (alert.breakoutSignal === 'BREAKDOWN') return 'bearish';
-  if (alert.breakoutSignal === 'EXPANSION' && alert.expansionDirection === 'bearish') return 'bearish';
-  if (alert.breakoutSignal === 'MOMENTUM' && (alert.expansionDirection === 'bearish' || (alert.momentumStrength ?? 0) < 0)) return 'bearish';
-  if (alert.expansionDirection === 'bearish') return 'bearish';
-  return 'bullish';
+function isExecuteLikeSignal(signal?: string | null): boolean {
+  const upper = String(signal ?? '').toUpperCase();
+  return upper === 'BREAKOUT' || upper === 'BREAKDOWN' || upper === 'EXPANSION' || upper === 'MOMENTUM';
+}
+
+function getSignalQualityRank(quality: ScannerResult['signalQuality']): 0 | 1 | 2 | 3 {
+  if (quality === 'HIGH') return 3;
+  if (quality === 'MEDIUM') return 2;
+  if (quality === 'LOW') return 1;
+  return 0;
+}
+
+function getStrongStackExecuteDirection(alert: ScannerResult): 'bullish' | 'bearish' | 'neutral' {
+  const stack = alert.timeframeStack;
+  const stackBias = stack?.bias ?? 'neutral';
+  if (stackBias !== 'bullish' && stackBias !== 'bearish') return 'neutral';
+
+  const primaryDirectionalRelease =
+    (stack?.agreement ?? 0) >= 60 &&
+    isExecuteLikeSignal(alert.breakoutSignal) &&
+    Math.abs(alert.momentumStrength ?? 0) >= 36;
+    alert.expansionDirection === stackBias;
+  if (primaryDirectionalRelease) return stackBias;
+
+  if ((stack?.agreement ?? 0) < 75) return 'neutral';
+
+  const alignedComponent = (stack?.components ?? [])
+    .filter((component) => {
+      return (
+        component.timeframe !== stack?.primary &&
+        component.direction === stackBias &&
+        isExecuteLikeSignal(component.breakoutSignal) &&
+        (
+          (component.breakoutScore ?? 0) >= 45 ||
+          Math.abs(component.momentumStrength ?? 0) >= 40
+        )
+      );
+    })
+    .sort((left, right) => {
+      const scoreGap = (right.breakoutScore ?? 0) - (left.breakoutScore ?? 0);
+      if (scoreGap !== 0) return scoreGap;
+      return Math.abs(right.momentumStrength ?? 0) - Math.abs(left.momentumStrength ?? 0);
+    })[0];
+
+  if (!alignedComponent) return 'neutral';
+
+  const edge = alert.edgeEngine;
+  const edgeSupports =
+    edge?.direction === stackBias &&
+    (
+      edge.state === 'PRIMED' ||
+      edge.state === 'TRIGGERED' ||
+      (edge.state === 'ARMING' && (edge.edgeScore ?? 0) >= 72 && (edge.confidence ?? 0) >= 68)
+    );
+  const primaryMomentumSupports =
+    Math.abs(alert.momentumStrength ?? 0) >= 28 &&
+    alert.expansionDirection === stackBias;
+
+  if (!edgeSupports && !primaryMomentumSupports && (alert.breakoutScore ?? 0) < 42) return 'neutral';
+  return stackBias;
+}
+
+function isStrongExecuteBreakoutCard(
+  alert: ScannerResult,
+  direction: 'bullish' | 'bearish' | 'neutral',
+): boolean {
+  if (direction === 'neutral') return false;
+  if (getStrongStackExecuteDirection(alert) !== direction) return false;
+
+  const qualityRank = getSignalQualityRank(alert.signalQuality);
+  if (qualityRank === 0) return false;
+
+  const edge = alert.edgeEngine;
+  const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
+  const breakoutScore = alert.breakoutScore ?? 0;
+  const stackAgreement = alert.timeframeStack?.agreement ?? 0;
+  const edgeSupports =
+    edge?.direction === direction &&
+    (
+      edge.state === 'PRIMED' ||
+      edge.state === 'TRIGGERED' ||
+      (edge.state === 'ARMING' && (edge.edgeScore ?? 0) >= 72 && (edge.confidence ?? 0) >= 68)
+    );
+  const releaseSignal = isExecuteLikeSignal(alert.breakoutSignal);
+
+  return (stackAgreement >= 75 || releaseSignal) && (edgeSupports || breakoutScore >= 36 || momentumAbs >= 28);
+}
+
+function getAlertDirection(alert: ScannerResult): 'bullish' | 'bearish' | 'neutral' {
+  const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+  if (signal === 'BREAKOUT') return 'bullish';
+  if (signal === 'BREAKDOWN') return 'bearish';
+
+  const stackExecuteDirection = getStrongStackExecuteDirection(alert);
+  if (stackExecuteDirection !== 'neutral') return stackExecuteDirection;
+
+  let bullishVotes = 0;
+  let bearishVotes = 0;
+
+  if (alert.expansionDirection === 'bullish') bullishVotes += 2;
+  if (alert.expansionDirection === 'bearish') bearishVotes += 2;
+
+  const momentum = alert.momentumStrength ?? 0;
+  if (momentum >= 12) bullishVotes += 2;
+  if (momentum <= -12) bearishVotes += 2;
+
+  const stackAgreement = alert.timeframeStack?.agreement ?? 0;
+  const stackBias = alert.timeframeStack?.bias ?? 'neutral';
+  if (stackAgreement >= 55 && stackBias === 'bullish') bullishVotes += 3;
+  if (stackAgreement >= 55 && stackBias === 'bearish') bearishVotes += 3;
+
+  if (alert.edgeEngine?.direction === 'bullish') bullishVotes += 2;
+  if (alert.edgeEngine?.direction === 'bearish') bearishVotes += 2;
+  if (alert.edgeEngine?.direction === 'bullish' && (alert.edgeEngine?.state === 'PRIMED' || alert.edgeEngine?.state === 'TRIGGERED')) bullishVotes += 1;
+  if (alert.edgeEngine?.direction === 'bearish' && (alert.edgeEngine?.state === 'PRIMED' || alert.edgeEngine?.state === 'TRIGGERED')) bearishVotes += 1;
+
+  if (alert.tvTrendDirection === 'bullish') bullishVotes += 2;
+  if (alert.tvTrendDirection === 'bearish') bearishVotes += 2;
+
+  const tvRecommendAll = alert.tvRecommendAll ?? 0;
+  if (tvRecommendAll >= 0.15) bullishVotes += 1;
+  if (tvRecommendAll <= -0.15) bearishVotes += 1;
+
+  const dayMovePct = alert.priceChangePercent ?? 0;
+  if (dayMovePct >= 0.2) bullishVotes += 1;
+  if (dayMovePct <= -0.2) bearishVotes += 1;
+
+  const setupScore = alert.preBreakoutSetup?.score ?? 0;
+  const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
+  const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+  const weakSetup = setupScore < 68 || setupTraits < 3 || (etaMinutes != null && etaMinutes > 10);
+  const strongBearContext =
+    (stackAgreement >= 60 && stackBias === 'bearish') ||
+    alert.tvTrendDirection === 'bearish' ||
+    tvRecommendAll <= -0.25 ||
+    dayMovePct <= -0.45;
+  const strongBullContext =
+    (stackAgreement >= 60 && stackBias === 'bullish') ||
+    alert.tvTrendDirection === 'bullish' ||
+    tvRecommendAll >= 0.25 ||
+    dayMovePct >= 0.45;
+
+  if (bullishVotes === 0 && bearishVotes === 0) return 'neutral';
+  if (bullishVotes >= bearishVotes + 2) {
+    return strongBearContext && weakSetup ? 'neutral' : 'bullish';
+  }
+  if (bearishVotes >= bullishVotes + 2) {
+    return strongBullContext && weakSetup ? 'neutral' : 'bearish';
+  }
+
+  return 'neutral';
+}
+
+function getBreakoutCardMode(
+  alert: ScannerResult,
+  prepareCompressionAlert: boolean,
+): 'PREPARE' | 'EXECUTE' {
+  if (prepareCompressionAlert) return 'PREPARE';
+
+  const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+  const phase = String(alert.compression?.phase ?? '').toUpperCase();
+  const isPrepareSignal = signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING';
+  const isPreparePhase = phase === 'PREPARE' || phase === 'READY';
+
+  return isPrepareSignal && isPreparePhase ? 'PREPARE' : 'EXECUTE';
 }
 
 function resolveExpectedOptionDirection(direction: 'bullish' | 'bearish' | 'neutral'): 'CALL' | 'PUT' | null {
@@ -1460,8 +1667,8 @@ export function PriceCard({
   const { data: scannerResults } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
     enabled: !!symbol,
-    refetchInterval: 30000,
-    staleTime: 10000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 
   const { data: fusionSnapshot } = useQuery<PriceCardFusionSnapshot>({
@@ -2876,9 +3083,11 @@ export function PriceCard({
 
 export function BreakoutAlertBar({
   drawablePatterns,
+  timeframe,
 }: {
   drawablePatterns?: DrawablePattern[];
   marketHealth?: any;
+  timeframe?: string;
 }) {
   const cardHoldRef = useRef<Map<string, { until: number; direction: 'bullish' | 'bearish' | 'neutral' }>>(new Map());
   const lastVisibleSymbolsRef = useRef<Set<string>>(new Set());
@@ -2886,8 +3095,8 @@ export function BreakoutAlertBar({
 
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 30000,
-    staleTime: 10000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 
   const { data: thresholdConfig } = useQuery<BreakoutThresholdConfig>({
@@ -2902,6 +3111,21 @@ export function BreakoutAlertBar({
     staleTime: 30 * 1000,
   });
 
+  const BREAKOUT_SCAN_FRESHNESS_MAX_MS = 3 * 60 * 1000;
+
+  const isLiveScannerAlert = (alert: ScannerResult): boolean => {
+    if (alert.isDegraded) return false;
+    if (alert.spotMeta?.isFresh === false) return false;
+
+    const scanAgeMs = Number.isFinite(alert.scanTime)
+      ? Math.max(0, Date.now() - (alert.scanTime ?? 0))
+      : Number.POSITIVE_INFINITY;
+
+    return Number.isFinite(scanAgeMs) && scanAgeMs <= BREAKOUT_SCAN_FRESHNESS_MAX_MS;
+  };
+
+  const liveResults = (results || []).filter((alert) => isLiveScannerAlert(alert));
+
   const symbolLogStats = (() => {
     const entries = Array.isArray(breakoutLog?.entries) ? breakoutLog.entries : [];
     const map = new Map<string, SymbolLogStats>();
@@ -2909,6 +3133,7 @@ export function BreakoutAlertBar({
     for (const row of entries) {
       const symbol = String(row.symbol ?? '').trim().toUpperCase();
       if (!symbol) continue;
+      const mode = getBreakoutLogMode(row);
 
       let stats = map.get(symbol);
       if (!stats) {
@@ -2928,14 +3153,29 @@ export function BreakoutAlertBar({
       const rowTs = toFiniteNumber(row.timestamp) ?? 0;
       const latestTs = toFiniteNumber(stats.latest?.timestamp) ?? -1;
       if (rowTs >= latestTs) stats.latest = row;
+      if (mode === 'PREPARE') {
+        const latestPrepareTs = toFiniteNumber(stats.latestPrepare?.timestamp) ?? -1;
+        if (rowTs >= latestPrepareTs) stats.latestPrepare = row;
+      } else {
+        const latestExecuteTs = toFiniteNumber(stats.latestExecute?.timestamp) ?? -1;
+        if (rowTs >= latestExecuteTs) stats.latestExecute = row;
+      }
 
       const direction = String(row.direction ?? '').toLowerCase();
       if (direction === 'bullish') {
         const latestBullishTs = toFiniteNumber(stats.latestBullish?.timestamp) ?? -1;
         if (rowTs >= latestBullishTs) stats.latestBullish = row;
+        if (mode === 'EXECUTE') {
+          const latestBullishExecuteTs = toFiniteNumber(stats.latestBullishExecute?.timestamp) ?? -1;
+          if (rowTs >= latestBullishExecuteTs) stats.latestBullishExecute = row;
+        }
       } else if (direction === 'bearish') {
         const latestBearishTs = toFiniteNumber(stats.latestBearish?.timestamp) ?? -1;
         if (rowTs >= latestBearishTs) stats.latestBearish = row;
+        if (mode === 'EXECUTE') {
+          const latestBearishExecuteTs = toFiniteNumber(stats.latestBearishExecute?.timestamp) ?? -1;
+          if (rowTs >= latestBearishExecuteTs) stats.latestBearishExecute = row;
+        }
       }
     }
 
@@ -2954,7 +3194,7 @@ export function BreakoutAlertBar({
   };
 
   const tuning: AlertTuning = (() => {
-    const universe = results || [];
+    const universe = liveResults;
     const total = universe.length;
     if (total === 0) {
       return {
@@ -3018,7 +3258,7 @@ export function BreakoutAlertBar({
   })();
 
   const marketPushMode = (() => {
-    const universe = results || [];
+    const universe = liveResults;
     if (universe.length === 0) return false;
 
     const majorSymbols = new Set(['SPY', 'QQQ', 'IWM', 'DIA']);
@@ -3081,16 +3321,77 @@ export function BreakoutAlertBar({
     return expandingNow ? 'READY' : 'SETUP DEVELOPING';
   };
 
+  const hasStrongPrepareEngine = (
+    alert: ScannerResult,
+    direction: 'bullish' | 'bearish' | 'neutral'
+  ): boolean => {
+    if (direction === 'neutral') return false;
+
+    const signal = String(alert.breakoutSignal ?? '').toUpperCase();
+    const phase = String(alert.compression?.phase ?? '').toUpperCase();
+    if (!(signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING')) return false;
+    if (!(phase === 'PREPARE' || phase === 'READY')) return false;
+
+    const setupScore = alert.preBreakoutSetup?.score ?? 0;
+    const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
+    const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+    if (setupScore < 72 || setupTraits < 3) return false;
+    if (etaMinutes != null && etaMinutes > 10) return false;
+
+    const edge = alert.edgeEngine;
+    if (!edge || edge.signal === 'WAIT' || edge.direction !== direction) return false;
+
+    const stateRank =
+      edge.state === 'TRIGGERED'
+        ? 3
+        : edge.state === 'PRIMED'
+          ? 2
+          : edge.state === 'ARMING'
+            ? 1
+            : 0;
+    if (stateRank === 0) return false;
+
+    const stackAgreement = alert.timeframeStack?.agreement ?? 0;
+    const stackBias = alert.timeframeStack?.bias ?? 'neutral';
+    const trendDirection = alert.tvTrendDirection ?? 'neutral';
+    const tvRecommendAll = alert.tvRecommendAll ?? 0;
+    const dayMovePct = alert.priceChangePercent ?? 0;
+    const contextConflict =
+      (stackAgreement >= 55 && stackBias !== 'neutral' && stackBias !== direction) ||
+      (trendDirection !== 'neutral' && trendDirection !== direction) ||
+      (direction === 'bullish'
+        ? (tvRecommendAll <= -0.2 || dayMovePct <= -0.35)
+        : (tvRecommendAll >= 0.2 || dayMovePct >= 0.35));
+    if (contextConflict) return false;
+
+    return (
+      stateRank >= 2 ||
+      (
+        (edge.edgeScore ?? 0) >= 72 &&
+        (edge.confidence ?? 0) >= 70 &&
+        (edge.triggerProbability ?? 0) >= 55 &&
+        (edge.leadMinutes ?? Number.POSITIVE_INFINITY) <= 15
+      ) ||
+      (setupScore >= 88 && (etaMinutes == null || etaMinutes <= 5))
+    );
+  };
+
   const isSetupStartingTight = (alert: ScannerResult): boolean => {
     const signal = String(alert.breakoutSignal || '').toUpperCase();
     const phase = String(alert.compression?.phase || '').toUpperCase();
+    const direction = getAlertDirection(alert);
     const setupScore = alert.preBreakoutSetup?.score ?? 0;
     const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
     const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
     const breakoutScore = alert.breakoutScore ?? 0;
-    const bestPlay = getBestOptionPlayForDirection(alert, getAlertDirection(alert));
+    const stackAgreement = alert.timeframeStack?.agreement ?? 0;
+    const stackBias = alert.timeframeStack?.bias ?? 'neutral';
+    const trendDirection = alert.tvTrendDirection ?? 'neutral';
+    const dayMovePct = alert.priceChangePercent ?? 0;
+    const strongPrepareEngine = hasStrongPrepareEngine(alert, direction);
+    const bestPlay = direction === 'neutral' ? undefined : getBestOptionPlayForDirection(alert, direction);
     const optionScore = toFiniteNumber(bestPlay?.score) ?? 0;
     const optionOi = getOptionPlayOpenInterest(bestPlay);
 
@@ -3115,17 +3416,30 @@ export function BreakoutAlertBar({
     const optionGate = !hasOptionData || (optionScore >= 50 && optionOi >= 100);
     const hasSetupModel = !!alert.preBreakoutSetup;
     const etaGate = etaMinutes == null || etaMinutes <= 10;
+    const setupStructureOk = strongPrepareEngine || (hasSetupModel
+      ? setupScore >= 68 && setupTraits >= 3 && etaGate
+      : breakoutScore >= 58 && momentumAbs >= 12 && momentumAbs <= 24 && phase === 'PREPARE');
+    const contextAligned =
+      direction !== 'neutral' && (
+        (stackAgreement >= 55 && stackBias === direction) ||
+        trendDirection === direction ||
+        (direction === 'bullish' ? dayMovePct >= 0.12 : dayMovePct <= -0.12)
+      );
+    const volumeProfileOk = strongPrepareEngine || (volumeSpike >= 0.95 && volumeSpike <= 1.45);
+    const momentumProfileOk = strongPrepareEngine
+      ? momentumAbs >= 12 && momentumAbs <= 32
+      : momentumAbs >= 12 && momentumAbs <= 28;
+    const breakoutScoreFloor = strongPrepareEngine ? 16 : 42;
 
     return (
       getSetupStage(alert) === 'SETUP DEVELOPING' &&
-      (setupSignal || setupPhase) &&
-      (setupScore >= 62 || !hasSetupModel) &&
-      (setupTraits >= 3 || !hasSetupModel) &&
-      etaGate &&
-      momentumAbs >= 10 &&
-      momentumAbs <= 32 &&
-      volumeSpike >= 1.0 &&
-      breakoutScore >= 38 &&
+      contextAligned &&
+      setupSignal &&
+      setupPhase &&
+      setupStructureOk &&
+      momentumProfileOk &&
+      volumeProfileOk &&
+      breakoutScore >= breakoutScoreFloor &&
       breakoutScore <= 74 &&
       optionGate
     );
@@ -3322,13 +3636,6 @@ export function BreakoutAlertBar({
     }
     return true;
   }
-  const getSignalQualityRank = (quality: ScannerResult['signalQuality']): 0 | 1 | 2 | 3 => {
-    if (quality === 'HIGH') return 3;
-    if (quality === 'MEDIUM') return 2;
-    if (quality === 'LOW') return 1;
-    return 0;
-  };
-
   const getSymbolEdge = (alert: ScannerResult): { winRate: number | null; sample: number } => {
     const stats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
     if (!stats || stats.completed <= 0) return { winRate: null, sample: 0 };
@@ -3408,13 +3715,16 @@ export function BreakoutAlertBar({
     const signal = String(alert.breakoutSignal ?? '').toUpperCase();
     if (signal === 'BREAKOUT') return 'bullish';
     if (signal === 'BREAKDOWN') return 'bearish';
+
+    const inferred = getAlertDirection(alert);
+    if (inferred !== 'neutral') return inferred;
+
     if (signal === 'EXPANSION' || signal === 'MOMENTUM' || signal === 'BUILDING') {
-      if (alert.expansionDirection === 'bullish') return 'bullish';
-      if (alert.expansionDirection === 'bearish') return 'bearish';
-      const momentum = alert.momentumStrength ?? 0;
-      if (momentum >= 0) return 'bullish';
-      return 'bearish';
+      const dayMovePct = alert.priceChangePercent ?? 0;
+      if (dayMovePct <= -0.1) return 'bearish';
+      if (dayMovePct >= 0.1) return 'bullish';
     }
+
     return 'neutral';
   };
 
@@ -3499,6 +3809,7 @@ export function BreakoutAlertBar({
   const isPrepareCompressionAlert = (alert: ScannerResult, legacyScore: number): boolean => {
     const signal = String(alert.breakoutSignal ?? '').toUpperCase();
     const phase = String(alert.compression?.phase ?? '').toUpperCase();
+    const direction = getAlertDirection(alert);
     const qualityRank = getSignalQualityRank(alert.signalQuality);
     const breakoutScore = alert.breakoutScore ?? 0;
     const compressionStrength = Number.isFinite(alert.compression?.archStrength)
@@ -3508,21 +3819,40 @@ export function BreakoutAlertBar({
         : 0;
     const momentumAbs = Math.abs(alert.momentumStrength ?? 0);
     const volumeSpike = alert.volumeSpike ?? 1;
-    const dayMoveAbsPct = Math.abs(alert.priceChangePercent ?? 0);
+    const dayMovePct = alert.priceChangePercent ?? 0;
+    const dayMoveAbsPct = Math.abs(dayMovePct);
     const setupScore = alert.preBreakoutSetup?.score ?? 0;
     const setupTraits = alert.preBreakoutSetup?.traits?.length ?? 0;
     const etaMinutes = alert.preBreakoutSetup?.etaMinutes;
+    const stackAgreement = alert.timeframeStack?.agreement ?? 0;
+    const stackBias = alert.timeframeStack?.bias ?? 'neutral';
+    const trendDirection = alert.tvTrendDirection ?? 'neutral';
+    const tvRecommendAll = alert.tvRecommendAll ?? 0;
+    const strongPrepareEngine = hasStrongPrepareEngine(alert, direction);
 
     const warningSet = new Set((alert.warnings ?? []).map((warning) => String(warning ?? '').toUpperCase()));
     const hardConflict = warningSet.has('CONFLICT_MOMENTUM');
     const trendConflict = warningSet.has('TREND_CONFLICT') || warningSet.has('TV_TREND_CONFLICT');
     const recommendOpposed = warningSet.has('TV_RECOMMEND_OPPOSE');
 
-    const isPreparePhase = phase === 'WAIT' || phase === 'PREPARE' || phase === 'READY';
+    const isPreparePhase = phase === 'PREPARE' || phase === 'READY';
     const isPrepareSignal = signal === 'BUILDING' || signal === 'SQUEEZE' || signal === 'CONSOLIDATING';
     if (!isPreparePhase || !isPrepareSignal) return false;
-    if (qualityRank < 1) return false;
+    if (direction === 'neutral') return false;
+    if (qualityRank < 2 && !strongPrepareEngine) return false;
     if (hardConflict) return false;
+    if (setupScore < 68 || setupTraits < 3) return false;
+    if (etaMinutes != null && etaMinutes > 10) return false;
+
+    const contextConflict =
+      (stackAgreement >= 55 && stackBias !== 'neutral' && stackBias !== direction) ||
+      (trendDirection !== 'neutral' && trendDirection !== direction) ||
+      (direction === 'bullish'
+        ? (tvRecommendAll <= -0.2 || dayMovePct <= -0.35)
+        : (tvRecommendAll >= 0.2 || dayMovePct >= 0.35));
+    if (contextConflict) return false;
+
+    if (strongPrepareEngine) return true;
 
     if (etaMinutes != null && etaMinutes <= 5 && setupScore >= 70 && setupTraits >= 3) {
       return true;
@@ -3538,7 +3868,6 @@ export function BreakoutAlertBar({
     const mom55Plus = momentumAbs >= 55;
 
     // Recurrence-backed profiles from the 2-8 minute lead study.
-    const profileWaitLowVolMomentum = phase === 'WAIT' && lowCompression && lowVolume && mom55Plus;
     const profileReadyLowVolMomentum = phase === 'READY' && midCompression && lowVolume && mom55Plus;
     const profilePrepareHighVolMomentum = phase === 'PREPARE' && lowCompression && highVolume && (mom35To54 || mom55Plus);
     const profileReadyHighVolControlledMomentum =
@@ -3550,12 +3879,10 @@ export function BreakoutAlertBar({
     if (badReadyWeakMomentumHighVol && legacyScore < 70) return false;
 
     let profileScore = 0;
-    if (profileWaitLowVolMomentum) profileScore += 5;
     if (profileReadyLowVolMomentum) profileScore += 4;
     if (profilePrepareHighVolMomentum) profileScore += 4;
     if (profileReadyHighVolControlledMomentum) profileScore += 3;
 
-    if (phase === 'WAIT') profileScore += 1;
     if (phase === 'PREPARE' || phase === 'READY') profileScore += 1;
     if (lowCompression) profileScore += 2;
     else if (midCompression) profileScore += 1;
@@ -3576,7 +3903,6 @@ export function BreakoutAlertBar({
     if (qualityRank === 1 && profileScore < 10) return false;
 
     const strongProfileMatch =
-      profileWaitLowVolMomentum ||
       profileReadyLowVolMomentum ||
       profilePrepareHighVolMomentum ||
       profileReadyHighVolControlledMomentum;
@@ -3588,7 +3914,7 @@ export function BreakoutAlertBar({
 
   const getRecentLogAgeMs = (alert: ScannerResult): number | null => {
     const symbolStats = symbolLogStats.get(String(alert.symbol ?? '').toUpperCase());
-    const latestTs = toFiniteNumber(symbolStats?.latest?.timestamp);
+    const latestTs = toFiniteNumber(symbolStats?.latestExecute?.timestamp ?? symbolStats?.latest?.timestamp);
     if (latestTs == null || latestTs <= 0) return null;
     return Math.max(0, Date.now() - latestTs);
   };
@@ -3609,7 +3935,7 @@ export function BreakoutAlertBar({
 
   const MAX_STICKY_LOG_AGE_MS = 8 * 60 * 1000;
   const MAX_VISIBLE_ALERTS = 3;
-  const monitoredAlerts = (results || [])
+  const monitoredAlerts = liveResults
     .map((alert) => {
       const setupOdds = getSetupOdds(alert);
       const legacyScore = getLegacyCardScore(alert);
@@ -3620,14 +3946,18 @@ export function BreakoutAlertBar({
       const hold = cardHoldRef.current.get(symbolUpper);
       const signal = String(alert.breakoutSignal ?? '').toUpperCase();
       const prepareCompressionAlert = isPrepareCompressionAlert(alert, legacyScore);
+      const setupStartingTight = isSetupStartingTight(alert);
       const stickyFromRecentLog =
         recentLogAgeMs != null &&
         recentLogAgeMs <= MAX_STICKY_LOG_AGE_MS &&
         qualityRank >= 2 &&
         legacyScore >= 54;
       const passesLegacyGate = isLegacyBreakoutCard(alert, legacyScore);
+      const strongExecuteCard = isStrongExecuteBreakoutCard(alert, direction);
 
-      const passesCurrentGate = passesLegacyGate || stickyFromRecentLog || prepareCompressionAlert;
+      const passesCurrentGate =
+        direction !== 'neutral' &&
+        (passesLegacyGate || strongExecuteCard || prepareCompressionAlert || setupStartingTight || stickyFromRecentLog);
       const hardInvalidation =
         qualityRank === 0 ||
         (signal === 'BUILDING' && Math.abs(alert.momentumStrength ?? 0) < 10 && (alert.breakoutScore ?? 0) < 46);
@@ -3638,12 +3968,25 @@ export function BreakoutAlertBar({
         hold.direction !== direction;
 
       const directionLock = directionLockRef.current.get(symbolUpper);
+      const strongDirectionFlip =
+        !!directionLock &&
+        directionLock.until > nowTs &&
+        directionLock.direction !== 'neutral' &&
+        direction !== 'neutral' &&
+        directionLock.direction !== direction &&
+        (
+          isStrongExecuteBreakoutCard(alert, direction) ||
+          ((alert.timeframeStack?.agreement ?? 0) >= 75 && alert.timeframeStack?.bias === direction) ||
+          (alert.edgeEngine?.direction === direction &&
+            (alert.edgeEngine?.state === 'PRIMED' || alert.edgeEngine?.state === 'TRIGGERED'))
+        );
       const directionFlipConflict =
         !!directionLock &&
         directionLock.until > nowTs &&
         directionLock.direction !== 'neutral' &&
         direction !== 'neutral' &&
-        directionLock.direction !== direction;
+        directionLock.direction !== direction &&
+        !strongDirectionFlip;
       const displayDirection = directionFlipConflict
         ? directionLock.direction
         : direction;
@@ -3680,16 +4023,18 @@ export function BreakoutAlertBar({
         displayDirection,
         directionFlipConflict,
         prepareCompressionAlert,
+        strongExecuteCard,
         passesCurrentGate,
         holdActive,
         wasVisibleLastCycle,
         stickyFromRecentLog,
-        include: passesCurrentGate || holdActive,
+        include: (passesCurrentGate || holdActive) && displayDirection !== 'neutral',
       };
     })
     .filter((row) => row.include)
     .slice()
     .sort((a, b) => {
+      if (a.strongExecuteCard !== b.strongExecuteCard) return a.strongExecuteCard ? -1 : 1;
       if (a.prepareCompressionAlert !== b.prepareCompressionAlert) return a.prepareCompressionAlert ? -1 : 1;
       if (a.passesCurrentGate !== b.passesCurrentGate) return a.passesCurrentGate ? -1 : 1;
       if (a.holdActive !== b.holdActive) return a.holdActive ? -1 : 1;
@@ -3721,41 +4066,49 @@ export function BreakoutAlertBar({
 
   if (monitoredAlertsStable.length > 0) {
     return (
-      <div className="flex flex-wrap gap-2 mb-3">
-        {monitoredAlertsStable.map(({ alert, setupOdds, prepareCompressionAlert, displayDirection }) => {
-          const momentumStrength = alert.momentumStrength ?? 0;
-          const stackBias = alert.timeframeStack?.bias;
+      <div className="space-y-3 mb-3">
+        <div className="flex flex-wrap gap-2">
+          {monitoredAlertsStable.map(({ alert, setupOdds, prepareCompressionAlert, displayDirection }) => {
+            const momentumStrength = alert.momentumStrength ?? 0;
+            const stackBias = alert.timeframeStack?.bias;
+          const cardMode = getBreakoutCardMode(alert, prepareCompressionAlert);
+          const isPrepareCard = cardMode === 'PREPARE';
           const topPlayHint = getBestOptionPlayForDirection(alert, displayDirection);
-          const topPlayDirection = String(topPlayHint?.direction ?? '').toUpperCase();
+          const readiness = alert.optionsReadiness;
+          const readinessScore = Math.round(readiness?.score ?? 0);
+          const readinessMoveScore = Math.round(readiness?.moveScore ?? 0);
+          const readinessChainScore = Math.round(readiness?.chainScore ?? 0);
           const effectiveDirection: 'bullish' | 'bearish' =
             displayDirection === 'neutral'
-              ? topPlayDirection === 'PUT'
+              ? stackBias === 'bearish'
                 ? 'bearish'
-                : topPlayDirection === 'CALL'
+                : stackBias === 'bullish'
                   ? 'bullish'
-                  : stackBias === 'bearish'
+                  : alert.tvTrendDirection === 'bearish'
                     ? 'bearish'
-                    : stackBias === 'bullish'
+                    : alert.tvTrendDirection === 'bullish'
                       ? 'bullish'
-                      : momentumStrength < 0
+                      : momentumStrength <= -12
                         ? 'bearish'
-                        : 'bullish'
+                        : momentumStrength >= 12
+                          ? 'bullish'
+                          : (alert.priceChangePercent ?? 0) <= 0
+                            ? 'bearish'
+                            : 'bullish'
               : displayDirection;
           const isBearish = effectiveDirection === 'bearish';
-          const isLong = !isBearish;
+          const isLong = effectiveDirection === 'bullish';
           const alertColor = isLong ? '#10b981' : '#ef4444';
           const alertGlow = isLong ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)';
           const alertTopBar = isLong
             ? 'from-emerald-600 via-teal-400 to-cyan-500'
             : 'from-red-700 via-rose-500 to-orange-400';
-          const signalTag = prepareCompressionAlert
-            ? ((alert.preBreakoutSetup?.etaMinutes != null && alert.preBreakoutSetup.etaMinutes <= 5)
-              ? 'BREAKOUT <=5M'
-              : 'PREPARE ALERT')
-            : isExpansionDetected(alert)
-              ? (marketPushMode ? 'LIVE PUSH' : 'EXPANSION DETECTED')
-              : 'SETUP STARTING';
           const setupStage = getSetupStage(alert);
+          const signalTag = isExpansionDetected(alert)
+              ? (marketPushMode ? 'LIVE PUSH' : 'EXPANSION DETECTED')
+              : isPrepareCard
+                ? (setupStage === 'READY' ? 'PRE-BREAKOUT' : 'PREP WINDOW')
+                : 'EXECUTE WINDOW';
           const compressionStrength = Number.isFinite(alert.compression?.archStrength)
             ? (alert.compression?.archStrength as number)
             : Number.isFinite(alert.compression?.sparkScore)
@@ -3774,14 +4127,16 @@ export function BreakoutAlertBar({
           const alertDirection = effectiveDirection;
           const latestDirectionalLog =
             alertDirection === 'bearish'
-              ? (symbolStats?.latestBearish ?? symbolStats?.latest)
-              : (symbolStats?.latestBullish ?? symbolStats?.latest);
+              ? (symbolStats?.latestBearishExecute ?? symbolStats?.latestExecute ?? symbolStats?.latestBearish ?? symbolStats?.latest)
+              : (symbolStats?.latestBullishExecute ?? symbolStats?.latestExecute ?? symbolStats?.latestBullish ?? symbolStats?.latest);
+          const latestPrepareLog = symbolStats?.latestPrepare;
+          const promotedFromPrepare = Boolean(latestDirectionalLog?.promotedFromId);
           const structuralRrPct = getStructuralRiskRewardPercent(latestDirectionalLog, alertDirection);
-          const oiGaugeValue = optionOpenInterest > 0 ? optionOpenInterest : (symbolWinRatePct ?? 0);
+          const oiGaugeValue = optionOpenInterest > 0 ? optionOpenInterest : readinessChainScore > 0 ? readinessChainScore : (symbolWinRatePct ?? 0);
           const oiGaugeMax = optionOpenInterest > 0 ? 5000 : 100;
-          const oiGaugeLabel = optionOpenInterest > 0 ? 'OI' : 'WR';
-          const rrGaugeValue = optionRrPct ?? structuralRrPct ?? 0;
-          const rrGaugeLabel = optionRrPct != null ? 'R/R' : structuralRrPct != null ? 'S/R' : 'R/R';
+          const oiGaugeLabel = optionOpenInterest > 0 ? 'OI' : readinessChainScore > 0 ? 'CHAIN' : 'WR';
+          const rrGaugeValue = optionRrPct ?? structuralRrPct ?? (readinessMoveScore > 0 ? readinessMoveScore : 0);
+          const rrGaugeLabel = optionRrPct != null ? 'R/R' : structuralRrPct != null ? 'S/R' : 'MOVE';
           const rrGaugeColor = optionRrPct != null ? '#22d3ee' : structuralRrPct != null ? '#38bdf8' : '#64748b';
           const symbolSampleCount = symbolStats?.completed ?? 0;
 
@@ -3797,6 +4152,9 @@ export function BreakoutAlertBar({
 
           if (etaMinutes != null && etaMinutes <= 5) {
             reasoningParts.push(`Lead model flags breakout risk within ~${etaMinutes} minutes.`);
+          }
+          if (!isPrepareCard && promotedFromPrepare && latestPrepareLog?.timestamp) {
+            reasoningParts.push('This execute card was promoted from a recent PREPARE alert on the same symbol and direction.');
           }
           if (setupScore > 0) {
             reasoningParts.push(`Pre-breakout setup score ${Math.round(setupScore)} with ${setupTraits} structural traits.`);
@@ -3873,6 +4231,19 @@ export function BreakoutAlertBar({
                 )}>{isLong ? "LONG" : "SHORT"}</span>
                 <span className={cn(
                   "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border",
+                  isPrepareCard
+                    ? "border-amber-400/45 text-amber-100 bg-amber-500/18"
+                    : "border-cyan-400/45 text-cyan-100 bg-cyan-500/18"
+                )}>
+                  {cardMode}
+                </span>
+                {promotedFromPrepare ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-emerald-400/45 text-emerald-100 bg-emerald-500/16">
+                    PROMOTED
+                  </span>
+                ) : null}
+                <span className={cn(
+                  "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border",
                   tuning.mode === 'TREND' && "border-emerald-400/45 text-emerald-200 bg-emerald-500/10",
                   tuning.mode === 'BALANCED' && "border-cyan-400/45 text-cyan-200 bg-cyan-500/10",
                   tuning.mode === 'CHOPPY' && "border-amber-400/45 text-amber-200 bg-amber-500/10"
@@ -3901,6 +4272,9 @@ export function BreakoutAlertBar({
                 )}
                 <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-cyan-400/40 text-cyan-200 bg-cyan-500/10">
                   {signalTag}
+                </span>
+                <span className="text-[10px] font-mono text-fuchsia-200/95 px-1.5 py-0.5 rounded border border-fuchsia-400/30 bg-fuchsia-500/10">
+                  OPT {readinessScore}
                 </span>
                 <span className="text-[10px] font-mono text-amber-300/95 px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-500/10">
                   B {Math.round(alert.breakoutScore ?? 0)}
@@ -3933,15 +4307,21 @@ export function BreakoutAlertBar({
                 </div>
                 {setupStage === 'SETUP DEVELOPING' ? (
                   <div className="text-[12px] text-cyan-200 font-mono mt-1 text-center neon-text">
-                    SETUP DEVELOPING: monitoring compression and waiting for expansion trigger.
+                    {isPrepareCard
+                      ? 'PREPARE: monitoring compression and waiting for the trigger bar.'
+                      : 'SETUP DEVELOPING: monitoring compression and waiting for expansion trigger.'}
                   </div>
                 ) : setupOdds >= 70 ? (
                   <div className="text-[12px] text-emerald-200 font-mono mt-1 text-center neon-text">
-                    READY: high-probability expansion setup validated.
+                    {isPrepareCard
+                      ? 'PREPARE READY: high-probability expansion setup validated.'
+                      : 'READY: high-probability expansion setup validated.'}
                   </div>
                 ) : (
                   <div className="text-[12px] text-amber-300 font-mono mt-1 text-center neon-text">
-                    READY market structure, waiting for stronger confluence.
+                    {isPrepareCard
+                      ? 'PREPARE: market structure is aligned, waiting for stronger confluence.'
+                      : 'READY market structure, waiting for stronger confluence.'}
                   </div>
                 )}
                 {/* Holographic overlay */}
@@ -4147,6 +4527,7 @@ export function BreakoutAlertBar({
             </Card>
           );
         })}
+        </div>
       </div>
     );
   }

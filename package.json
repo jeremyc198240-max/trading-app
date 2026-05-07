@@ -4,9 +4,9 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "set NODE_ENV=development& set FINNHUB_API_KEY=d62jja9r01qldki8ef6gd62jja9r01qldki8ef70& set DEBUG_SIGNALS=1& npx tsx server/index.ts",
+    "dev": "cross-env NODE_ENV=development FINNHUB_API_KEY=d62jja9r01qldki8ef6gd62jja9r01qldki8ef70 DEBUG_SIGNALS=1 npx tsx server/index.ts",
     "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
@@ -50,6 +50,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "connect-pg-simple": "^10.0.0",
+    "cross-env": "^10.1.0",
     "date-fns": "^3.6.0",
     "drizzle-kit": "^0.30.4",
     "drizzle-orm": "^0.40.0",

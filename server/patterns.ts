@@ -63,7 +63,7 @@ function avgRange(ohlc: OHLC[], lookback: number = 10): number {
   return slice.reduce((sum, c) => sum + totalRange(c), 0) / slice.length;
 }
 
-function average(values: number[]): number {
+export function average(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
