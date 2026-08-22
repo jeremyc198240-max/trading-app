@@ -751,7 +751,7 @@ function TriggerRail({
 export function EdgeAlertBar() {
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     staleTime: 5000,
   });
 

@@ -10,6 +10,7 @@ import {
 	type BreakoutOptionsReadinessSnapshot,
 	updateBreakoutAlertOutcomes,
 } from "./breakoutAlertHistory";
+import { recordScannerSignal } from "./scannerIntegration";
 
 interface OHLC {
 	open: number;
@@ -3222,7 +3223,7 @@ async function scanSymbol(
 					: momentumStrength / 120,
 				macdTrend: momentumStrength >= 6 ? "bullish" : momentumStrength <= -6 ? "bearish" : "neutral",
 				bbPercentB: tvRsi,
-				bbSqueeze: breakoutSignal === "SQUEEZE" || breakoutSignal === "BUILDING",
+				bbSqueeze: breakoutSignal === "BUILDING" || breakoutSignal === "CONSOLIDATING",
 				stochasticK: tvRsi,
 				stochasticD: clamp((tvRsi ?? 50) + (momentumStrength >= 0 ? -4 : 4), 0, 100),
 				adx: tvAdx,
@@ -3233,7 +3234,7 @@ async function scanSymbol(
 			if (tvSignalContext.trendAlignment === "aligned") fallbackTraits.push("TV_TREND_ALIGNED");
 			if (tvAdx >= 22) fallbackTraits.push("TV_ADX_SUPPORT");
 			if (Math.abs(momentumStrength) >= 20) fallbackTraits.push("TV_MOMENTUM_PRELOAD");
-			if (breakoutSignal === "SQUEEZE" || breakoutSignal === "BUILDING" || breakoutSignal === "CONSOLIDATING") {
+			if (breakoutSignal === "BUILDING" || breakoutSignal === "CONSOLIDATING") {
 				fallbackTraits.push("STRUCTURE_COILING");
 			}
 			if (breakoutSignal === "EXPANSION" || breakoutSignal === "BREAKOUT" || breakoutSignal === "BREAKDOWN") {
@@ -3251,7 +3252,7 @@ async function scanSymbol(
 				),
 			);
 
-			const fallbackSetupSignal = breakoutSignal === "BUILDING" || breakoutSignal === "SQUEEZE" || breakoutSignal === "CONSOLIDATING";
+			const fallbackSetupSignal = breakoutSignal === "BUILDING" || breakoutSignal === "CONSOLIDATING";
 			let fallbackEtaMinutes: number | undefined;
 			if (fallbackSetupSignal && fallbackSetupScore >= 72 && Math.abs(momentumStrength) >= 14 && tvAdx >= 18) {
 				fallbackEtaMinutes = 5;
@@ -3266,7 +3267,7 @@ async function scanSymbol(
 				preRsi: roundTo(tvRsi ?? 50, 2),
 				preMomentum3: roundTo(momentumStrength / 100, 3),
 				preRangeCompression: roundTo(
-					breakoutSignal === "SQUEEZE" ? 0.56 : breakoutSignal === "BUILDING" ? 0.7 : 0.9,
+					breakoutSignal === "BUILDING" ? 0.7 : breakoutSignal === "CONSOLIDATING" ? 0.56 : 0.9,
 					3,
 				),
 				preCloseLocation: roundTo(
@@ -3419,6 +3420,12 @@ async function scanSymbol(
 		const sortedPatterns = detectAllPatterns(ohlc, timeframe)
 			.sort((a, b) => b.confidence - a.confidence)
 			.slice(0, 8);
+		const closedCandles = getStableClosedCandles(ohlc, timeframe);
+		const failedUpsideBreakout = closedCandles.length >= 25
+			? detectAllPatterns(closedCandles, timeframe).find((pattern) =>
+				pattern.name === "Bearish Breakout Failure Reversal" && pattern.type === "bearish",
+			)
+			: undefined;
 
 		const lastCandle = ohlc[ohlc.length - 1];
 		const prevCandle = ohlc[ohlc.length - 2] ?? lastCandle;
@@ -3493,6 +3500,11 @@ async function scanSymbol(
 			clamp(breakoutState.breakoutScore + tvSignalContext.scoreBias + timeWindowBias, 0, 100),
 		);
 		let breakoutSignalForResult = breakoutState.breakoutSignal;
+		if (failedUpsideBreakout && !brokenOhlcTape) {
+			breakoutSignalForResult = "BREAKDOWN";
+			breakoutState.expansionDirection = "bearish";
+			breakoutScoreForResult = Math.max(breakoutScoreForResult, failedUpsideBreakout.confidence);
+		}
 
 		const repeatedPatternSignal = detectRepeatedSetupPattern({
 			candles: ohlc,
@@ -3558,6 +3570,9 @@ async function scanSymbol(
 			timeWindowBias,
 		});
 		const warnings = [...warningPayload.warnings];
+		if (failedUpsideBreakout) {
+			warnings.push("FAILED_UPSIDE_BREAKOUT", "POTENTIAL_PUT_PLAY");
+		}
 		let signalQuality = warningPayload.signalQuality;
 		if (brokenOhlcTape) {
 			if (!warnings.includes("STALE_OHLC_SPOT_DIVERGENCE")) {
@@ -3606,8 +3621,8 @@ async function scanSymbol(
 			expansionDirection: breakoutState.expansionDirection,
 			compression,
 			timeframeStack,
-			tvAdx: tvSnapshot?.adx,
-			tvRecommendAll: tvSnapshot?.recommendAll,
+				tvAdx: tvSnapshot?.adx ?? undefined,
+				tvRecommendAll: tvSnapshot?.recommendAll ?? undefined,
 			tvTrendDirection: tvSignalContext.trendDirection,
 		});
 
@@ -3863,6 +3878,22 @@ async function scanSymbol(
 						indicators: result.edgeEngine.indicators,
 					}
 					: undefined,
+			});
+
+			// Record signal to engine intake log for tuning analysis
+			recordScannerSignal({
+				symbol: upperSymbol,
+				timeframe,
+				breakoutSignal: result.breakoutSignal ?? null,
+				breakoutScore: result.breakoutScore,
+				momentumStrength: result.momentumStrength,
+				volumeSpike: result.volumeSpike,
+				rsiValue: result.rsiValue,
+				edgeEngine: result.edgeEngine,
+				warnings: result.warnings,
+				compression: result.compression,
+				preBreakoutSetup: result.preBreakoutSetup,
+				timeframeStack: result.timeframeStack,
 			});
 		}
 

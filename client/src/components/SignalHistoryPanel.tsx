@@ -167,7 +167,6 @@ interface BreakoutLogEntry {
   breakoutScore: number;
   momentumStrength: number;
   volumeSpike: number;
-  signal: 'BREAKOUT' | 'BREAKDOWN' | 'SQUEEZE' | 'CONSOLIDATING' | 'EXPANSION' | 'BUILDING' | 'MOMENTUM';
   mode?: AlertCardMode;
   prepareOutcome?: 'pending' | 'promoted' | 'win_t1' | 'win_t2' | 'loss' | 'missed';
   promotedFromId?: string;

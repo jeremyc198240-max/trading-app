@@ -42,6 +42,13 @@ interface TimeframePatternIntel {
   volatilityExpansionProb: number;
 }
 
+interface SparkSignal {
+  isIgniting: boolean;
+  sparkScore: number;
+  phase: string;
+  triggers: string[];
+}
+
 interface GatingState {
   directionalBias: 'bullish' | 'bearish' | 'neutral';
   originalBias: 'bullish' | 'bearish' | 'neutral';
@@ -216,6 +223,10 @@ interface FusionSnapshot {
     lower: number;
     invalidation: number;
     retest: number;
+    upsideTarget1: number;
+    upsideTarget2: number;
+    downsideTarget1: number;
+    downsideTarget2: number;
   };
   volatilityRegime: {
     regime: 'low' | 'expanding' | 'high' | 'transition' | 'climax';
@@ -251,6 +262,7 @@ interface FusionSnapshot {
   reversalSignal?: ReversalSignal;
   gatedReversalAlert?: GatedReversalAlert;
   unifiedSignal?: UnifiedMetaSignal;
+  sparkSignal?: SparkSignal;
 }
 
 const biasColors = {
@@ -539,7 +551,7 @@ function FuturisticLineMeter({
 }
 
 export function FusionPanel({ symbol }: FusionPanelProps) {
-  const { data, isLoading, error } = useQuery<FusionSnapshot>({
+  const { data, isLoading, error, refetch } = useQuery<FusionSnapshot>({
     queryKey: ['/api/fusion', symbol],
     enabled: !!symbol,
     refetchInterval: 30000,
@@ -572,6 +584,12 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
   }
 
   if (error || !data) {
+    const errorMessage = error instanceof Error
+      ? error.message
+      : !data
+        ? 'Fusion response was empty'
+        : 'Unable to load fusion data';
+
     return (
       <Card className="group relative overflow-hidden border border-indigo-400/30 bg-background/60 backdrop-blur-sm shadow-lg shadow-indigo-500/10" data-testid="card-fusion-panel">
         <div className="h-1 bg-gradient-to-r from-indigo-500/50 via-purple-500/50 to-pink-500/50" />
@@ -581,8 +599,19 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
             Fusion Engine
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-4">
-          <p className="text-sm text-muted-foreground text-center">Unable to load fusion data</p>
+        <CardContent className="p-4 space-y-3">
+          <p className="text-sm text-muted-foreground text-center">{errorMessage}</p>
+          {error && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="rounded-md border border-indigo-400/40 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-200 transition hover:bg-indigo-500/15"
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -593,7 +622,7 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
   const volatilityRegime = data.volatilityRegime ?? { regime: 'low' as const, score: 0 };
   const directionalProbabilities = data.directionalProbabilities ?? { up: 0.33, down: 0.33, chop: 0.34 };
   const expectedMove = data.expectedMove ?? { pct: 0, dollars: 0, confidence: 0 };
-  const breakoutZones = data.breakoutZones ?? { upper: 0, lower: 0, invalidation: 0, retest: 0 };
+  const breakoutZones = data.breakoutZones ?? { upper: 0, lower: 0, invalidation: 0, retest: 0, upsideTarget1: 0, upsideTarget2: 0, downsideTarget1: 0, downsideTarget2: 0 };
   const riskModel = data.riskModel ?? { riskIndex: 0, failureProb: 0, factors: [] };
   const timeframes = data.timeframes ?? [];
   const narrative = data.narrative ?? [];
@@ -611,6 +640,10 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
   const rrStrengthPct = Math.round(rrNormalized * 100);
 
   const TrendIcon = biasIcons[mtfConsensus.trendConsensus];
+
+  const liquidityGeometry = (data as any).liquidityGeometry;
+  const marketDNA = (data as any).marketDNA;
+  const institutionalSummary = (data as any).institutionalSummary;
 
   return (
     <Card className="group relative overflow-hidden border border-indigo-400/35 shadow-[0_0_44px_rgba(99,102,241,0.14)] bg-background/60 backdrop-blur-sm" data-testid="card-fusion-panel">
@@ -630,6 +663,11 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
             >
               {volatilityRegime.regime.toUpperCase()}
             </Badge>
+            {data.sparkSignal && (
+              <Badge variant="outline" className={cn("text-xs", data.sparkSignal.isIgniting ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" : "bg-muted/30 text-muted-foreground border-border/30") }>
+                {data.sparkSignal.isIgniting ? `⚡ ${Math.round(data.sparkSignal.sparkScore)}% ${data.sparkSignal.phase}` : `Spark ${Math.round(data.sparkSignal.sparkScore)}%`}
+              </Badge>
+            )}
             <Badge 
               variant="outline"
               className={cn(
@@ -641,6 +679,24 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
               <TrendIcon className="w-3 h-3 mr-1" />
               {mtfConsensus.trendConsensus.toUpperCase()}
             </Badge>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="p-2 rounded-md bg-gradient-to-br from-slate-900/10 to-emerald-900/6 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase">HTF Bias</div>
+              <div className="font-mono font-semibold">{(data as any).htfBias?.bias ?? '—'}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">Score {(Math.round(((data as any).htfBias?.score ?? 0) * 100))}%</div>
+            </div>
+            <div className="p-2 rounded-md bg-gradient-to-br from-slate-900/10 to-amber-900/6 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase">LTF Structure</div>
+              <div className="font-mono font-semibold">{(data as any).ltfStructure?.structureQuality ?? '—'}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">Coherence {(Math.round(((data as any).ltfStructure?.coherence ?? 0) * 100))}%</div>
+            </div>
+            <div className="p-2 rounded-md bg-gradient-to-br from-slate-900/10 to-violet-900/6 border border-border/30">
+              <div className="text-[10px] text-muted-foreground uppercase">Institutional Sig</div>
+              <div className="font-mono font-semibold">{(data as any).institutionalSignature ? `${Math.round(((data as any).institutionalSignature.signatureScore ?? 0) * 100)}%` : '—'}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">{(data as any).institutionalSignature?.likelyAction ?? ''}</div>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -766,7 +822,7 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
               <div className="flex items-center gap-2 p-2 rounded-lg text-xs bg-emerald-500/10 border border-emerald-500/20" data-testid="safety-aligned">
                 <Shield className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                 <span className="text-emerald-400">
-                  Price momentum aligned ({unifiedSignal.priceActionSafety.momentumStrength}% {unifiedSignal.priceActionSafety.momentumDirection})
+                  Price action aligned ({unifiedSignal.priceActionSafety.momentumStrength}% {unifiedSignal.priceActionSafety.momentumDirection})
                 </span>
               </div>
             )}
@@ -891,6 +947,370 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
                 {unifiedSignal.notes.slice(0, 2).join(' • ')}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Institutional Engines Snapshot - ENHANCED */}
+        <div className="relative overflow-hidden rounded-xl border border-violet-500/40 bg-gradient-to-br from-violet-950/30 via-indigo-950/20 to-slate-950/30 p-4">
+          <div className="absolute inset-0 pointer-events-none opacity-20 bg-[radial-gradient(circle_at_0%_0%,rgba(139,92,246,0.25),transparent_50%)]" />
+          <div className="relative flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-lg bg-violet-500/30 border border-violet-500/50">
+                <Layers className="w-4 h-4 text-violet-400" />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground uppercase tracking-widest">Market Analysis</div>
+                <div className="text-sm font-bold text-violet-300">Institutional Engines</div>
+              </div>
+            </div>
+            <Badge variant="outline" className="text-xs bg-violet-500/20 text-violet-300 border-violet-500/30">
+              Summary
+            </Badge>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 relative">
+            {/* Liquidity Geometry */}
+            <div className={cn(
+              "rounded-lg border p-3 backdrop-blur-sm",
+              institutionalSummary?.liquidityGeometry?.confidence > 60
+                ? "border-emerald-500/50 bg-emerald-500/10"
+                : institutionalSummary?.liquidityGeometry?.confidence > 30
+                  ? "border-amber-500/40 bg-amber-500/5"
+                  : "border-border/30 bg-muted/10"
+            )}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Liquidity Geometry</span>
+                <div className={cn(
+                  "px-2 py-0.5 rounded-full text-xs font-bold",
+                  institutionalSummary?.liquidityGeometry?.confidence > 60 ? "bg-emerald-500/30 text-emerald-300" : "bg-muted/40 text-muted-foreground"
+                )}>
+                  {institutionalSummary?.liquidityGeometry?.confidence}%
+                </div>
+              </div>
+              <div className="text-xl font-bold text-muted-foreground mb-2">
+                {institutionalSummary?.liquidityGeometry?.direction?.toUpperCase() || '—'}
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-violet-500 to-emerald-400"
+                  style={{ width: `${institutionalSummary?.liquidityGeometry?.confidence || 0}%` }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-2">
+                Level: ${(institutionalSummary?.liquidityGeometry?.level || 0).toFixed(2)}
+              </div>
+            </div>
+
+            {/* Market DNA */}
+            <div className={cn(
+              "rounded-lg border p-3 backdrop-blur-sm",
+              institutionalSummary?.marketDNA?.sweepFreq > 40
+                ? "border-cyan-500/50 bg-cyan-500/10"
+                : institutionalSummary?.marketDNA?.sweepFreq > 20
+                  ? "border-blue-500/40 bg-blue-500/5"
+                  : "border-border/30 bg-muted/10"
+            )}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Market DNA</span>
+                <div className={cn(
+                  "px-2 py-0.5 rounded-full text-xs font-bold",
+                  institutionalSummary?.marketDNA?.reliability > 50 ? "bg-cyan-500/30 text-cyan-300" : "bg-muted/40 text-muted-foreground"
+                )}>
+                  {institutionalSummary?.marketDNA?.reliability}%
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground">Sweep Freq</span>
+                  <span className="text-sm font-bold text-cyan-400">{institutionalSummary?.marketDNA?.sweepFreq}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground">OB Reliability</span>
+                  <span className="text-sm font-bold text-blue-400">{institutionalSummary?.marketDNA?.obReliability}%</span>
+                </div>
+                <div className="w-full h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-cyan-500 to-blue-400"
+                    style={{ width: `${institutionalSummary?.marketDNA?.reliability || 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Intent Analysis */}
+            <div className={cn(
+              "rounded-lg border p-3 backdrop-blur-sm",
+              institutionalSummary?.intent?.confidence > 60
+                ? "border-purple-500/50 bg-purple-500/10"
+                : institutionalSummary?.intent?.confidence > 30
+                  ? "border-indigo-500/40 bg-indigo-500/5"
+                  : "border-border/30 bg-muted/10"
+            )}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Market Intent</span>
+                <div className={cn(
+                  "px-2 py-0.5 rounded-full text-xs font-bold",
+                  institutionalSummary?.intent?.confidence > 60 ? "bg-purple-500/30 text-purple-300" : "bg-muted/40 text-muted-foreground"
+                )}>
+                  {institutionalSummary?.intent?.confidence}%
+                </div>
+              </div>
+              <div className="text-xl font-bold mb-2">
+                <span className={cn(
+                  institutionalSummary?.intent?.direction === 'bullish' && "text-emerald-400",
+                  institutionalSummary?.intent?.direction === 'bearish' && "text-red-400",
+                  institutionalSummary?.intent?.direction === 'neutral' && "text-muted-foreground"
+                )}>
+                  {institutionalSummary?.intent?.direction?.toUpperCase() || '—'}
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-purple-500 to-indigo-400"
+                  style={{ width: `${institutionalSummary?.intent?.confidence || 0}%` }}
+                />
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-2">
+                Institutional Score: {(institutionalSummary?.marketDNA?.institutionalScore || 0)}%
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* OTM Recommendation - ENHANCED */}
+        {institutionalSummary?.otmRecommendation?.play && institutionalSummary.otmRecommendation.hasPlay && (
+          <div className={cn(
+            "relative overflow-hidden rounded-xl border-2 p-4 space-y-3",
+            institutionalSummary.otmRecommendation.play.side === 'call' 
+              ? "border-emerald-500/70 bg-gradient-to-br from-emerald-500/20 via-emerald-500/5 to-transparent shadow-lg shadow-emerald-500/30"
+              : "border-red-500/70 bg-gradient-to-br from-red-500/20 via-red-500/5 to-transparent shadow-lg shadow-red-500/30"
+          )}>
+            <div className={cn(
+              "absolute inset-0 pointer-events-none opacity-50",
+              institutionalSummary.otmRecommendation.play.side === 'call'
+                ? "bg-[radial-gradient(circle_at_100%_100%,rgba(34,197,94,0.25),transparent_50%)]"
+                : "bg-[radial-gradient(circle_at_100%_100%,rgba(239,68,68,0.25),transparent_50%)]"
+            )} />
+
+            <div className="relative flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "p-2 rounded-lg",
+                  institutionalSummary.otmRecommendation.play.side === 'call'
+                    ? "bg-emerald-500/30 border border-emerald-500/50"
+                    : "bg-red-500/30 border border-red-500/50"
+                )}>
+                  <Zap className={cn(
+                    "w-5 h-5",
+                    institutionalSummary.otmRecommendation.play.side === 'call' ? "text-emerald-400" : "text-red-400"
+                  )} />
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground uppercase tracking-widest">OTM Play</div>
+                  <div className={cn(
+                    "text-2xl font-black",
+                    institutionalSummary.otmRecommendation.play.side === 'call' ? "text-emerald-400" : "text-red-400"
+                  )}>
+                    {institutionalSummary.otmRecommendation.play.side.toUpperCase()}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex flex-col items-end gap-1">
+                <Badge className={cn(
+                  "text-xs font-bold px-3 py-1 border-2",
+                  institutionalSummary.otmRecommendation.play.qualityTier === 'MONSTER' && "bg-yellow-500/30 text-yellow-300 border-yellow-500/80 animate-pulse shadow-lg shadow-yellow-500/30",
+                  institutionalSummary.otmRecommendation.play.qualityTier === 'HOT' && "bg-orange-500/30 text-orange-300 border-orange-500/70",
+                  institutionalSummary.otmRecommendation.play.qualityTier === 'ELITE' && "bg-purple-500/30 text-purple-300 border-purple-500/60",
+                  institutionalSummary.otmRecommendation.play.qualityTier === 'STRONG' && "bg-blue-500/30 text-blue-300 border-blue-500/50"
+                )}>
+                  {institutionalSummary.otmRecommendation.play.qualityTier === 'MONSTER' && '🏆 '}
+                  {institutionalSummary.otmRecommendation.play.qualityTier === 'HOT' && '🔥 '}
+                  {institutionalSummary.otmRecommendation.play.qualityTier === 'ELITE' && '⭐ '}
+                  {institutionalSummary.otmRecommendation.play.qualityTier}
+                </Badge>
+                <span className="text-[11px] text-muted-foreground font-mono">
+                  Setup Score: {institutionalSummary.otmRecommendation.play.setupScore.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Strike and Premium */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 relative">
+              <div className={cn(
+                "rounded-lg border p-3",
+                institutionalSummary.otmRecommendation.play.side === 'call'
+                  ? "border-emerald-500/40 bg-emerald-500/10"
+                  : "border-red-500/40 bg-red-500/10"
+              )}>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Strike</div>
+                <div className={cn(
+                  "text-2xl font-bold font-mono",
+                  institutionalSummary.otmRecommendation.play.side === 'call' ? "text-emerald-300" : "text-red-300"
+                )}>
+                  ${institutionalSummary.otmRecommendation.play.strike.toFixed(2)}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Δ {(institutionalSummary.otmRecommendation.play.delta * 100).toFixed(0)}%
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-cyan-500/40 bg-cyan-500/10 p-3">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Premium</div>
+                <div className="text-2xl font-bold font-mono text-cyan-300">
+                  ${institutionalSummary.otmRecommendation.play.premium.toFixed(3)}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Win: {institutionalSummary.otmRecommendation.play.winRateProbability}%
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-3">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">PCE Signal</div>
+                <div className="text-2xl font-bold font-mono text-violet-300">
+                  {institutionalSummary.otmRecommendation.pce?.pceProb ?? 0}%
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  {institutionalSummary.otmRecommendation.pce?.quality ?? 'Standard'}
+                </div>
+              </div>
+            </div>
+
+            {/* Target Levels with Hit Probabilities */}
+            <div className="relative">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Target Levels (Hit Probability)</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {/* T1 */}
+                <div className="rounded-lg border border-cyan-500/50 bg-gradient-to-br from-cyan-500/20 to-cyan-500/5 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-cyan-300">T1 (30% Profit)</span>
+                    <div className={cn(
+                      "px-2 py-0.5 rounded-full text-xs font-bold",
+                      institutionalSummary.otmRecommendation.play.targetHitProbability.t1.probability >= 70 
+                        ? "bg-emerald-500/30 text-emerald-300" 
+                        : institutionalSummary.otmRecommendation.play.targetHitProbability.t1.probability >= 50 
+                          ? "bg-amber-500/30 text-amber-300"
+                          : "bg-red-500/30 text-red-300"
+                    )}>
+                      {institutionalSummary.otmRecommendation.play.targetHitProbability.t1.probability}%
+                    </div>
+                  </div>
+                  <div className="font-mono text-lg font-bold text-cyan-400 mb-1">
+                    ${institutionalSummary.otmRecommendation.play.targetHitProbability.t1.level.toFixed(2)}
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-cyan-950/40 overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400"
+                      style={{ width: `${institutionalSummary.otmRecommendation.play.targetHitProbability.t1.probability}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-2">
+                    Confidence: <span className="text-cyan-400 font-semibold">{institutionalSummary.otmRecommendation.play.targetHitProbability.t1.confidence}</span>
+                  </div>
+                </div>
+
+                {/* T2 */}
+                <div className="rounded-lg border border-emerald-500/50 bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-emerald-300">T2 (50% Profit)</span>
+                    <div className={cn(
+                      "px-2 py-0.5 rounded-full text-xs font-bold",
+                      institutionalSummary.otmRecommendation.play.targetHitProbability.t2.probability >= 60 
+                        ? "bg-emerald-500/30 text-emerald-300" 
+                        : institutionalSummary.otmRecommendation.play.targetHitProbability.t2.probability >= 40 
+                          ? "bg-amber-500/30 text-amber-300"
+                          : "bg-red-500/30 text-red-300"
+                    )}>
+                      {institutionalSummary.otmRecommendation.play.targetHitProbability.t2.probability}%
+                    </div>
+                  </div>
+                  <div className="font-mono text-lg font-bold text-emerald-400 mb-1">
+                    ${institutionalSummary.otmRecommendation.play.targetHitProbability.t2.level.toFixed(2)}
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-emerald-950/40 overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400"
+                      style={{ width: `${institutionalSummary.otmRecommendation.play.targetHitProbability.t2.probability}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-2">
+                    Confidence: <span className="text-emerald-400 font-semibold">{institutionalSummary.otmRecommendation.play.targetHitProbability.t2.confidence}</span>
+                  </div>
+                </div>
+
+                {/* T3 */}
+                <div className="rounded-lg border border-purple-500/50 bg-gradient-to-br from-purple-500/20 to-purple-500/5 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-purple-300">T3 (75% Profit)</span>
+                    <div className={cn(
+                      "px-2 py-0.5 rounded-full text-xs font-bold",
+                      institutionalSummary.otmRecommendation.play.targetHitProbability.t3.probability >= 50 
+                        ? "bg-emerald-500/30 text-emerald-300" 
+                        : institutionalSummary.otmRecommendation.play.targetHitProbability.t3.probability >= 35 
+                          ? "bg-amber-500/30 text-amber-300"
+                          : "bg-red-500/30 text-red-300"
+                    )}>
+                      {institutionalSummary.otmRecommendation.play.targetHitProbability.t3.probability}%
+                    </div>
+                  </div>
+                  <div className="font-mono text-lg font-bold text-purple-400 mb-1">
+                    ${institutionalSummary.otmRecommendation.play.targetHitProbability.t3.level.toFixed(2)}
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-purple-950/40 overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-purple-500 to-pink-400"
+                      style={{ width: `${institutionalSummary.otmRecommendation.play.targetHitProbability.t3.probability}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-2">
+                    Confidence: <span className="text-purple-400 font-semibold">{institutionalSummary.otmRecommendation.play.targetHitProbability.t3.confidence}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Expected Value and Room */}
+            <div className="grid grid-cols-2 gap-2 relative">
+              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Expected Value</div>
+                <div className={cn(
+                  "text-xl font-bold font-mono",
+                  institutionalSummary.otmRecommendation.play.expectedValue > 0 ? "text-emerald-400" : "text-red-400"
+                )}>
+                  ${institutionalSummary.otmRecommendation.play.expectedValue.toFixed(4)}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  {institutionalSummary.otmRecommendation.play.expectedValue > 0 ? "✓ Positive EV" : "⚠ Negative EV"}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/40 bg-muted/20 p-3">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Room Points</div>
+                <div className="text-xl font-bold font-mono text-cyan-400">
+                  {institutionalSummary.otmRecommendation.play.roomPoints.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  Distance to Strike
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* No Play Message */}
+        {(!institutionalSummary?.otmRecommendation?.hasPlay || !institutionalSummary?.otmRecommendation?.play) && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-amber-500/30">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-amber-300">No High-Probability Play Found</div>
+                <div className="text-xs text-amber-200/80 mt-1">
+                  Market conditions don't meet the setup criteria for OTM options. Wait for PCE confirmation or stronger signal alignment.
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1085,6 +1505,18 @@ export function FusionPanel({ symbol }: FusionPanelProps) {
               <span className="text-muted-foreground">Lower</span>
               <span className="text-red-400 font-bold" data-testid="text-breakout-lower">
                 {formatPrice(breakoutZones.lower)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+              <span className="text-muted-foreground">Call T1</span>
+              <span className="text-emerald-300 font-bold" data-testid="text-breakout-upside-target">
+                {formatPrice(breakoutZones.upsideTarget1)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded-lg bg-red-500/10 border border-red-500/30">
+              <span className="text-muted-foreground">Put T1</span>
+              <span className="text-red-300 font-bold" data-testid="text-breakout-downside-target">
+                {formatPrice(breakoutZones.downsideTarget1)}
               </span>
             </div>
           </div>

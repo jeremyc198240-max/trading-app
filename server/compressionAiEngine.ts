@@ -12,10 +12,22 @@ export interface CompressionLiveInput {
   bbWidth?: number | null;
   rangePct?: number | null;
   atrPercent?: number | null;
+  rsi?: number | null;
   phase?: string | null;
   mode?: string | null;
   directionalBias?: string | null;
+  priceActionDirection?: string | null;
+  priceActionStrength?: number | null;
+  priceActionConsistency?: number | null;
+  priceActionSafetyAction?: string | null;
+  priceActionContradiction?: number | null;
   otmDelta?: number | null;
+  preBreakoutScore?: number | null;
+  timeframeAgreement?: number | null;
+  edgeLeadMinutes?: number | null;
+  edgeState?: string | null;
+  edgeSignal?: string | null;
+  volRatio?: number | null;
 }
 
 interface TrainingRow {
@@ -52,7 +64,7 @@ interface TrainStats {
   };
 }
 
-interface TrainedModel {
+export interface TrainedModel {
   weights: number[];
   bias: number;
   calibrationAlpha: number;
@@ -105,7 +117,7 @@ interface ThresholdDiagnostics {
   };
 }
 
-const FEATURE_COUNT = 17;
+const FEATURE_COUNT = 21;
 const DEFAULT_THRESHOLDS: DecisionThresholds = { prepare: 52, enter: 74 };
 const MODEL_TTL_MS = 5 * 60 * 1000;
 const RECENCY_HALF_LIFE_MS = 5 * 24 * 60 * 60 * 1000;
@@ -138,6 +150,23 @@ function modeToScalar(mode?: string | null): number {
   return 0;
 }
 
+function edgeStateToScalar(edgeState?: string | null): number {
+  const s = String(edgeState ?? "").toUpperCase();
+  if (s === "TRIGGERED") return 1;
+  if (s === "PRIMED") return 0.75;
+  if (s === "ARMING") return 0.5;
+  if (s === "STANDBY") return 0.2;
+  return 0.35;
+}
+
+function edgeSignalToScalar(edgeSignal?: string | null): number {
+  const s = String(edgeSignal ?? "").toUpperCase();
+  if (s === "BREAK_UP" || s === "BREAK_DOWN") return 1;
+  if (s === "WATCH") return 0.55;
+  if (s === "WAIT") return 0.2;
+  return 0.4;
+}
+
 function dirToScalar(direction?: string | null): number {
   const d = String(direction ?? "").toLowerCase();
   if (d === "bullish") return 1;
@@ -157,6 +186,10 @@ function evaluateRunnerGate(input: CompressionLiveInput): {
   const confidence = num(input.confidence) ?? 0;
   const momentumAbs = Math.abs(num(input.momentum) ?? 0);
   const deltaAbs = Math.abs(num(input.otmDelta) ?? 0.2);
+  const bbWidth = num(input.bbWidth) ?? 0;
+  const volRatio = num(input.volRatio) ?? 0;
+  const preBreakoutScore = num(input.preBreakoutScore) ?? 0;
+  const timeframeAgreement = num(input.timeframeAgreement) ?? 0;
 
   // Single high-impact gate for 0DTE runner attempts:
   // only allow ENTER when expansion context, trigger quality, and low-delta lane are all aligned.
@@ -167,6 +200,10 @@ function evaluateRunnerGate(input: CompressionLiveInput): {
   if (confidence < 68) blockers.push("confidence_low");
   if (momentumAbs < 22) blockers.push("momentum_too_weak");
   if (deltaAbs < 0.14 || deltaAbs > 0.32) blockers.push("delta_out_of_runner_lane");
+  if (bbWidth > 1.7) blockers.push("compression_already_expanded");
+  if (volRatio < 0.08) blockers.push("volume_too_dry");
+  if (preBreakoutScore < 65) blockers.push("setup_score_too_low");
+  if (timeframeAgreement < 60) blockers.push("mtf_stack_not_aligned");
 
   return {
     pass: blockers.length === 0,
@@ -184,6 +221,10 @@ function buildFeatureVector(input: CompressionLiveInput): number[] {
   const breakoutScore = num(input.breakoutScore);
   const momentum = num(input.momentum);
   const otmDelta = num(input.otmDelta);
+  const preBreakoutScore = num(input.preBreakoutScore);
+  const timeframeAgreement = num(input.timeframeAgreement);
+  const edgeLeadMinutes = num(input.edgeLeadMinutes);
+  const volRatio = num(input.volRatio);
 
   const bbTight = bbWidth == null ? 0.5 : clamp01(1 - bbWidth / 2.2);
   const rangeTight = rangePct == null ? 0.5 : clamp01(1 - rangePct / 1.2);
@@ -195,11 +236,30 @@ function buildFeatureVector(input: CompressionLiveInput): number[] {
   const triggerNorm = clamp01((triggerProbability ?? 0) / 100);
   const momentumNorm = clamp01(Math.abs(momentum ?? 0) / 100);
   const deltaNorm = clamp01(Math.abs(otmDelta ?? 0.2) / 0.45);
+  const preBreakoutNorm = clamp01((preBreakoutScore ?? 50) / 100);
+  const stackAgreementNorm = clamp01((timeframeAgreement ?? 50) / 100);
+  const volatilityRegime = atrPercent == null ? 0.5 : clamp01((atrPercent ?? 0) / 0.45);
+  const leadWindowScore = edgeLeadMinutes == null
+    ? 0.5
+    : clamp01(1 - Math.abs(edgeLeadMinutes - 6) / 16);
+  const edgeStateScore = edgeStateToScalar(input.edgeState);
+  const edgeSignalScore = edgeSignalToScalar(input.edgeSignal);
+  const volumeCompressionScore = volRatio == null
+    ? 0.5
+    : clamp01(1 - Math.abs(volRatio - 0.35) / 0.9);
+  const expansionRisk = bbWidth == null ? 0.5 : clamp01((bbWidth - 0.9) / 1.2);
 
   const qualityFusion = Math.pow(Math.max(0.001, breakoutNorm * edgeNorm * confidenceNorm * triggerNorm), 0.25);
   const structureFusion = (bbTight + rangeTight + atrTight) / 3;
   const momentumTriggerFusion = clamp01(Math.sqrt(Math.max(0, momentumNorm * triggerNorm)));
   const deltaLaneScore = clamp01(1 - Math.abs((Math.abs(otmDelta ?? 0.22) - 0.23) / 0.16));
+  const expansionReadiness = clamp01(
+    0.32 * edgeStateScore +
+    0.26 * edgeSignalScore +
+    0.22 * leadWindowScore +
+    0.2 * volumeCompressionScore -
+    0.14 * expansionRisk
+  );
 
   return [
     breakoutNorm,
@@ -219,6 +279,10 @@ function buildFeatureVector(input: CompressionLiveInput): number[] {
     structureFusion,
     momentumTriggerFusion,
     deltaLaneScore,
+    preBreakoutNorm,
+    stackAgreementNorm,
+    volatilityRegime,
+    expansionReadiness,
   ];
 }
 
@@ -234,6 +298,22 @@ function qualityMultiplier(outcomeReasonRaw: unknown): number {
     return 0.72;
   }
   return 1;
+}
+
+function trainingWeight(item: any): number {
+  const base = item.mode === "EXECUTE" ? 1.5 : item.mode === "PREPARE" ? 1.0 : 0.9;
+  const outcome = String(item.outcome ?? "").toLowerCase();
+  let multiplier = 1;
+
+  if (outcome.includes("win")) multiplier = 1.25;
+  else if (outcome.includes("loss")) multiplier = 1.4;
+  else if (outcome.includes("miss")) multiplier = 1.55;
+  else if (outcome === "pending") multiplier = 0.85;
+
+  const ageHours = Math.max(0, (Date.now() - Number(item.timestamp)) / 3_600_000);
+  const recency = Math.exp(-ageHours / 72);
+
+  return Math.max(0.05, base * multiplier * qualityMultiplier(item.outcomeReason) * recency);
 }
 
 function dot(a: number[], b: number[]): number {
@@ -256,16 +336,130 @@ function parseJsonFile(filePath: string): any[] {
   }
 }
 
-function rowLabelFromOutcome(outcomeRaw: unknown, reasonRaw: unknown): number | null {
-  const outcome = String(outcomeRaw ?? "").toLowerCase();
-  const reason = String(reasonRaw ?? "").toLowerCase();
-  if (!outcome || outcome === "pending") return null;
+function parseJsonlFiles(logDir: string, prefix: string): any[] {
+  const entries: any[] = [];
+  try {
+    if (!fs.existsSync(logDir)) return entries;
+    const files = fs.readdirSync(logDir).filter((f) => f.startsWith(prefix)).sort();
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(logDir, file), "utf8");
+        for (const line of raw.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            entries.push(JSON.parse(trimmed));
+          } catch {
+            // ignore invalid lines
+          }
+        }
+      } catch {
+        // ignore unreadable files
+      }
+    }
+  } catch {
+    // ignore top-level read failures
+  }
+  return entries;
+}
 
-  const positiveTokens = ["win", "target", "profit", "success", "executed"];
-  const negativeTokens = ["missed", "loss", "stop", "timeout", "fail"];
+function rowsFromIntakeSnapshots(entries: any[]): TrainingRow[] {
+  const rows: TrainingRow[] = [];
+  const maxRows = 1200;
+  const start = Math.max(0, entries.length - maxRows);
 
-  if (positiveTokens.some((token) => outcome.includes(token) || reason.includes(token))) return 1;
-  if (negativeTokens.some((token) => outcome.includes(token) || reason.includes(token))) return 0;
+  for (let i = start; i < entries.length; i += 1) {
+    const entry = entries[i] ?? {};
+    const timestamp = Number.isFinite(Number(entry.unixMs)) ? Number(entry.unixMs) : Date.now();
+    const outputs = Array.isArray(entry.engineOutputs) ? entry.engineOutputs : [];
+
+    for (const output of outputs) {
+      if (String(output.engineName ?? "").toLowerCase() !== "compressionai") continue;
+      if (String(output.outputType ?? "").toLowerCase() !== "compressiondecision") continue;
+
+      const active = output.active;
+      const y = active === true ? 1 : active === false ? 0 : null;
+      if (y == null) continue;
+
+      const details = typeof output.details === "object" && output.details !== null ? output.details : {};
+      const features = buildFeatureVector({
+        symbol: String(output.symbol ?? ""),
+        timeframe: String(output.timeframe ?? "15m"),
+        breakoutScore: num(output.edgeScore ?? details.edgeScore),
+        edgeScore: num(output.edgeScore ?? details.edgeScore),
+        confidence: num(output.confidence ?? output.modelProbability ?? details.confidence),
+        triggerProbability: num(details.triggerProbability),
+        momentum: num(details.momentum ?? details.macdHistogram ?? details.priceVelocity),
+        bbWidth: num(details.bbWidth),
+        rangePct: num(details.rangePct),
+        atrPercent: num(details.atrPercent),
+        rsi: num(details.rsi),
+        phase: details.phase,
+        mode: details.mode,
+        directionalBias: String(output.bias ?? details.direction ?? details.directionalBias ?? ""),
+        otmDelta: num(details.otmDelta ?? details.delta ?? details.targetDelta),
+        preBreakoutScore: num(details.preBreakoutScore ?? details.setupScore),
+        timeframeAgreement: num(details.timeframeAgreement ?? details.timeframeStackAgreement),
+        edgeLeadMinutes: num(details.edgeLeadMinutes ?? details.leadMinutes),
+        edgeState: String(details.edgeState ?? details.state ?? ""),
+        edgeSignal: String(details.edgeSignal ?? details.signal ?? ""),
+        volRatio: num(details.volRatio),
+      });
+
+      if (features.length !== FEATURE_COUNT) continue;
+      rows.push({
+        symbol: String(output.symbol ?? "UNK").toUpperCase(),
+        timeframe: String(output.timeframe ?? "15m").toLowerCase(),
+        x: features,
+        y,
+        weight: 0.08,
+        timestamp,
+      });
+    }
+  }
+
+  return rows;
+}
+
+export function deriveTrainingLabelFromOutcome(item: any, fallback: any = item): number | null {
+  const outcome = String(item?.outcome ?? fallback?.outcome ?? "").toLowerCase();
+  const prepareOutcome = String(item?.prepareOutcome ?? fallback?.prepareOutcome ?? "").toLowerCase();
+  const reason = String(item?.outcomeReason ?? fallback?.outcomeReason ?? "").toLowerCase();
+  const priceDeltaPct = num(item?.priceDeltaPct ?? fallback?.priceDeltaPct);
+  const priceAtCapture = num(item?.priceAtCapture ?? fallback?.priceAtCapture);
+  const stopLoss = num(item?.stopLoss ?? fallback?.stopLoss);
+  const maxPriceSeen = num(item?.maxPriceSeen ?? fallback?.maxPriceSeen);
+  const minPriceSeen = num(item?.minPriceSeen ?? fallback?.minPriceSeen);
+  const targets = Array.isArray(item?.targets)
+    ? item.targets
+    : Array.isArray(fallback?.targets)
+      ? fallback.targets
+      : [];
+  const targetPrice = targets
+    .map((value: unknown) => num(value))
+    .find((value: number | null): value is number => value != null && Number.isFinite(value));
+
+  const positiveText = [outcome, prepareOutcome, reason].join(" ");
+  const negativeText = [outcome, prepareOutcome, reason].join(" ");
+  const positiveTokens = ["win", "target", "profit", "success", "executed", "hit", "filled", "reached"];
+  const negativeTokens = ["missed", "loss", "stop", "timeout", "fail", "stopped", "flat", "rejected"];
+
+  if (positiveTokens.some((token) => positiveText.includes(token))) return 1;
+  if (negativeTokens.some((token) => negativeText.includes(token))) return 0;
+
+  if (priceDeltaPct != null) {
+    const hitTarget = targetPrice != null && maxPriceSeen != null && maxPriceSeen >= targetPrice;
+    const stopHit = stopLoss != null && minPriceSeen != null && minPriceSeen <= stopLoss;
+    const strongPositive = priceDeltaPct >= 0.02 || (priceDeltaPct >= 0.01 && hitTarget);
+    const strongNegative = priceDeltaPct <= -0.02 || (priceDeltaPct <= -0.01 && stopHit);
+
+    if (strongPositive) return 1;
+    if (strongNegative) return 0;
+  }
+
+  const hasResolvedOutcome = outcome && outcome !== "pending" && outcome !== "open" && outcome !== "in_progress";
+  if (!hasResolvedOutcome) return null;
+
   return null;
 }
 
@@ -276,7 +470,7 @@ function rowsFromBreakoutHistory(history: any[]): TrainingRow[] {
 
   for (let i = start; i < history.length; i += 1) {
     const item = history[i] ?? {};
-    const y = rowLabelFromOutcome(item.outcome, item.outcomeReason);
+    const y = deriveTrainingLabelFromOutcome(item);
     if (y == null) continue;
 
     const features = buildFeatureVector({
@@ -290,10 +484,17 @@ function rowsFromBreakoutHistory(history: any[]): TrainingRow[] {
       bbWidth: num(item.compression?.bbWidth),
       rangePct: num(item.compression?.rangePct),
       atrPercent: num(item.marketHealth?.atr?.percent),
+      rsi: num(item.marketHealth?.rsi?.value ?? item.rsiValue ?? item.edgeEngine?.indicators?.rsi),
       phase: item.compression?.phase,
       mode: item.mode,
       directionalBias: item.direction,
       otmDelta: num(item.tactical?.otm?.delta ?? item.optionsReadiness?.delta),
+      preBreakoutScore: num(item.preBreakoutSetup?.score),
+      timeframeAgreement: num(item.timeframeStack?.agreement),
+      edgeLeadMinutes: num(item.edgeEngine?.leadMinutes),
+      edgeState: String(item.edgeEngine?.state ?? ""),
+      edgeSignal: String(item.edgeEngine?.signal ?? ""),
+      volRatio: num(item.compression?.volRatio),
     });
 
     if (features.length !== FEATURE_COUNT) continue;
@@ -303,7 +504,7 @@ function rowsFromBreakoutHistory(history: any[]): TrainingRow[] {
       timeframe: String(item.timeframe ?? "15m").toLowerCase(),
       x: features,
       y,
-      weight: (item.mode === "EXECUTE" ? 1.25 : 1) * qualityMultiplier(item.outcomeReason),
+      weight: trainingWeight(item),
       timestamp: Number.isFinite(Number(item.timestamp)) ? Number(item.timestamp) : Date.now(),
     });
   }
@@ -358,10 +559,17 @@ function rowsFromEdgeSamples(samples: any[]): TrainingRow[] {
       bbWidth: num(item.edgeEngine?.indicators?.bbWidth),
       rangePct: null,
       atrPercent: num(item.edgeEngine?.indicators?.atrPercent),
+      rsi: num(item.edgeEngine?.indicators?.rsi),
       phase: item.compression?.phase,
       mode: item.mode,
       directionalBias: item.edgeEngine?.direction,
       otmDelta: null,
+      preBreakoutScore: num(item.preBreakoutSetup?.score),
+      timeframeAgreement: num(item.timeframeStack?.agreement),
+      edgeLeadMinutes: num(item.edgeEngine?.leadMinutes),
+      edgeState: String(item.edgeEngine?.state ?? ""),
+      edgeSignal: String(item.edgeEngine?.signal ?? ""),
+      volRatio: num(item.compression?.volRatio),
     });
 
     if (features.length !== FEATURE_COUNT) continue;
@@ -942,10 +1150,12 @@ export function trainCompressionModelFromLogs(logDir: string): TrainedModel {
 
   const breakoutHistory = parseJsonFile(path.join(logDir, "breakout_alert_history.json"));
   const edgeSamples = parseJsonFile(path.join(logDir, "edge_engine_samples.json"));
+  const intakeSnapshots = parseJsonlFiles(logDir, "engine_intake_10m_");
 
   const rows = [
     ...rowsFromBreakoutHistory(breakoutHistory),
     ...rowsFromEdgeSamples(edgeSamples),
+    ...rowsFromIntakeSnapshots(intakeSnapshots),
   ].sort((a, b) => a.timestamp - b.timestamp);
 
   const canHoldout = rows.length >= 220;
@@ -1077,6 +1287,17 @@ export function scoreCompressionOpportunity(
   priors: { symbolWinRate: number | null; timeframeWinRate: number | null };
   targetDeltaBand: { min: number; max: number };
   modelStats: TrainStats;
+  runnerGate: {
+    pass: boolean;
+    blockers: string[];
+  };
+  priceActionSafety: {
+    direction: string;
+    strength: number;
+    consistency: number;
+    action: string;
+    contradiction: boolean;
+  };
 } {
   const x = buildFeatureVector(input);
   const raw = sigmoid(dot(model.weights, x) + model.bias);
@@ -1095,14 +1316,132 @@ export function scoreCompressionOpportunity(
   const directional = dirToScalar(input.directionalBias);
   const direction = directional > 0.55 ? "CALL" : directional < 0.45 ? "PUT" : "NEUTRAL";
 
-  const aiScore = Math.round(clamp01(blended) * 100);
+  const phase = String(input.phase ?? "WAIT").toUpperCase();
+  const reasons: string[] = [];
+  if (phase === "NOW" || phase === "READY") reasons.push(`Compression phase ${phase}`);
+  if ((num(input.edgeScore) ?? 0) >= 80) reasons.push("Edge score strong");
+  if ((num(input.triggerProbability) ?? 0) >= 75) reasons.push("Trigger probability elevated");
+  if ((num(input.breakoutScore) ?? 0) >= 60) reasons.push("Breakout pressure confirmed");
+
+  const priceActionStrength = clamp01((num(input.priceActionStrength) ?? 0) / 100);
+  const priceActionConsistency = clamp01((num(input.priceActionConsistency) ?? 0) / 100);
+  const priceActionDirection = String(input.priceActionDirection ?? "").toLowerCase();
+  const priceActionSafetyAction = String(input.priceActionSafetyAction ?? "allow").toLowerCase();
+  const priceActionContradiction = Boolean(num(input.priceActionContradiction) ?? 0);
+  const bbWidth = num(input.bbWidth);
+  const volRatio = num(input.volRatio);
+  const preBreakoutScore = num(input.preBreakoutScore);
+  const timeframeAgreement = num(input.timeframeAgreement);
+  const edgeLeadMinutes = num(input.edgeLeadMinutes);
+  const edgeState = String(input.edgeState ?? '').toUpperCase();
+
+  let blendedScore = clamp01(blended);
+  const sameDirection =
+    (direction === "CALL" && priceActionDirection === "bullish") ||
+    (direction === "PUT" && priceActionDirection === "bearish");
+  const oppositeDirection =
+    (direction === "CALL" && priceActionDirection === "bearish") ||
+    (direction === "PUT" && priceActionDirection === "bullish");
+
+  if (sameDirection && priceActionStrength >= 0.35) {
+    const boost = 0.05 + Math.min(0.12, (priceActionStrength - 0.35) * 0.22 + (priceActionConsistency - 0.5) * 0.1);
+    blendedScore = clamp01(blendedScore + boost);
+    if (!reasons.includes(`Price action aligns with ${direction} (${Math.round(priceActionStrength * 100)}% strength)`)) {
+      reasons.push(`Price action aligns with ${direction} (${Math.round(priceActionStrength * 100)}% strength)`);
+    }
+  }
+
+  if (oppositeDirection && priceActionStrength >= 0.35) {
+    const penalty = Math.min(0.22, 0.08 + (priceActionStrength - 0.35) * 0.24 + (priceActionConsistency - 0.5) * 0.08);
+    blendedScore = clamp01(blendedScore - penalty);
+    if (!reasons.includes(`Price action contradicts ${direction} (${Math.round(priceActionStrength * 100)}% strength)`)) {
+      reasons.push(`Price action contradicts ${direction} (${Math.round(priceActionStrength * 100)}% strength)`);
+    }
+  }
+
+  if (priceActionSafetyAction === "force_wait") {
+    blendedScore = clamp01(blendedScore * 0.78);
+    if (!reasons.includes("Safety suggestion: price action prefers waiting.")) {
+      reasons.push("Safety suggestion: price action prefers waiting.");
+    }
+  } else if (priceActionSafetyAction === "reduce_confidence") {
+    blendedScore = clamp01(blendedScore * 0.92);
+    if (!reasons.includes("Safety suggestion: reduce confidence until alignment improves.")) {
+      reasons.push("Safety suggestion: reduce confidence until alignment improves.");
+    }
+  }
+
+  if (bbWidth != null) {
+    if (bbWidth > 1.6) {
+      blendedScore = clamp01(blendedScore - 0.12);
+      reasons.push(`BB width expanded (${bbWidth.toFixed(2)}): compression edge fading.`);
+    } else if (bbWidth >= 0.8 && bbWidth <= 1.35) {
+      blendedScore = clamp01(blendedScore + 0.06);
+      reasons.push(`BB width in expansion launch zone (${bbWidth.toFixed(2)}).`);
+    }
+  }
+
+  if (volRatio != null) {
+    if (volRatio >= 0.2 && volRatio <= 0.6) {
+      blendedScore = clamp01(blendedScore + 0.05);
+      reasons.push(`Volume ratio supportive (${volRatio.toFixed(2)}).`);
+    } else if (volRatio < 0.1) {
+      blendedScore = clamp01(blendedScore - 0.06);
+      reasons.push(`Volume ratio too dry (${volRatio.toFixed(2)}).`);
+    }
+  }
+
+  if (preBreakoutScore != null) {
+    if (preBreakoutScore >= 75) {
+      blendedScore = clamp01(blendedScore + 0.06);
+      reasons.push(`Pre-breakout setup strong (${preBreakoutScore.toFixed(0)}).`);
+    } else if (preBreakoutScore < 60) {
+      blendedScore = clamp01(blendedScore - 0.05);
+      reasons.push(`Pre-breakout setup weak (${preBreakoutScore.toFixed(0)}).`);
+    }
+  }
+
+  if (timeframeAgreement != null) {
+    if (timeframeAgreement >= 70) {
+      blendedScore = clamp01(blendedScore + 0.05);
+      reasons.push(`MTF stack aligned (${timeframeAgreement.toFixed(0)}%).`);
+    } else if (timeframeAgreement < 55) {
+      blendedScore = clamp01(blendedScore - 0.06);
+      reasons.push(`MTF stack conflicted (${timeframeAgreement.toFixed(0)}%).`);
+    }
+  }
+
+  if (edgeLeadMinutes != null) {
+    if (edgeLeadMinutes <= 6) {
+      blendedScore = clamp01(blendedScore + 0.04);
+      reasons.push(`Edge lead window hot (${edgeLeadMinutes.toFixed(0)}m).`);
+    } else if (edgeLeadMinutes > 12) {
+      blendedScore = clamp01(blendedScore - 0.03);
+      reasons.push(`Edge lead window stale (${edgeLeadMinutes.toFixed(0)}m).`);
+    }
+  }
+
+  if (edgeState === 'TRIGGERED') {
+    blendedScore = clamp01(blendedScore + 0.04);
+    reasons.push('Edge state TRIGGERED.');
+  } else if (edgeState === 'STANDBY') {
+    blendedScore = clamp01(blendedScore - 0.03);
+  }
+
+  const aiScore = Math.round(blendedScore * 100);
   const confidenceBand = aiScore >= 75 ? "high" : aiScore >= 52 ? "medium" : "low";
   const runnerGate = evaluateRunnerGate(input);
   const enterThreshold = model.thresholds?.enter ?? DEFAULT_THRESHOLDS.enter;
   const prepareThreshold = model.thresholds?.prepare ?? DEFAULT_THRESHOLDS.prepare;
+  const scoreBuffer = (num(input.confidence) ?? 0) >= 75 ? 2 : 0;
+  const priceActionBuffer = priceActionSafetyAction === "force_wait" ? -10 : priceActionSafetyAction === "reduce_confidence" ? -4 : 0;
 
   const baseDecision: "HOLD" | "PREPARE" | "ENTER" =
-    aiScore >= enterThreshold ? "ENTER" : aiScore >= prepareThreshold ? "PREPARE" : "HOLD";
+    aiScore + scoreBuffer + priceActionBuffer >= enterThreshold
+      ? "ENTER"
+      : aiScore + scoreBuffer + priceActionBuffer >= prepareThreshold
+        ? "PREPARE"
+        : "HOLD";
 
   const decision: "HOLD" | "PREPARE" | "ENTER" =
     baseDecision === "ENTER"
@@ -1113,18 +1452,14 @@ export function scoreCompressionOpportunity(
           : "HOLD"
       : baseDecision;
 
-  const phase = String(input.phase ?? "WAIT").toUpperCase();
-  const reasons: string[] = [];
-
-  if (phase === "NOW" || phase === "READY") reasons.push(`Compression phase ${phase}`);
-  if ((num(input.edgeScore) ?? 0) >= 80) reasons.push("Edge score strong");
-  if ((num(input.triggerProbability) ?? 0) >= 75) reasons.push("Trigger probability elevated");
-  if ((num(input.breakoutScore) ?? 0) >= 60) reasons.push("Breakout pressure confirmed");
   if (baseDecision === "ENTER" && !runnerGate.pass) {
     reasons.push(`Runner gate blocked (${runnerGate.blockers.join(",")})`);
   }
   if (decision === "ENTER") {
     reasons.push("Runner gate passed for 0DTE expansion attempt");
+  }
+  if (priceActionBuffer < 0) {
+    reasons.push("Safety adjustment reduced entry aggression.");
   }
   if (symbolWinRate != null) reasons.push(`Symbol prior ${(symbolWinRate * 100).toFixed(0)}%`);
   if (timeframeWinRate != null) reasons.push(`Timeframe prior ${(timeframeWinRate * 100).toFixed(0)}%`);
@@ -1150,5 +1485,13 @@ export function scoreCompressionOpportunity(
     },
     targetDeltaBand,
     modelStats: model.stats,
+    runnerGate,
+    priceActionSafety: {
+      direction: input.priceActionDirection ?? "neutral",
+      strength: num(input.priceActionStrength) ?? 0,
+      consistency: num(input.priceActionConsistency) ?? 0,
+      action: input.priceActionSafetyAction ?? "allow",
+      contradiction: priceActionContradiction,
+    },
   };
 }

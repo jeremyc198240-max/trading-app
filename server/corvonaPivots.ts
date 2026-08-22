@@ -68,9 +68,13 @@ export function computeCorvonaLevels(sessionOHLC: OHLC[]): CorvonaLevels | null 
 
 export function corvonaToBreakoutZones(levels: CorvonaLevels): BreakoutZones {
   return {
-    upper: levels.H4,
-    lower: levels.L4,
-    invalidation: levels.H3,
-    retest: levels.L3
+    upper: levels.H1,
+    lower: levels.L1,
+    invalidation: levels.L2,
+    retest: levels.pivot,
+    upsideTarget1: levels.H2,
+    upsideTarget2: levels.H3,
+    downsideTarget1: levels.L2,
+    downsideTarget2: levels.L3,
   };
 }

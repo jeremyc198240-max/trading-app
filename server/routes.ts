@@ -1,11 +1,13 @@
 import type { Express } from "express";
 import { type Server } from "http";
+import fs from "fs";
 import path from "path";
 import { db } from "./db";
 import { termsAcceptanceLogs } from "@shared/schema";
 import { analyzeSymbol, generateSampleOHLC } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, analyzeMarket, analyzeGaps } from "./patterns";
+import { analyzeMarketDNA } from "./engines/marketDnaEngine";
 import { convertToDrawablePatterns } from "./patternDrawingAdapter";
 import { normalizePatterns, computePatternFusionSignal } from "./patternFusion";
 import { 
@@ -59,16 +61,26 @@ import {
   getEdgeTuning2dSnapshot,
 } from "./breakoutAlertHistory";
 import {
+  getLatestIntakeEntry,
+  getRecentIntakeEntries,
+  recordEngineOutput,
+} from "./engineIntakeLog";
+import {
   getBreakoutThresholdConfig,
   refreshBreakoutThresholdConfig,
 } from "./breakoutThresholds";
 import {
   trainCompressionModelFromLogs,
   scoreCompressionOpportunity,
+  type TrainedModel,
 } from "./compressionAiEngine";
+import { computePriceActionSafety } from "./priceActionSafety";
 import { inferLivePrediction } from "../ml/inference/infer";
 import { calculateCalibrationDial } from "./mlCalibrationDial";
 import { predictVolatility } from "./volatilityPredictor";
+import { getScalpConfluenceState } from "./scalpConfluenceScanner";
+import { collectEngineSnapshots, getBlackBoxStatus } from "./engineSnapshotCollector";
+import { buildSmartSignal } from "./smartSignal";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -85,14 +97,17 @@ export async function registerRoutes(
       m.includes("http 429")
     );
   };
-
   const BEST_PLAY_FAST_CACHE_TTL_MS = 15_000;
   const BEST_PLAY_STALE_FALLBACK_MS = 10 * 60 * 1000;
   const BEST_PLAY_YAHOO_COOLDOWN_MS = 60 * 1000;
   const SIMULATED_ANALYZE_CACHE_TTL_MS = 45_000;
   const SIMULATED_ANALYZE_STALE_FALLBACK_MS = 15 * 60 * 1000;
+  const VIX_CACHE_MS = 60_000;
+  const VIX_MAX_QUOTE_AGE_MS = 2 * 60 * 1000;
+  const VIX_MAX_FALLBACK_QUOTE_AGE_MS = 3 * 60 * 1000;
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
+  let vixCache: { level: number; timestamp: number; quoteTimestamp: number; source: string } | null = null;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
   const analyzePayloadCache = new Map<string, {
     payload: any;
@@ -134,64 +149,132 @@ export async function registerRoutes(
   };
 
   const getFormingPatternFallback = (candles: any[]): any[] => {
-    if (!Array.isArray(candles) || candles.length < 24) return [];
+    if (!Array.isArray(candles) || candles.length < 12) return [];
 
-    const lookback = candles.slice(-24);
-    const half = Math.floor(lookback.length / 2);
-    const first = lookback.slice(0, half);
-    const second = lookback.slice(half);
-    if (first.length < 8 || second.length < 8) return [];
+    const recent = candles.slice(-18);
+    const last = recent[recent.length - 1];
+    const prev = recent[recent.length - 2] ?? recent[recent.length - 1];
+    if (!last || !prev) return [];
 
-    const firstHigh = Math.max(...first.map((c) => Number(c.high)));
-    const firstLow = Math.min(...first.map((c) => Number(c.low)));
-    const secondHigh = Math.max(...second.map((c) => Number(c.high)));
-    const secondLow = Math.min(...second.map((c) => Number(c.low)));
+    const recentHigh = Math.max(...recent.map((c) => Number(c.high)));
+    const recentLow = Math.min(...recent.map((c) => Number(c.low)));
+    const recentRange = Math.max(0.01, recentHigh - recentLow);
+    const bodyBias = (Number(last.close) - Number(prev.close)) / Math.max(recentRange, 0.01);
+    const lowerWick = Math.min(Number(last.open), Number(last.close)) - Number(last.low);
+    const upperWick = Number(last.high) - Math.max(Number(last.open), Number(last.close));
+    const lastBody = Math.abs(Number(last.close) - Number(last.open));
 
-    if (![firstHigh, firstLow, secondHigh, secondLow].every(Number.isFinite)) return [];
+    const results: any[] = [];
 
-    const firstRange = firstHigh - firstLow;
-    const secondRange = secondHigh - secondLow;
-    if (firstRange <= 0 || secondRange <= 0) return [];
-
-    // Only emit a fallback if range is tightening (forming compression).
-    if (secondRange >= firstRange * 0.9) return [];
-
-    const risingLows = secondLow > firstLow;
-    const fallingHighs = secondHigh < firstHigh;
-
-    let type: 'bullish' | 'bearish' | 'neutral' = 'neutral';
-    let name = 'Compression Coil (forming)';
-
-    if (risingLows && !fallingHighs) {
-      type = 'bullish';
-      name = 'Ascending Compression (forming)';
-    } else if (fallingHighs && !risingLows) {
-      type = 'bearish';
-      name = 'Descending Compression (forming)';
-    } else if (risingLows && fallingHighs) {
-      type = 'neutral';
-      name = 'Triangle Compression (forming)';
+    if (lastBody > 0 && lowerWick >= Math.max(lastBody * 1.2, recentRange * 0.18)) {
+      results.push({
+        name: 'Bullish Reversal Setup (forming)',
+        type: 'bullish',
+        category: 'reversal',
+        confidence: 72,
+        description: 'Strong lower-wick rejection in a recent support pocket; reversal probability is building as buyers defend the base.',
+        startIndex: Math.max(0, candles.length - recent.length),
+        endIndex: candles.length - 1,
+        pt1: Number(last.close) + recentRange * 0.38,
+        pt2: Number(last.close) + recentRange * 0.72,
+        stopLoss: Number(last.low) - recentRange * 0.12,
+        strengthWeight: 0.72,
+      });
     }
 
-    const startIndex = Math.max(0, candles.length - lookback.length);
-    const endIndex = candles.length - 1;
-    const breakoutLevel = type === 'bearish' ? secondLow : secondHigh;
-    const stopLoss = type === 'bearish' ? secondHigh : secondLow;
-    const range = Math.max(0.01, secondRange);
+    if (lastBody > 0 && upperWick >= Math.max(lastBody * 1.2, recentRange * 0.18)) {
+      results.push({
+        name: 'Bearish Reversal Setup (forming)',
+        type: 'bearish',
+        category: 'reversal',
+        confidence: 72,
+        description: 'Heavy upper-wick rejection at recent resistance suggests a high-probability reversal setup while momentum fades.',
+        startIndex: Math.max(0, candles.length - recent.length),
+        endIndex: candles.length - 1,
+        pt1: Number(last.close) - recentRange * 0.38,
+        pt2: Number(last.close) - recentRange * 0.72,
+        stopLoss: Number(last.high) + recentRange * 0.12,
+        strengthWeight: 0.72,
+      });
+    }
 
-    return [{
-      name,
-      type,
-      category: 'continuation',
-      confidence: 58,
-      description: 'Range compression detected - setup is forming and needs breakout confirmation.',
-      startIndex,
-      endIndex,
-      pt1: type === 'bearish' ? breakoutLevel - range * 0.6 : breakoutLevel + range * 0.6,
-      pt2: type === 'bearish' ? breakoutLevel - range * 1.1 : breakoutLevel + range * 1.1,
-      stopLoss,
-      strengthWeight: 0.58,
-    }];
+    if (candles.length >= 24) {
+      const lookback = candles.slice(-24);
+      const half = Math.floor(lookback.length / 2);
+      const first = lookback.slice(0, half);
+      const second = lookback.slice(half);
+      if (first.length >= 8 && second.length >= 8) {
+        const firstHigh = Math.max(...first.map((c) => Number(c.high)));
+        const firstLow = Math.min(...first.map((c) => Number(c.low)));
+        const secondHigh = Math.max(...second.map((c) => Number(c.high)));
+        const secondLow = Math.min(...second.map((c) => Number(c.low)));
+
+        if ([firstHigh, firstLow, secondHigh, secondLow].every(Number.isFinite)) {
+          const firstRange = firstHigh - firstLow;
+          const secondRange = secondHigh - secondLow;
+          if (firstRange > 0 && secondRange > 0 && secondRange < firstRange * 0.9) {
+            const risingLows = secondLow > firstLow;
+            const fallingHighs = secondHigh < firstHigh;
+
+            let type: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+            let name = 'Compression Coil (forming)';
+
+            if (risingLows && !fallingHighs) {
+              type = 'bullish';
+              name = 'Ascending Compression (forming)';
+            } else if (fallingHighs && !risingLows) {
+              type = 'bearish';
+              name = 'Descending Compression (forming)';
+            } else if (risingLows && fallingHighs) {
+              type = 'neutral';
+              name = 'Triangle Compression (forming)';
+            }
+
+            const startIndex = Math.max(0, candles.length - lookback.length);
+            const endIndex = candles.length - 1;
+            const breakoutLevel = type === 'bearish' ? secondLow : secondHigh;
+            const stopLoss = type === 'bearish' ? secondHigh : secondLow;
+            const range = Math.max(0.01, secondRange);
+
+            results.push({
+              name,
+              type,
+              category: 'continuation',
+              confidence: 60,
+              description: 'Range compression detected - setup is forming and needs breakout confirmation.',
+              startIndex,
+              endIndex,
+              pt1: type === 'bearish' ? breakoutLevel - range * 0.6 : breakoutLevel + range * 0.6,
+              pt2: type === 'bearish' ? breakoutLevel - range * 1.1 : breakoutLevel + range * 1.1,
+              stopLoss,
+              strengthWeight: 0.6,
+            });
+          }
+        }
+      }
+    }
+
+    if (results.length === 0) return [];
+
+    return results.filter((p, index, arr) =>
+      arr.findIndex((candidate) => candidate.name === p.name && candidate.type === p.type) === index
+    );
+  };
+
+  const getEasternMinuteOfDay = (timestampMs: number): number | undefined => {
+    if (!Number.isFinite(timestampMs)) return undefined;
+    const date = new Date(timestampMs);
+    if (!Number.isFinite(date.getTime())) return undefined;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(date);
+    const hour = Number(parts.find((p) => p.type === "hour")?.value ?? Number.NaN);
+    const minute = Number(parts.find((p) => p.type === "minute")?.value ?? Number.NaN);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return undefined;
+    return hour * 60 + minute;
   };
 
   const resolveFallbackSpotPrice = async (
@@ -205,6 +288,135 @@ export async function registerRoutes(
     if (candleSpot && candleSpot.ageMs <= 15 * 60 * 1000) return candleSpot.data.spot;
 
     return undefined;
+  };
+
+  const classifyVixRegime = (vixLevel?: number): "calm" | "balanced" | "elevated" | "chaotic" | "unknown" => {
+    if (!Number.isFinite(vixLevel as number) || (vixLevel as number) <= 0) return "unknown";
+    if ((vixLevel as number) < 15) return "calm";
+    if ((vixLevel as number) < 22) return "balanced";
+    if ((vixLevel as number) < 30) return "elevated";
+    return "chaotic";
+  };
+
+  const fetchVixSnapshot = async (): Promise<{ level?: number; regime: "calm" | "balanced" | "elevated" | "chaotic" | "unknown"; source: string }> => {
+    const now = Date.now();
+    if (
+      vixCache &&
+      (now - vixCache.timestamp) <= VIX_CACHE_MS &&
+      (now - vixCache.quoteTimestamp) <= VIX_MAX_QUOTE_AGE_MS
+    ) {
+      return {
+        level: vixCache.level,
+        regime: classifyVixRegime(vixCache.level),
+        source: vixCache.source,
+      };
+    }
+
+    const vixSymbols = ["^VIX"];
+    for (const candidate of vixSymbols) {
+      try {
+        const quote = await withTimeout(fetchLiveSpot(candidate), ENGINE_SPOT_TIMEOUT_MS, `spot ${candidate}`);
+        const level = Number(quote?.spot);
+        const quoteMs = Date.parse(String(quote?.timestamp ?? ""));
+        const quoteAgeMs = Number.isFinite(quoteMs) ? now - quoteMs : Number.POSITIVE_INFINITY;
+        if (Number.isFinite(level) && level > 0 && Number.isFinite(quoteAgeMs) && quoteAgeMs >= 0 && quoteAgeMs <= VIX_MAX_QUOTE_AGE_MS) {
+          const source = `${quote?.source ?? 'live'}:${candidate}`;
+          vixCache = { level, timestamp: now, quoteTimestamp: quoteMs, source };
+          return {
+            level,
+            regime: classifyVixRegime(level),
+            source,
+          };
+        }
+      } catch {
+        // Try next symbol.
+      }
+    }
+
+    for (const candidate of vixSymbols) {
+      const cached = getCachedSpot(candidate);
+      const fallbackLevel = Number(cached?.data?.spot);
+      const fallbackQuoteAgeMs = Number(cached?.quoteAgeMs);
+      const fallbackQuoteMs = Date.parse(String(cached?.data?.timestamp ?? ""));
+      if (
+        Number.isFinite(fallbackLevel) &&
+        fallbackLevel > 0 &&
+        Number.isFinite(fallbackQuoteAgeMs) &&
+        fallbackQuoteAgeMs >= 0 &&
+        fallbackQuoteAgeMs <= VIX_MAX_FALLBACK_QUOTE_AGE_MS &&
+        Number.isFinite(fallbackQuoteMs)
+      ) {
+        const source = `${cached?.data?.source ?? 'cache'}:${candidate}`;
+        vixCache = { level: fallbackLevel, timestamp: now, quoteTimestamp: fallbackQuoteMs, source };
+        return {
+          level: fallbackLevel,
+          regime: classifyVixRegime(fallbackLevel),
+          source,
+        };
+      }
+
+      const candleSpot = getLastKnownSpotFromCandles(candidate);
+      const candleLevel = Number(candleSpot?.data?.spot);
+      if (Number.isFinite(candleLevel) && candleLevel > 0) {
+        const source = `candles:${candidate}`;
+        const candleQuoteMs = Date.parse(String(candleSpot?.data?.timestamp ?? ""));
+        vixCache = {
+          level: candleLevel,
+          timestamp: now,
+          quoteTimestamp: Number.isFinite(candleQuoteMs) ? candleQuoteMs : now,
+          source,
+        };
+        return {
+          level: candleLevel,
+          regime: classifyVixRegime(candleLevel),
+          source,
+        };
+      }
+    }
+
+    return { regime: "unknown", source: "unavailable" };
+  };
+
+  const getSymbolRiskSnapshot = (symbol: string) => {
+    const recent = getSignalHistory(symbol, 36);
+    const decisive = recent.filter((row) => row.outcome === 'loss' || row.outcome === 'win_t1' || row.outcome === 'win_t2' || row.outcome === 'win_t3');
+    const recentDecisive = decisive.slice(-12);
+    const wins = recentDecisive.filter((row) => row.outcome !== 'loss').length;
+    const losses = recentDecisive.filter((row) => row.outcome === 'loss').length;
+    const decisiveCount = recentDecisive.length;
+    const decisiveWinRate = decisiveCount > 0 ? (wins / decisiveCount) * 100 : 0;
+
+    let consecutiveLosses = 0;
+    for (let i = recent.length - 1; i >= 0; i -= 1) {
+      if (recent[i]?.outcome === 'loss') {
+        consecutiveLosses += 1;
+      } else if (recent[i]?.outcome && recent[i].outcome !== 'pending') {
+        break;
+      }
+    }
+
+    const cooldownActive = consecutiveLosses >= 2;
+    const lowEdgeLock = decisiveCount >= 8 && decisiveWinRate < 35;
+
+    return {
+      consecutiveLosses,
+      decisiveCount,
+      decisiveWinRate: Number(decisiveWinRate.toFixed(1)),
+      cooldownActive,
+      lowEdgeLock,
+      lockReason: cooldownActive
+        ? `symbol_cooldown:${consecutiveLosses}_losses`
+        : lowEdgeLock
+          ? `symbol_low_edge:${decisiveWinRate.toFixed(1)}pct`
+          : null,
+    };
+  };
+
+  const getSetupTier = (score: number): { tier: 'A+' | 'A' | 'B' | 'C'; sizeMultiplier: number } => {
+    if (score >= 85) return { tier: 'A+', sizeMultiplier: 1.0 };
+    if (score >= 75) return { tier: 'A', sizeMultiplier: 0.7 };
+    if (score >= 65) return { tier: 'B', sizeMultiplier: 0.4 };
+    return { tier: 'C', sizeMultiplier: 0 };
   };
 
   type ScannerRouteResult = ReturnType<typeof getScannerResults>[number];
@@ -427,6 +639,7 @@ export async function registerRoutes(
       const upperSymbol = symbol.toUpperCase();
       const tf = timeframe || "15m";
       const analyzeCacheKey = `${upperSymbol}-${tf}`;
+      const vixSnapshot = await fetchVixSnapshot();
       
       // Fetch live spot price first - this is always needed
       let spotPrice = await fetchEngineSpot(upperSymbol);
@@ -509,7 +722,7 @@ export async function registerRoutes(
               const nowMinutes = now.getHours() * 60 + now.getMinutes();
               const refreshedMonster = runMonsterOTMEngine(
                 cachedOhlc,
-                refreshedAnalysis.marketHealth,
+                refreshedAnalysis.marketHealth as any,
                 refreshedAnalysis.liquiditySweep,
                 refreshedAnalysis.failedVwapReclaim,
                 refreshedAnalysis.trendExhaustion,
@@ -520,14 +733,22 @@ export async function registerRoutes(
                 [],
                 nowMinutes,
                 cachedSessionSplit,
-                spotPrice ?? refreshedAnalysis.lastPrice
+                spotPrice ?? refreshedAnalysis.lastPrice,
+                vixSnapshot.level,
+              );
+
+              const refreshedMarketDNA = analyzeMarketDNA(
+                { '15m': cachedOhlc, '5m': cachedOhlc, '1h': cachedOhlc },
+                refreshedAnalysis.marketHealth as any,
+                []
               );
 
               refreshedPayload = {
                 ...cachedPayload,
                 ...refreshedAnalysis,
                 lastPrice: spotPrice ?? refreshedAnalysis.lastPrice,
-                monsterOTM: refreshedMonster,
+                monsterOtm: refreshedMonster,
+                marketDNA: refreshedMarketDNA,
               };
             }
 
@@ -559,8 +780,39 @@ export async function registerRoutes(
         sessionSplit,
         spotPrice
       );
+      const analysisAny = analysis as any;
+      const breakoutScore = Number(analysisAny.breakoutScore ?? analysisAny.trendExhaustion?.score ?? 45);
+      const edgeEngine = analysisAny.edgeEngine ?? {};
+      const momentumStrength = Number(analysisAny.momentumStrength ?? analysisAny.marketHealth?.macd?.value ?? 0);
+      const bbWidth = Number(analysisAny.compression?.bbWidth ?? analysisAny.marketHealth?.bollingerBands?.percentB ?? 0.5);
+      const signalQuality = String(analysisAny.signalQuality ?? '').toUpperCase();
+      const mode = signalQuality === "HIGH" ? "EXECUTE" : "PREPARE";
+      const compressionPhase = String(
+        analysisAny.compression?.phase ??
+        (analysis.marketHealth?.bollingerBands?.squeeze
+          ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
+          : "PREPARE")
+      ).toUpperCase();
       
       const engineOutput = analyzeMarket(ohlc);
+      recordEngineOutput({
+        engineName: "metaEngine",
+        outputType: "metaSignal",
+        symbol: upperSymbol,
+        timeframe: tf,
+        active: engineOutput.metaSignal.active,
+        bias: engineOutput.metaSignal.bias,
+        strength: engineOutput.metaSignal.strength,
+        confidence: engineOutput.metaSignal.confluence?.score,
+        reasons: engineOutput.metaSignal.invalidationReason ? [engineOutput.metaSignal.invalidationReason] : [],
+        details: {
+          playType: engineOutput.metaSignal.playType,
+          patternCount: engineOutput.patterns?.length ?? 0,
+          sequenceCount: engineOutput.sequences?.length ?? 0,
+          liquidityEvents: engineOutput.liquidityEvents?.length ?? 0,
+        },
+      });
+
       const isSimulatedData = String(dataSource).toLowerCase().startsWith("simulated");
       
       // Use live spot price if available, otherwise fall back to analysis lastPrice
@@ -569,9 +821,9 @@ export async function registerRoutes(
       // Run Monster OTM analysis automatically
       const now = new Date();
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      const monsterOTM = runMonsterOTMEngine(
+      let monsterOTM = runMonsterOTMEngine(
         ohlc,
-        analysis.marketHealth,
+        analysis.marketHealth as any,
         analysis.liquiditySweep,
         analysis.failedVwapReclaim,
         analysis.trendExhaustion,
@@ -582,7 +834,8 @@ export async function registerRoutes(
         [],
         nowMinutes,
         sessionSplit,
-        finalPrice
+        finalPrice,
+        vixSnapshot.level,
       );
       
       const patternCandles = getStablePatternCandles(ohlc, tf);
@@ -621,6 +874,263 @@ export async function registerRoutes(
       }
       const gapAnalysis = analyzeGaps(ohlc);
 
+      // Calculate Market DNA (institutional engine)
+      const marketDNA = analyzeMarketDNA(
+        { '15m': ohlc, '5m': ohlc, '1h': ohlc },
+        analysis.marketHealth as any,
+        []
+      );
+
+      if (marketDNA?.fingerprint) {
+        (marketDNA.fingerprint as any).vixLevel = vixSnapshot.level ?? null;
+        (marketDNA.fingerprint as any).vixRegime = vixSnapshot.regime;
+        (marketDNA.fingerprint as any).vixSource = vixSnapshot.source;
+      }
+
+      const liveTuning = getLiveTuningSnapshot(24);
+      const systemCandidates = [
+        {
+          engine: 'fusion',
+          label: 'Fusion Engine',
+          winRate: Number(liveTuning.fusion.winRate ?? 0),
+          sampleSize: Number(liveTuning.fusion.completed ?? 0),
+        },
+        {
+          engine: 'scanner',
+          label: 'Scanner Breakout',
+          winRate: Number(liveTuning.scanner.winRate ?? 0),
+          sampleSize: Number(liveTuning.scanner.completed ?? 0),
+        },
+      ].sort((a, b) => {
+        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+        return b.sampleSize - a.sampleSize;
+      });
+
+      const topSystem = systemCandidates[0];
+      const highWinSystem = {
+        engine: topSystem.engine,
+        label: topSystem.label,
+        winRate: Number(topSystem.winRate.toFixed(1)),
+        sampleSize: topSystem.sampleSize,
+        lookbackHours: liveTuning.lookbackHours,
+        confidence:
+          topSystem.sampleSize >= 60
+            ? 'high'
+            : topSystem.sampleSize >= 20
+            ? 'medium'
+            : 'low',
+        recommendation:
+          topSystem.sampleSize < 8
+            ? `Insufficient confirmed outcomes in ${liveTuning.lookbackHours}h. Stay selective.`
+            : `${topSystem.label} is currently leading (${topSystem.winRate.toFixed(1)}% win rate over ${topSystem.sampleSize} completed signals). Prioritize this lane when direction aligns with Market DNA bias.`,
+      } as const;
+
+      const monsterDirection = monsterOTM.play?.side === 'call'
+        ? 'bullish'
+        : monsterOTM.play?.side === 'put'
+          ? 'bearish'
+          : 'neutral';
+      const directionalSkew = Number((marketDNA?.fingerprint as any)?.directionalSkew ?? 0);
+      const dnaDirection = directionalSkew > 0.08 ? 'bullish' : directionalSkew < -0.08 ? 'bearish' : 'neutral';
+      const breakoutTriggered = Boolean(monsterOTM.breakout?.triggered);
+      const hitProbPct = Number(monsterOTM.play?.hitProbability ?? 0);
+      const tradeProbPct = Number(monsterOTM.play?.probability ?? 0);
+      const spy0dteStrictMode = upperSymbol === 'SPY' && tf === '5m';
+      const latestCandle = ohlc?.[ohlc.length - 1] as any;
+      const latestCandleTs = Number(latestCandle?.timeMs)
+        || (Number.isFinite(latestCandle?.time) ? Number(latestCandle.time) * 1000 : Number.NaN);
+      const sessionMinuteEt = getEasternMinuteOfDay(latestCandleTs);
+      const spy0dteSessionQualified = !spy0dteStrictMode || Boolean(
+        Number.isFinite(sessionMinuteEt as number) &&
+        (((sessionMinuteEt as number) >= 575 && (sessionMinuteEt as number) <= 660) ||
+          ((sessionMinuteEt as number) >= 840 && (sessionMinuteEt as number) <= 955))
+      );
+      const laneHasDepth = topSystem.sampleSize >= 20;
+      const selectedProfile = laneHasDepth
+        ? (highWinSystem.engine === 'scanner' ? 'balanced_accuracy' : 'strict_live')
+        : 'strict_live';
+
+      const adxValue = Number(analysisAny?.marketHealth?.adx?.value ?? analysis.marketHealth?.adx?.value ?? 0);
+      const rsiValue = Number(analysisAny?.marketHealth?.rsi?.value ?? analysis.marketHealth?.rsi?.value ?? 50);
+      const momentumAbs = Math.abs(Number(momentumStrength ?? 0));
+      const weakChop = adxValue > 0 && adxValue < 20 && rsiValue >= 45 && rsiValue <= 55;
+      const trendStrong = adxValue >= 25;
+      const spyTrendQualified = spy0dteStrictMode ? adxValue >= 22 : trendStrong;
+
+      // Log-backed recurrence rules:
+      // - ADX >= 25 + directional alignment performed best.
+      // - ADX < 20 with RSI near 50 underperformed (chop noise).
+      const trendAlignmentBoost = trendStrong && breakoutTriggered ? 3 : 0;
+      const chopPenalty = weakChop ? 4 : 0;
+
+      const minTradeProbBase = spy0dteStrictMode
+        ? 66
+        : selectedProfile === 'strict_live'
+          ? 62
+          : selectedProfile === 'balanced_accuracy'
+            ? 60
+            : 58;
+      const minHitProbBase = spy0dteStrictMode
+        ? 62
+        : selectedProfile === 'strict_live'
+          ? 58
+          : selectedProfile === 'balanced_accuracy'
+            ? 56
+            : 54;
+      const minTradeProb = Math.max(54, Math.min(84, minTradeProbBase - trendAlignmentBoost + chopPenalty));
+      const minHitProb = Math.max(50, Math.min(80, minHitProbBase - (trendAlignmentBoost >= 3 ? 2 : 0) + Math.max(0, chopPenalty - 1)));
+      const requiresBreakout = highWinSystem.engine === 'scanner';
+      const directionAligned = dnaDirection === 'neutral'
+        ? (monsterDirection !== 'neutral' && spyTrendQualified && breakoutTriggered && tradeProbPct >= (minTradeProb + (spy0dteStrictMode ? 8 : 6)) && hitProbPct >= (minHitProb + (spy0dteStrictMode ? 6 : 4)))
+        : dnaDirection === monsterDirection;
+
+      const momentumQualified = spy0dteStrictMode
+        ? (spyTrendQualified && (
+          momentumAbs >= 8 ||
+          (breakoutTriggered && tradeProbPct >= minTradeProb + 2 && hitProbPct >= minHitProb + 2) ||
+          (tradeProbPct >= 72 && hitProbPct >= 66)
+        ))
+        : trendStrong
+          ? (momentumAbs >= 10 || tradeProbPct >= minTradeProb + 2)
+          : (momentumAbs >= 16 || (tradeProbPct >= minTradeProb + 4 && hitProbPct >= minHitProb));
+      const logRuleAligned = directionAligned && momentumQualified;
+
+      const fallbackQualified = Boolean(
+        monsterOTM.hasPlay &&
+        monsterOTM.play &&
+        !spy0dteStrictMode &&
+        !weakChop &&
+        dnaDirection !== 'neutral' &&
+        monsterDirection === dnaDirection &&
+        trendStrong &&
+        tradeProbPct >= 58 &&
+        hitProbPct >= 54 &&
+        (breakoutTriggered || hitProbPct >= 60)
+      );
+
+      const symbolRisk = getSymbolRiskSnapshot(upperSymbol);
+      const symbolRiskLocked = symbolRisk.cooldownActive || symbolRisk.lowEdgeLock;
+
+      const setupScoreRaw = (
+        tradeProbPct * 0.45 +
+        hitProbPct * 0.35 +
+        (trendStrong ? 10 : 0) +
+        (breakoutTriggered ? 6 : 0) +
+        (directionAligned ? 8 : 0) -
+        (weakChop ? 12 : 0)
+      );
+      const setupScore = Number(Math.max(0, Math.min(100, setupScoreRaw)).toFixed(1));
+      const setupTier = getSetupTier(setupScore);
+
+      const accuracyGatePassed = Boolean(
+        (monsterOTM.hasPlay &&
+          monsterOTM.play &&
+          spy0dteSessionQualified &&
+          !symbolRiskLocked &&
+          directionAligned &&
+          logRuleAligned &&
+          tradeProbPct >= minTradeProb &&
+          hitProbPct >= minHitProb &&
+          (!weakChop || breakoutTriggered) &&
+          (!requiresBreakout || breakoutTriggered)) ||
+          (fallbackQualified && !symbolRiskLocked)
+      );
+
+      if (monsterOTM.hasPlay && !accuracyGatePassed) {
+        const gateReason = [
+          `accuracy_gate:${highWinSystem.engine}`,
+          `dna=${dnaDirection}`,
+          `play=${monsterDirection}`,
+          spy0dteStrictMode ? `sessionOk=${spy0dteSessionQualified ? 'yes' : 'no'}` : null,
+          symbolRisk.lockReason,
+          `p=${tradeProbPct.toFixed(1)}<${minTradeProb}`,
+          `hit=${hitProbPct.toFixed(1)}<${minHitProb}`,
+          requiresBreakout ? `breakout=${breakoutTriggered ? 'yes' : 'no'}` : null,
+        ].filter(Boolean).join(' | ');
+
+        monsterOTM = {
+          ...monsterOTM,
+          hasPlay: false,
+          play: null,
+          pce: {
+            ...monsterOTM.pce,
+            notes: [...(monsterOTM.pce?.notes ?? []), `Accuracy gate blocked setup: ${gateReason}`],
+          },
+        };
+      }
+
+      recordEngineOutput({
+        engineName: "monsterOTM",
+        outputType: "monsterDecision",
+        symbol: upperSymbol,
+        timeframe: tf,
+        active: monsterOTM.hasPlay ?? false,
+        bias: monsterOTM.play?.side === 'call' ? 'bullish' : monsterOTM.play?.side === 'put' ? 'bearish' : "neutral",
+        strength: Number(((monsterOTM.pce?.pceProb ?? 0) * 100).toFixed(0)),
+        confidence: Number(((monsterOTM.pce?.pceProb ?? 0) * 100).toFixed(0)),
+        reasons: monsterOTM.pce?.notes ?? [],
+        details: {
+          quality: monsterOTM.pce?.quality,
+          strike: monsterOTM.play?.strike,
+          delta: monsterOTM.play?.delta,
+          premium: monsterOTM.play?.premium,
+          direction: monsterOTM.play?.side,
+          reason: monsterOTM.play?.reason,
+          accuracyGatePassed,
+          dnaDirection,
+          directionalSkew,
+          systemLane: highWinSystem.engine,
+          selectedProfile,
+          spy0dteStrictMode,
+          spyTrendQualified,
+          sessionMinuteEt,
+          spy0dteSessionQualified,
+          laneHasDepth,
+          weakChop,
+          trendStrong,
+          momentumAbs,
+          momentumQualified,
+          logRuleAligned,
+          fallbackQualified,
+          breakoutTriggered,
+          tradeProbPct,
+          hitProbPct,
+          setupScore,
+          setupTier: setupTier.tier,
+          sizeMultiplier: setupTier.sizeMultiplier,
+          symbolRisk,
+          symbolRiskLocked,
+        },
+      });
+
+      const monsterGateAudit = {
+        passed: accuracyGatePassed,
+        systemLane: highWinSystem.engine,
+        selectedProfile,
+        spy0dteStrictMode,
+        spyTrendQualified,
+        sessionMinuteEt,
+        spy0dteSessionQualified,
+        laneHasDepth,
+        weakChop,
+        trendStrong,
+        momentumAbs: Number(momentumAbs.toFixed(2)),
+        momentumQualified,
+        logRuleAligned,
+        fallbackQualified,
+        dnaDirection,
+        playDirection: monsterDirection,
+        directionalSkew: Number(directionalSkew.toFixed(3)),
+        breakoutTriggered,
+        tradeProbPct: Number(tradeProbPct.toFixed(1)),
+        hitProbPct: Number(hitProbPct.toFixed(1)),
+        setupScore,
+        setupTier: setupTier.tier,
+        sizeMultiplier: setupTier.sizeMultiplier,
+        symbolRisk,
+        symbolRiskLocked,
+      };
+
       const payload = {
         ...analysis,
         lastPrice: finalPrice,
@@ -633,7 +1143,10 @@ export async function registerRoutes(
         orderBlocks: engineOutput.orderBlocks,
         breakerBlocks: engineOutput.breakerBlocks,
         sequences: engineOutput.sequences,
-        monsterOTM,
+        monsterOtm: monsterOTM ?? null,
+        monsterGateAudit,
+        marketDNA,
+        highWinSystem,
         drawablePatterns,
         normalizedPatterns: normalizedPats,
         patternSignal,
@@ -665,6 +1178,7 @@ export async function registerRoutes(
       }
 
       const upperSymbol = symbol.toUpperCase();
+      const vixSnapshot = await fetchVixSnapshot();
       const tf = timeframe || "15m";
 
       let spotPrice = await fetchEngineSpot(upperSymbol);
@@ -682,27 +1196,83 @@ export async function registerRoutes(
         sessionSplit,
         spotPrice
       );
+      const analysisAny = analysis as any;
+      const breakoutScore = Number(analysisAny.breakoutScore ?? analysisAny.trendExhaustion?.score ?? 45);
+      const edgeEngine = analysisAny.edgeEngine ?? {};
+      const momentumStrength = Number(analysisAny.momentumStrength ?? analysisAny.marketHealth?.macd?.value ?? 0);
+      const bbWidth = Number(analysisAny.marketHealth?.bollingerBands?.percentB ?? 0.5);
+      const signalQuality = String(analysisAny.signalQuality ?? '').toUpperCase();
+      const mode = signalQuality === "HIGH" ? "EXECUTE" : "PREPARE";
+      const compressionPhase = String(
+        analysisAny.compression?.phase ??
+        (analysis.marketHealth?.bollingerBands?.squeeze
+          ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
+          : "PREPARE")
+      ).toUpperCase();
 
       const logsDir = path.resolve(process.cwd(), "logs");
-      const model = trainCompressionModelFromLogs(logsDir);
+      let model: TrainedModel;
+      try {
+        model = trainCompressionModelFromLogs(logsDir);
+      } catch (error) {
+        console.warn("Compression AI model training failed; using fallback model.", error);
+        model = {
+          weights: Array(21).fill(0),
+          bias: 0,
+          calibrationAlpha: 0,
+          priorPositiveRate: 0.5,
+          thresholds: {
+            prepare: 52,
+            enter: 74,
+          },
+          stats: {
+            sampleCount: 0,
+            positiveRate: 0.5,
+            symbolWinRate: {},
+            timeframeWinRate: {},
+            validation: undefined,
+          },
+          trainedAt: Date.now(),
+        };
+      }
+
+      const priceActionSafety = computePriceActionSafety({
+        recentOhlc: ohlc as any,
+        signalDirection: analysis.directionalBias === "bullish"
+          ? "CALL"
+          : analysis.directionalBias === "bearish"
+            ? "PUT"
+            : "WAIT",
+        currentPrice: spotPrice ?? 0,
+      });
 
       const scoring = scoreCompressionOpportunity(model, {
         symbol: upperSymbol,
         timeframe: tf,
-        breakoutScore: analysis.breakoutScore,
-        edgeScore: analysis.edgeEngine?.edgeScore,
-        confidence: analysis.edgeEngine?.confidence,
-        triggerProbability: analysis.edgeEngine?.triggerProbability,
-        momentum: analysis.momentumStrength,
-        bbWidth: analysis.marketHealth?.bollingerBands?.width,
+        breakoutScore,
+        edgeScore: edgeEngine.edgeScore,
+        confidence: edgeEngine.confidence,
+        triggerProbability: edgeEngine.triggerProbability,
+        momentum: momentumStrength,
+        bbWidth,
         rangePct: analysis.trendExhaustion?.rangeCompression,
         atrPercent: analysis.marketHealth?.atr?.percent,
-        phase: analysis.marketHealth?.bollingerBands?.squeeze
-          ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
-          : "PREPARE",
-        mode: analysis.signalQuality === "HIGH" ? "EXECUTE" : "PREPARE",
+        rsi: analysis.marketHealth?.rsi?.value,
+        phase: compressionPhase,
+        mode,
         directionalBias: analysis.directionalBias,
+        priceActionDirection: priceActionSafety.momentumDirection,
+        priceActionStrength: priceActionSafety.momentumStrength,
+        priceActionConsistency: priceActionSafety.candleConsistency,
+        priceActionSafetyAction: priceActionSafety.safetyAction,
+        priceActionContradiction: priceActionSafety.contradiction ? 1 : 0,
         otmDelta: analysis.tactical?.otm?.delta,
+        preBreakoutScore: Number(analysisAny.preBreakoutSetup?.score ?? analysisAny.setupScore ?? 0),
+        timeframeAgreement: Number(analysisAny.timeframeStack?.agreement ?? 0),
+        edgeLeadMinutes: Number(edgeEngine.leadMinutes ?? 0),
+        edgeState: String(edgeEngine.state ?? ''),
+        edgeSignal: String(edgeEngine.signal ?? ''),
+        volRatio: Number(analysisAny.compression?.volRatio ?? 0),
       });
 
       const mlInference = (() => {
@@ -710,40 +1280,41 @@ export async function registerRoutes(
           return inferLivePrediction({
             symbol: upperSymbol,
             timeframe: tf,
-            breakoutScore: analysis.breakoutScore,
-            edgeScore: analysis.edgeEngine?.edgeScore,
-            confidence: analysis.edgeEngine?.confidence,
-            triggerProbability: analysis.edgeEngine?.triggerProbability,
-            momentum: analysis.momentumStrength,
-            bbWidth: analysis.marketHealth?.bollingerBands?.width,
+            breakoutScore,
+            edgeScore: edgeEngine.edgeScore,
+            confidence: edgeEngine.confidence,
+            triggerProbability: edgeEngine.triggerProbability,
+            momentum: momentumStrength,
+            bbWidth,
             rangePct: analysis.trendExhaustion?.rangeCompression,
             atrPercent: analysis.marketHealth?.atr?.percent,
-            phase: analysis.marketHealth?.bollingerBands?.squeeze
-              ? ((analysis.trendExhaustion?.rangeCompression ?? 0) > 0.7 ? "NOW" : "READY")
-              : "PREPARE",
-            mode: analysis.signalQuality === "HIGH" ? "EXECUTE" : "PREPARE",
+            phase: compressionPhase,
+            mode,
             directionalBias: analysis.directionalBias,
+            edgeSignal: String(edgeEngine.signal ?? ''),
+            edgeState: String(edgeEngine.state ?? ''),
+            leadMinutes: edgeEngine.leadMinutes,
             otmDelta: analysis.tactical?.otm?.delta,
-            macdHistogram: analysis.momentumStrength,
+            macdHistogram: momentumStrength,
             rsi: analysis.marketHealth?.rsi?.value,
-            volumeRatio: analysis.marketHealth?.volume?.ratio,
-            vwapDistance: analysis.marketHealth?.vwapDistance,
-            priceVelocity: analysis.momentumStrength,
-            priceAcceleration: analysis.momentumStrength ? analysis.momentumStrength * 0.5 : undefined,
+            volumeRatio: Number(analysisAny.marketHealth?.obv?.ratio ?? 1),
+            vwapDistance: Number(analysisAny.marketHealth?.vwapSlope?.value ?? 0),
+            priceVelocity: momentumStrength,
+            priceAcceleration: Number.isFinite(momentumStrength) ? momentumStrength * 0.5 : undefined,
             candleOpen: ohlc.length ? ohlc[ohlc.length - 1].open : undefined,
             candleHigh: ohlc.length ? ohlc[ohlc.length - 1].high : undefined,
             candleLow: ohlc.length ? ohlc[ohlc.length - 1].low : undefined,
             candleClose: ohlc.length ? ohlc[ohlc.length - 1].close : undefined,
             failedReclaim: Boolean(analysis.failedVwapReclaim),
             liquiditySweep: Boolean(analysis.liquiditySweep),
-            microTrend: analysis.momentumStrength,
+            microTrend: momentumStrength,
             ageMs: 0,
           });
         } catch (err) {
           console.warn("ML inference fallback:", err);
           return {
             prediction: scoring.modelProb,
-            confidence: scoring.confidence ?? 0,
+            confidence: scoring.modelProb,
             regime_probs: { low: 33, high: 33, chop: 34 },
             pattern_score: 0,
             freshness: 1,
@@ -759,6 +1330,27 @@ export async function registerRoutes(
         ? liveDelta >= scoring.targetDeltaBand.min && liveDelta <= scoring.targetDeltaBand.max
         : null;
       const trainingConfig = (scoring.modelStats as { trainingConfig?: unknown }).trainingConfig ?? null;
+
+      recordEngineOutput({
+        engineName: "compressionAI",
+        outputType: "compressionDecision",
+        symbol: upperSymbol,
+        timeframe: tf,
+        active: scoring.decision === "ENTER",
+        bias: scoring.direction,
+        strength: scoring.aiScore,
+        confidence: scoring.modelProb,
+        modelProbability: scoring.modelProb,
+        decision: scoring.decision,
+        reasons: scoring.reasons,
+        details: {
+          confidenceBand: scoring.confidenceBand,
+          inTargetBand,
+          targetMin: scoring.targetDeltaBand.min,
+          targetMax: scoring.targetDeltaBand.max,
+          direction: scoring.direction,
+        },
+      });
 
       return res.json({
         symbol: upperSymbol,
@@ -788,6 +1380,11 @@ export async function registerRoutes(
           low: Number((mlInference.regime_probs.low * 100).toFixed(1)),
           high: Number((mlInference.regime_probs.high * 100).toFixed(1)),
           chop: Number((mlInference.regime_probs.chop * 100).toFixed(1)),
+        },
+        priceActionSafety: scoring.priceActionSafety,
+        runnerGate: {
+          pass: scoring.runnerGate.pass,
+          blockers: scoring.runnerGate.blockers,
         },
         training: {
           sampleCount: scoring.modelStats.sampleCount,
@@ -937,7 +1534,42 @@ export async function registerRoutes(
       };
       
       const compression = analyzeCompression(ohlc);
-      
+      const latestIntake = getLatestIntakeEntry();
+      const intakeBias = (() => {
+        if (!latestIntake || latestIntake.summary.signalsCreated < 5) {
+          return { direction: 'WAIT' as const, strength: 0, reason: 'Not enough recent intake signal volume' };
+        }
+
+        const bullish = latestIntake.summary.signalsByDirection.bullish || 0;
+        const bearish = latestIntake.summary.signalsByDirection.bearish || 0;
+        const neutral = latestIntake.summary.signalsByDirection.neutral || 0;
+        const total = bullish + bearish + neutral;
+        const avgConfidence = latestIntake.summary.avgConfidence || 0;
+        const delta = bullish - bearish;
+        const absDelta = Math.abs(delta);
+        const minStrong = Math.max(3, Math.ceil(total * 0.25));
+
+        if (absDelta >= minStrong && avgConfidence >= 58) {
+          const direction = delta > 0 ? 'CALL' : 'PUT';
+          return {
+            direction,
+            strength: Math.min(100, Math.max(55, absDelta * 10 + avgConfidence / 2)),
+            reason: `Intake log bias ${direction} (${bullish} bullish / ${bearish} bearish, ${avgConfidence.toFixed(0)}% avg confidence)`
+          };
+        }
+
+        if (absDelta >= 2 && avgConfidence >= 66) {
+          const direction = delta > 0 ? 'CALL' : 'PUT';
+          return {
+            direction,
+            strength: Math.min(100, Math.max(50, absDelta * 10 + avgConfidence / 2)),
+            reason: `Intake log caution ${direction} (${bullish} bullish / ${bearish} bearish, ${avgConfidence.toFixed(0)}% avg confidence)`
+          };
+        }
+
+        return { direction: 'WAIT' as const, strength: 0, reason: 'Recent intake log bias is mixed or low confidence' };
+      })();
+
       // Get fusion signal for unified direction (SINGLE SOURCE OF TRUTH)
       // Uses the new authoritative fields: unifiedDirection, unifiedConfidence
       let fusionDirection: 'CALL' | 'PUT' | 'WAIT' = 'WAIT';
@@ -962,47 +1594,112 @@ export async function registerRoutes(
       
       // Find best calls and puts near ATM
       const findBestOption = (options: any[], side: 'call' | 'put') => {
-        const atmOptions = options
-          .filter((o: any) => Math.abs(o.strike - spotPrice) <= spotPrice * 0.015) // within 1.5%
+        const normalizeDelta = (option: any): number => {
+          const actualDelta = Number(option.delta);
+          if (Number.isFinite(actualDelta) && actualDelta >= 0 && actualDelta <= 1) {
+            return actualDelta;
+          }
+
+          const moneyness = (spotPrice - option.strike) / spotPrice;
+          if (side === 'call') {
+            return moneyness > 0.01 ? 0.65 : moneyness > 0 ? 0.55 : moneyness > -0.01 ? 0.45 : 0.30;
+          }
+          return moneyness < -0.01 ? 0.65 : moneyness < 0 ? 0.55 : moneyness < 0.01 ? 0.45 : 0.30;
+        };
+
+        const isTradeable = (option: any): boolean => {
+          const bid = Number(option.bid ?? 0);
+          const ask = Number(option.ask ?? 0);
+          const mid = (bid + ask) / 2;
+          const volume = Number(option.volume ?? 0);
+          const oi = Number(option.openInterest ?? option.oi ?? 0);
+          const spread = ask - bid;
+
+          if (!Number.isFinite(mid) || mid <= 0) return false;
+          if (!Number.isFinite(ask) || ask <= 0) return false;
+          if (!Number.isFinite(bid) || bid < 0) return false;
+          if (spread < 0 || spread / mid > 0.4) return false;
+          if (volume < 3 && oi < 20) return false;
+          if (mid < 0.08) return false;
+          return true;
+        };
+
+        const ranked = [...options]
+          .filter((o: any) => Math.abs(o.strike - spotPrice) <= spotPrice * 0.005) // within 0.5% for 0DTE
+          .filter((o: any) => isTradeable(o))
           .map((o: any) => {
-            const spread = o.ask - o.bid;
-            const mid = (o.bid + o.ask) / 2;
-            const spreadPct = spread / mid * 100;
-            const liquidityScore = Math.min(100, (o.volume || 0) / 500) * 0.7 + 
-                                   Math.min(100, (o.openInterest || 0) / 200) * 0.3;
-            
-            // Delta estimate
-            const moneyness = (spotPrice - o.strike) / spotPrice;
-            let delta = 0.5;
-            if (side === 'call') {
-              delta = moneyness > 0.01 ? 0.6 : moneyness > 0 ? 0.55 : moneyness > -0.01 ? 0.45 : 0.35;
-            } else {
-              delta = moneyness < -0.01 ? 0.6 : moneyness < 0 ? 0.55 : moneyness < 0.01 ? 0.45 : 0.35;
-            }
-            
-            // Score: tight spread + high liquidity + good delta
-            const spreadScore = spreadPct < 2 ? 100 : spreadPct < 5 ? 70 : spreadPct < 10 ? 40 : 20;
-            const deltaScore = delta >= 0.40 && delta <= 0.55 ? 100 : delta >= 0.30 ? 70 : 40;
-            const totalScore = spreadScore * 0.3 + liquidityScore * 0.4 + deltaScore * 0.3;
-            
+            const bid = Number(o.bid ?? 0);
+            const ask = Number(o.ask ?? 0);
+            const mid = (bid + ask) / 2;
+            const spreadPct = mid > 0 ? ((ask - bid) / mid) * 100 : 100;
+            const volume = Number(o.volume ?? 0);
+            const oi = Number(o.openInterest ?? o.oi ?? 0);
+            const liquidityScore = Math.min(100, volume / 300) * 0.6 + Math.min(100, oi / 150) * 0.4;
+            const delta = normalizeDelta(o);
+            const deltaScore = delta >= 0.18 && delta <= 0.32 ? 100 : delta >= 0.14 && delta <= 0.40 ? 75 : 40;
+            const totalScore = spreadPct < 1.5 ? 100 : spreadPct < 3 ? 80 : spreadPct < 6 ? 55 : 30;
+
             return {
               strike: o.strike,
-              bid: o.bid,
-              ask: o.ask,
+              bid,
+              ask,
               mid,
-              spread,
+              spread: ask - bid,
               spreadPct,
-              volume: o.volume,
-              openInterest: o.openInterest,
-              iv: (o.impliedVolatility || 0) * 100,
+              volume,
+              openInterest: oi,
+              iv: Number(o.impliedVolatility || 0) * 100,
               delta,
               liquidityScore,
-              totalScore
+              totalScore: totalScore * 0.3 + liquidityScore * 0.45 + deltaScore * 0.25,
             };
           })
-          .sort((a: any, b: any) => b.totalScore - a.totalScore);
-        
-        return atmOptions[0] || null;
+          .sort((a: any, b: any) => {
+            const aDist = Math.abs(a.strike - spotPrice);
+            const bDist = Math.abs(b.strike - spotPrice);
+            if (aDist !== bDist) return aDist - bDist; // closest first
+            return b.totalScore - a.totalScore; // then by score
+          });
+
+        if (ranked.length > 0) return ranked[0];
+
+        const wider = [...options]
+          .filter((o: any) => Math.abs(o.strike - spotPrice) <= spotPrice * 0.01) // within 1% fallback
+          .filter((o: any) => isTradeable(o))
+          .map((o: any) => {
+            const bid = Number(o.bid ?? 0);
+            const ask = Number(o.ask ?? 0);
+            const mid = (bid + ask) / 2;
+            const spreadPct = mid > 0 ? ((ask - bid) / mid) * 100 : 100;
+            const volume = Number(o.volume ?? 0);
+            const oi = Number(o.openInterest ?? o.oi ?? 0);
+            const liquidityScore = Math.min(100, volume / 300) * 0.6 + Math.min(100, oi / 150) * 0.4;
+            const delta = normalizeDelta(o);
+            const deltaScore = delta >= 0.18 && delta <= 0.32 ? 100 : delta >= 0.14 && delta <= 0.40 ? 75 : 40;
+            const totalScore = spreadPct < 1.5 ? 100 : spreadPct < 3 ? 80 : spreadPct < 6 ? 55 : 30;
+
+            return {
+              strike: o.strike,
+              bid,
+              ask,
+              mid,
+              spread: ask - bid,
+              spreadPct,
+              volume,
+              openInterest: oi,
+              iv: Number(o.impliedVolatility || 0) * 100,
+              delta,
+              liquidityScore,
+              totalScore: totalScore * 0.3 + liquidityScore * 0.45 + deltaScore * 0.25,
+            };
+          })
+          .sort((a: any, b: any) => {
+            const aDist = Math.abs(a.strike - spotPrice);
+            const bDist = Math.abs(b.strike - spotPrice);
+            if (aDist !== bDist) return aDist - bDist;
+            return b.totalScore - a.totalScore;
+          });
+        return wider.length > 0 ? wider[0] : null;
       };
       
       const bestCall = findBestOption(calls, 'call');
@@ -1010,7 +1707,7 @@ export async function registerRoutes(
       
       // Determine direction using UNIFIED FUSION SIGNAL (single source of truth)
       // Falls back to multi-factor analysis only if fusion is unavailable
-      let recommendedDirection: 'CALL' | 'PUT' = 'PUT'; // Default bearish (safer for 0DTE)
+      let recommendedDirection: 'CALL' | 'PUT' | 'WAIT' = 'WAIT';
       const reasons: string[] = [];
       let setupGrade: 'GOLD' | 'HOT' | 'READY' | 'BUILDING' | 'WAIT' = 'WAIT';
       let confidence = 0;
@@ -1059,13 +1756,10 @@ export async function registerRoutes(
         const upCandles = recentCloses.filter((c: number, i: number) => i > 0 && c > recentCloses[i - 1]).length;
         const recentBullish = upCandles >= 2;
         
-        // Score direction (need 3+ bullish signals for CALL)
-        let bullishScore = 0;
-        if (emaBullish) bullishScore++;
-        if (momentumBullish) bullishScore++;
-        if (priceAboveMid) bullishScore++;
-        if (recentBullish) bullishScore++;
-        
+        // Score direction
+        const bullishScore = [emaBullish, momentumBullish, priceAboveMid, recentBullish].filter(Boolean).length;
+        const bearishScore = [!emaBullish, !momentumBullish, !priceAboveMid, !recentBullish].filter(Boolean).length;
+
         if (bullishScore >= 3) {
           recommendedDirection = 'CALL';
           const signals = [];
@@ -1074,7 +1768,7 @@ export async function registerRoutes(
           if (priceAboveMid) signals.push('above mid');
           if (recentBullish) signals.push('recent candles↑');
           reasons.push(`Bullish bias (${signals.join(', ')})`);
-        } else {
+        } else if (bearishScore >= 3) {
           recommendedDirection = 'PUT';
           const signals = [];
           if (!emaBullish) signals.push('EMA9<21');
@@ -1082,7 +1776,35 @@ export async function registerRoutes(
           if (!priceAboveMid) signals.push('below mid');
           if (!recentBullish) signals.push('recent candles↓');
           reasons.push(`Bearish bias (${signals.join(', ')})`);
+        } else {
+          recommendedDirection = 'WAIT';
+          reasons.push('No clear directional edge from recent price action');
         }
+      }
+
+      if (
+        recommendedDirection === 'WAIT' &&
+        (intakeBias.direction === 'CALL' || intakeBias.direction === 'PUT') &&
+        intakeBias.strength >= 70
+      ) {
+        recommendedDirection = intakeBias.direction;
+        reasons.push(`Intake log bias applied: ${intakeBias.reason}`);
+      } else if (recommendedDirection !== 'WAIT' && intakeBias.direction !== 'WAIT') {
+        if (recommendedDirection === intakeBias.direction) {
+          reasons.push(`Intake log supports direction: ${intakeBias.reason}`);
+        } else {
+          reasons.push(`Intake log mixed with direction: ${intakeBias.reason}`);
+          if (confidence < 70) {
+            recommendedDirection = 'WAIT';
+            reasons.push('Direction held to WAIT because intake log and price bias conflict');
+          }
+        }
+      }
+
+      const selectedBestPlay = recommendedDirection === 'CALL' ? bestCall : recommendedDirection === 'PUT' ? bestPut : null;
+      if (recommendedDirection !== 'WAIT' && !selectedBestPlay) {
+        reasons.push(`No tradeable ${recommendedDirection} option found in the target 0DTE range`);
+        recommendedDirection = 'WAIT';
       }
       
       // Determine setup grade based on BACKTESTED thresholds
@@ -1127,7 +1849,7 @@ export async function registerRoutes(
         reasons.push(...compression.triggers.slice(0, 3));
       }
       
-      const bestPlay = recommendedDirection === 'CALL' ? bestCall : bestPut;
+      const bestPlay = recommendedDirection === 'CALL' ? bestCall : recommendedDirection === 'PUT' ? bestPut : null;
       
       // NOTE: These are QUALITY SCORES, not guaranteed win rates
       // Real historical backtest shows ~52% overall accuracy on SPY
@@ -1197,6 +1919,7 @@ export async function registerRoutes(
           rangePct: compression.rangePct,
           volRatio: compression.volRatio
         },
+        intakeBias,
         
         // Recommended play - always show best option
         recommendation: {
@@ -1207,14 +1930,24 @@ export async function registerRoutes(
           expectedPL,
           contract: bestPlay,
           reasons,
-          disclaimer: 'Quality score only - not a guaranteed win rate. Real historical accuracy ~52%.'
+          disclaimer: 'Quality score only - not a guaranteed win rate. Real historical accuracy ~52%.',
+          optionDetails: bestPlay ? {
+            entryPrice: bestPlay.ask,
+            stopPrice: bestPlay.bid,
+            targetPrice: recommendedDirection === 'CALL' 
+              ? bestPlay.strike + bestPlay.mid * 2 
+              : bestPlay.strike - bestPlay.mid * 2,
+            breakeven: recommendedDirection === 'CALL' 
+              ? bestPlay.strike + bestPlay.mid 
+              : bestPlay.strike - bestPlay.mid,
+          } : null,
         }
       };
 
       bestPlayCache.set(upperSymbol, { payload, timestamp: Date.now() });
       res.json(payload);
-      
-    } catch (error: any) {
+    }
+    catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
       const rateLimited = isRateLimitedMessage(message);
 
@@ -1320,10 +2053,28 @@ export async function registerRoutes(
       Pragma: "no-cache",
       Expires: "0",
     });
-    
+
     const spotQuote = await fetchEngineSpotQuote(upperSymbol);
     if (spotQuote) {
       return res.json(spotQuote.data);
+    }
+
+    const cachedSpot = getCachedSpot(upperSymbol);
+    if (cachedSpot && cachedSpot.quoteAgeMs <= 15 * 60 * 1000) {
+      return res.json({
+        ...cachedSpot.data,
+        degraded: true,
+        degradedReason: "cached-fallback",
+      });
+    }
+
+    const candleFallback = getLastKnownSpotFromCandles(upperSymbol);
+    if (candleFallback && candleFallback.ageMs <= 15 * 60 * 1000) {
+      return res.json({
+        ...candleFallback.data,
+        degraded: true,
+        degradedReason: "candle-fallback",
+      });
     }
 
     res.status(503).json({ error: "Spot provider unavailable. Please retry shortly." });
@@ -1355,6 +2106,28 @@ export async function registerRoutes(
 
   app.get("/api/scanner/results", (_req, res) => {
     res.json(getScannerResults());
+  });
+
+  app.get("/api/scanner/scalp-confluence", (_req, res) => {
+    res.json({
+      success: true,
+      ...getScalpConfluenceState(),
+      timestamp: Date.now(),
+    });
+  });
+
+  app.get("/api/black-box/status", (_req, res) => {
+    res.json({ success: true, ...getBlackBoxStatus(), timestamp: Date.now() });
+  });
+
+  app.post("/api/black-box/collect", async (_req, res) => {
+    const result = await collectEngineSnapshots();
+    res.status(result.ran ? 200 : result.skippedReason === "outside_regular_session" ? 409 : 202).json({
+      success: result.ran,
+      ...result,
+      ...getBlackBoxStatus(),
+      timestamp: Date.now(),
+    });
   });
 
   app.get("/api/scanner/breakout-thresholds", async (req, res) => {
@@ -1406,6 +2179,23 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/analytics/tradingview-evidence", (_req, res) => {
+    const reportPath = path.resolve(process.cwd(), "logs", "tradingview_history_14d_report.json");
+    try {
+      const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
+        lookback?: { days?: number; from?: string; to?: string };
+        baseline?: { total?: number; winRate?: number };
+        topRules?: Array<{ rule?: string; support?: number; wins?: number; winRate?: number; lift?: number }>;
+      };
+      const topRules = (report.topRules ?? [])
+        .filter((rule) => Number(rule.support ?? 0) >= 12 && Number(rule.winRate ?? 0) > 0)
+        .slice(0, 4);
+      res.json({ success: true, lookback: report.lookback, baseline: report.baseline, topRules, timestamp: Date.now() });
+    } catch {
+      res.json({ success: false, topRules: [], timestamp: Date.now() });
+    }
+  });
+
   app.get("/api/scanner/edge-tuning/2d", (req, res) => {
     const requestedLimit = Number(req.query.limit);
     const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
@@ -1427,6 +2217,27 @@ export async function registerRoutes(
       success: true,
       collected: Boolean(entry),
       entry,
+      timestamp: Date.now(),
+    });
+  });
+
+  // Engine Intake Log endpoints
+  app.get("/api/intake/latest", (req, res) => {
+    const latest = getLatestIntakeEntry();
+    res.json({
+      success: !!latest,
+      latest,
+      timestamp: Date.now(),
+    });
+  });
+
+  app.get("/api/intake/recent", (req, res) => {
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
+    const entries = getRecentIntakeEntries(limit);
+    res.json({
+      success: true,
+      entries,
+      count: entries.length,
       timestamp: Date.now(),
     });
   });
@@ -1490,6 +2301,7 @@ export async function registerRoutes(
       const { symbol, timeframe } = req.params;
       const upperSymbol = symbol.toUpperCase();
       const tf = timeframe || "15m";
+      const vixSnapshot = await fetchVixSnapshot();
       
       // Fetch live spot price first
       let liveSpotPrice: number | undefined;
@@ -1536,7 +2348,7 @@ export async function registerRoutes(
       
       const result = runMonsterOTMEngine(
         ohlc,
-        analysis.marketHealth,
+        analysis.marketHealth as any,
         analysis.liquiditySweep,
         analysis.failedVwapReclaim,
         analysis.trendExhaustion,
@@ -1547,7 +2359,8 @@ export async function registerRoutes(
         [],
         nowMinutes,
         sessionSplit,
-        liveSpotPrice ?? analysis.lastPrice
+        liveSpotPrice ?? analysis.lastPrice,
+        vixSnapshot.level,
       );
 
       // Use live spot price if available, otherwise fall back to candle close
@@ -1573,6 +2386,7 @@ export async function registerRoutes(
       }
       
       const upperSymbol = symbol.toUpperCase();
+      const vixSnapshot = await fetchVixSnapshot();
 
       let lastPrice = await fetchEngineSpot(upperSymbol);
 
@@ -1584,30 +2398,59 @@ export async function registerRoutes(
       const ohlc = tfResult.data;
 
       // Get panel data with synthetic chain
-      const panelData = getMonsterOTMPanelData(ohlc, upperSymbol, lastPrice);
+      const panelData = getMonsterOTMPanelData(ohlc, upperSymbol, lastPrice, vixSnapshot.level);
       
       // Compute expected move
       const atr = computeATR(ohlc);
       const spotPrice = lastPrice ?? ohlc[ohlc.length - 1]?.close ?? 100;
       const expectedMove = atr?.value ?? spotPrice * 0.02;
 
+      // Build market health from OHLC data
+      const analysis = analyzeSymbol(upperSymbol, ohlc, { maxAbsGammaStrike: null }, { rth: ohlc, overnight: [], prevDayRth: [] }, spotPrice);
+      const mh = analysis.marketHealth;
+      const panelSessionSplit = { rth: ohlc, overnight: [] as any[], prevDayRth: [] as any[] };
+      
+      const marketHealth: MarketHealthIndicators = {
+        healthScore: (mh?.rsi?.contribution ?? 0.5) * 0.15 + 
+                     (mh?.macd?.contribution ?? 0.5) * 0.15 +
+                     (mh?.adx?.contribution ?? 0.5) * 0.20 +
+                     (mh?.obv?.contribution ?? 0.5) * 0.15 +
+                     (mh?.bollingerBands?.contribution ?? 0.5) * 0.15 +
+                     (mh?.stochastic?.contribution ?? 0.5) * 0.10 +
+                     (mh?.cmf?.contribution ?? 0.5) * 0.10,
+        healthGrade: mh?.healthGrade ?? 'C',
+        rsi: { value: mh?.rsi?.value ?? 50 },
+        macd: { value: mh?.macd?.value ?? 0 },
+        adx: { value: mh?.adx?.value ?? 25 },
+        vwapSlope: { value: mh?.vwapSlope?.value ?? 0 },
+        ivChange: { value: mh?.ivChange?.value ?? 0 },
+        orderflow: { value: mh?.orderflow?.tickImbalance ?? 0 },
+        gamma: { value: mh?.gamma?.maxAbsGammaStrike ?? 0 },
+        breadth: { value: mh?.breadth?.composite ?? 0.5 }
+      };
+
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const liveMonster = runMonsterOTMEngine(
+        ohlc,
+        analysis.marketHealth as any,
+        analysis.liquiditySweep,
+        analysis.failedVwapReclaim,
+        analysis.trendExhaustion,
+        analysis.candleStrength,
+        analysis.bullishPower,
+        analysis.emaCloud,
+        analysis.tactical,
+        [],
+        nowMinutes,
+        panelSessionSplit,
+        spotPrice,
+        vixSnapshot.level,
+      );
+      
       // Try to get unified signal for play synthesis
       let unifiedOptionsPlay = null;
       try {
-        // Build minimal market health for fusion
-        const marketHealth: MarketHealthIndicators = {
-          healthScore: 50,
-          healthGrade: 'C',
-          rsi: { value: 50 },
-          macd: { value: 0 },
-          adx: { value: 20 },
-          vwapSlope: { value: 0 },
-          ivChange: { value: 0 },
-          orderflow: { value: 0 },
-          gamma: { value: 0 },
-          breadth: { value: 0 }
-        };
-        
         const fusionInput: FusionInput = {
           symbol: upperSymbol,
           ohlcByTF: { '15m': ohlc },
@@ -1625,11 +2468,11 @@ export async function registerRoutes(
           recentOhlc: ohlc
         });
 
-        // Synthesize the play
+        // Synthesize the play - use panelData's PCE if unified is weak
         unifiedOptionsPlay = synthesizeMonsterPlay({
           symbol: upperSymbol,
           timeframe: '15m',
-          unified,
+          unified: unified && unified.state === 'ACTIVE' ? unified : null,
           chain: panelData.chain,
           spot: spotPrice,
           expectedMove,
@@ -1642,7 +2485,21 @@ export async function registerRoutes(
       res.json({
         ...panelData,
         unifiedOptionsPlay,
-        expectedMove
+        liveMonster,
+        breakoutAlert: liveMonster.breakout?.alert ?? liveMonster.play?.breakoutAlert,
+        breakoutTriggered: Boolean(liveMonster.breakout?.triggered),
+        hitProbability: liveMonster.play?.hitProbability,
+        supportLevel: liveMonster.play?.supportLevel,
+        resistanceLevel: liveMonster.play?.resistanceLevel,
+        expectedMove,
+        spotPrice,
+        vixLevel: vixSnapshot.level,
+        vixRegime: vixSnapshot.regime,
+        vixSource: vixSnapshot.source,
+        analysis: {
+          marketHealth,
+          symbol: upperSymbol
+        }
       });
     } catch (error) {
       console.error("Monster Panel error:", error);
@@ -1675,10 +2532,12 @@ export async function registerRoutes(
         }
       }
 
+      const resolvedPrice = Number(lastPrice ?? 100);
+
       // Use cached chain if available and not expired, and price hasn't moved too much
       const cached = gammaGhostChainCache.get(upperSymbol);
       const now = Date.now();
-      const priceMoved = cached ? Math.abs(lastPrice - cached.basePrice) / cached.basePrice > 0.005 : true;
+      const priceMoved = cached ? Math.abs(resolvedPrice - cached.basePrice) / cached.basePrice > 0.005 : true;
       
       let chain: any[];
       let ctx: any;
@@ -1688,15 +2547,15 @@ export async function registerRoutes(
         ctx = cached.ctx;
       } else {
         // Generate new chain and cache it
-        chain = generateSampleChain(upperSymbol, lastPrice);
+        chain = generateSampleChain(upperSymbol, resolvedPrice);
         ctx = generateHistoricalContext();
-        gammaGhostChainCache.set(upperSymbol, { chain, ctx, timestamp: now, basePrice: lastPrice });
+        gammaGhostChainCache.set(upperSymbol, { chain, ctx, timestamp: now, basePrice: resolvedPrice });
       }
 
       const underlying = {
         symbol: upperSymbol,
-        spot: lastPrice,
-        prevSpot: lastPrice * (1 + (Math.random() - 0.5) * 0.002),
+        spot: resolvedPrice,
+        prevSpot: resolvedPrice * (1 + (Math.random() - 0.5) * 0.002),
         timestamp: new Date().toISOString()
       };
 
@@ -1714,6 +2573,7 @@ export async function registerRoutes(
   app.get("/api/fusion/:symbol", async (req, res) => {
     try {
       const upperSymbol = req.params.symbol.toUpperCase();
+      const vixSnapshot = await fetchVixSnapshot();
       
       let lastPrice: number | undefined;
       let spotQuoteMeta:
@@ -1728,7 +2588,16 @@ export async function registerRoutes(
       try {
         const spotData = await withTimeout(fetchLiveSpot(upperSymbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `fusion spot ${upperSymbol}`);
         lastPrice = spotData.spot;
-        spotQuoteMeta = buildScannerRouteSpotMeta(spotData);
+        const builtMeta = buildScannerRouteSpotMeta(spotData);
+        if (builtMeta?.source) {
+          spotQuoteMeta = {
+            timestamp: builtMeta.timestamp,
+            quoteAgeMs: builtMeta.quoteAgeMs,
+            source: builtMeta.source,
+            marketState: builtMeta.marketState ?? 'unknown',
+            isFresh: builtMeta.isFresh,
+          };
+        }
       } catch (e) {
         // Fall through to cache/candle fallback.
       }
@@ -1737,9 +2606,10 @@ export async function registerRoutes(
         lastPrice = await resolveFallbackSpotPrice(upperSymbol, '15m');
       }
 
-      // Fetch OHLC for all timeframes in parallel (excluding 1m for stability)
+      // Fetch OHLC for all timeframes in parallel (including 1m for live breakout detection)
       const tfConfigs: { tf: FusionTimeframe; count: number }[] = [
-        { tf: '5m', count: 72 },
+        { tf: '1m', count: 240 },
+        { tf: '5m', count: 144 },
         { tf: '15m', count: 96 },
         { tf: '30m', count: 96 },
         { tf: '1h', count: 100 },
@@ -1784,6 +2654,7 @@ export async function registerRoutes(
         overnight: [], 
         prevDayRth: [] 
       }, lastPrice);
+      const analysisAny = analysis as any;
 
       // Build market health indicators for Fusion Engine
       const mh = analysis.marketHealth;
@@ -1805,6 +2676,27 @@ export async function registerRoutes(
         gamma: { value: mh?.gamma?.maxAbsGammaStrike ?? 0 },
         breadth: { value: mh?.breadth?.composite ?? 0.5 },
         contributors: mh?.contributors?.map((c: any) => c.name) ?? []
+      };
+      const marketHealthAny = marketHealth as any;
+      marketHealthAny.atr = { percent: Number(mh?.atr?.percent ?? analysisAny?.compression?.atrPercent ?? 0) };
+      marketHealthAny.compression = {
+        bbWidth: Number(analysisAny?.compression?.bbWidth ?? 0),
+        rangePct: Number(analysisAny?.compression?.rangePct ?? 0),
+        volRatio: Number(analysisAny?.compression?.volRatio ?? 0),
+        phase: String(analysisAny?.compression?.phase ?? ''),
+      };
+      marketHealthAny.preBreakoutSetup = {
+        score: Number(analysisAny?.preBreakoutSetup?.score ?? analysisAny?.setupScore ?? 0),
+      };
+      marketHealthAny.timeframeStack = {
+        agreement: Number(analysisAny?.timeframeStack?.agreement ?? 0),
+        aggregateScore: Number(analysisAny?.timeframeStack?.aggregateScore ?? 0),
+        bias: String(analysisAny?.timeframeStack?.bias ?? ''),
+      };
+      marketHealthAny.edgeEngine = {
+        triggerProbability: Number(analysisAny?.edgeEngine?.triggerProbability ?? 0),
+        state: String(analysisAny?.edgeEngine?.state ?? ''),
+        signal: String(analysisAny?.edgeEngine?.signal ?? ''),
       };
 
       // Compute fusion snapshot
@@ -1850,6 +2742,226 @@ export async function registerRoutes(
         updateOutcomes(upperSymbol, finalLastPrice, { quoteMeta: spotQuoteMeta });
       }
 
+      const unifiedForSmart = (unifiedSignalWithPrice ?? {}) as any;
+      const smartSignal = buildSmartSignal(upperSymbol, {
+        direction: unifiedForSmart.unifiedDirection === 'CALL' || unifiedForSmart.unifiedDirection === 'PUT'
+          ? unifiedForSmart.unifiedDirection
+          : 'WAIT',
+        confidence: Number(unifiedForSmart.unifiedConfidence ?? unifiedForSmart.confidence ?? 0),
+        mtfAlignment: Number(unifiedForSmart.mtfAlignment ?? snapshot.mtfConsensus?.alignmentScore ?? 0),
+        forecastConfidence: Number(unifiedForSmart.forecastConfidence ?? snapshot.forecast?.confidence ?? 0),
+        riskScore: Number(unifiedForSmart.riskScore ?? snapshot.riskModel?.riskIndex ?? 0),
+        gatingScore: Number(unifiedForSmart.gatingScore ?? unifiedForSmart.gatingState?.gatingScore ?? 0),
+        directionalProbabilities: snapshot.directionalProbabilities ?? unifiedForSmart.directionalProbs ?? { up: 0, down: 0, chop: 1 },
+        monsterValue: Number(snapshot.monsterGateDecision?.value ?? 0),
+      });
+
+      const liqAny = snapshot.liquidityGeometry as any;
+      const obAny = snapshot.orderBlock as any;
+      const icAny = snapshot.institutionalCore as any;
+      const institutionalSummary = {
+        liquidityGeometry: {
+          active: Boolean(snapshot.liquidityGeometry),
+          confidence: Number((((liqAny?.confidence ?? liqAny?.reliability) ?? 0) * 100).toFixed(0)),
+          direction: liqAny?.direction ?? liqAny?.bias ?? 'neutral',
+          level: liqAny?.nearestAbove?.price ?? liqAny?.levels?.[0]?.price ?? finalLastPrice
+        },
+        orderBlock: {
+          active: Boolean(snapshot.orderBlock),
+          score: Number(((obAny?.score ?? 0) * 100).toFixed(0)),
+          direction: String(obAny?.direction ?? 'neutral'),
+          fresh: Number(obAny?.fresh ?? 0),
+          used: Number(obAny?.used ?? 0),
+          vpoc: Number(obAny?.volumeProfile?.vpoc ?? finalLastPrice),
+          valueAreaLow: Number(obAny?.volumeProfile?.valueAreaLow ?? finalLastPrice),
+          valueAreaHigh: Number(obAny?.volumeProfile?.valueAreaHigh ?? finalLastPrice),
+        },
+        marketDNA: {
+          active: Boolean(snapshot.marketDNA),
+          reliability: Number(((snapshot.marketDNA?.reliability ?? 0) * 100).toFixed(0)),
+          fingerprint: snapshot.marketDNA?.fingerprint ?? {},
+          sweepFreq: Number(((snapshot.marketDNA?.fingerprint?.sweepFreq ?? 0) * 100).toFixed(0)),
+          obReliability: Number(((snapshot.marketDNA?.fingerprint?.obReliability ?? 0) * 100).toFixed(0)),
+          institutionalScore: Number(((snapshot.marketDNA?.fingerprint?.institutionalScore ?? 0) * 100).toFixed(0))
+        },
+        intent: {
+          active: Boolean(snapshot.intent),
+          confidence: Number(((snapshot.intent?.confidence ?? 0) * 100).toFixed(0)),
+          direction: snapshot.intent?.intent ?? 'unknown'
+        },
+        institutionalCore: {
+          active: Boolean(snapshot.institutionalCore),
+          direction: String(icAny?.direction ?? 'neutral'),
+          score: Number(icAny?.score ?? 0),
+          reasons: Array.isArray(icAny?.reasons) ? icAny.reasons.slice(0, 3) : [],
+        },
+        otmRecommendation: snapshot.monsterOtm ? {
+          hasPlay: snapshot.monsterOtm.hasPlay,
+          play: snapshot.monsterOtm.play ? {
+            side: snapshot.monsterOtm.play.side,
+            strike: Number(snapshot.monsterOtm.play.strike.toFixed(2)),
+            premium: Number(snapshot.monsterOtm.play.premium.toFixed(4)),
+            delta: Number(snapshot.monsterOtm.play.delta.toFixed(3)),
+            roomPoints: Number(snapshot.monsterOtm.play.roomPoints.toFixed(2)),
+            quality: snapshot.monsterOtm.play.quality,
+            monster: snapshot.monsterOtm.play.monster,
+            reason: snapshot.monsterOtm.play.reason,
+            probability: snapshot.monsterOtm.play.probability,
+            intentScore: snapshot.monsterOtm.play.intentScore,
+            targetPrice: snapshot.monsterOtm.play.targetPrice,
+            stopPrice: snapshot.monsterOtm.play.stopPrice,
+          } : null,
+          pce: snapshot.monsterOtm.pce ? {
+            quality: snapshot.monsterOtm.pce.quality,
+            direction: snapshot.monsterOtm.pce.direction,
+            pceProb: Number(((snapshot.monsterOtm.pce.pceProb ?? 0) * 100).toFixed(0)),
+            monster: snapshot.monsterOtm.pce.monster
+          } : null,
+          meta: snapshot.monsterOtm.meta
+        } : null,
+      };
+
+      const breakoutLifecycle = snapshot.breakoutLifecycle ?? {
+        zoneLow: finalLastPrice * 0.998,
+        zoneHigh: finalLastPrice * 1.002
+      };
+       const mtfConsensus = snapshot.mtfConsensus ?? {};
+       const forecast = snapshot.forecast ?? {};
+       const volatilityRegime = snapshot.volatilityRegime ?? {};
+       const breakoutZones = snapshot.breakoutZones ?? {
+             lower: finalLastPrice * 0.996,   // -0.1%
+            upper: finalLastPrice * 1.004    // +0.1%
+            };
+
+       const riskModel = snapshot.riskModel ?? {};
+      const expectedMove = snapshot.expectedMove ?? {
+  dollars: finalLastPrice * 0.003,   // 0.3% intraday EM
+  pct: 0.003
+  };
+
+       
+
+
+
+      const tradingMetrics = {
+        // 0DTE specific metrics
+        odteMetrics: {
+          timeDecay: {
+            theta: 0.08, // Approximate theta per hour for 0DTE
+            hoursRemaining: 24 - (new Date().getHours()),
+            estimatedDecay: (0.08 * (24 - (new Date().getHours()))) * 100,
+            impactLevel: (24 - (new Date().getHours())) > 12 ? 'moderate' : 'high'
+          },
+          volatilitySkew: {
+            ivRank: (analysisAny?.marketHealth?.ivChange?.value ?? 50),
+            vixLevel: (vixSnapshot.level ?? analysisAny?.vixLevel ?? 0),
+            skewDirection: (snapshot.forecast?.direction === 'up') ? 'bullish' : 'bearish',
+            expandingVolatility: (analysisAny?.marketHealth?.adx?.value ?? 25) > 30
+          },
+          greeksImpact: {
+            deltaSensitivity: snapshot.monsterOtm?.play?.delta ?? 0.5,
+            vegaExposure: Math.abs((analysisAny?.marketHealth?.ivChange?.value ?? 50) - 50) / 50,
+            thetaFavorable: snapshot.monsterOtm?.play?.side === 'call' ? 'directional' : 'time_decay'
+          }
+        },
+        // Swing trade metrics
+        swingTradeMetrics: {
+          trendStrength: {
+            score: (mtfConsensus.alignmentScore ?? 0) * 100,
+            direction: mtfConsensus.trendConsensus,
+            confidence: Number(((forecast.confidence ?? 0) * 100).toFixed(0)),
+            macroTrend: mtfConsensus.trendConsensus === 'bullish' ? 'LONG' : mtfConsensus.trendConsensus === 'bearish' ? 'SHORT' : 'NEUTRAL',
+            multiTimeframeAlign: `${mtfConsensus.bullishStack}/${mtfConsensus.neutralStack}/${mtfConsensus.bearishStack}`
+          },
+          pullbackQuality: {
+            isValidPullback: (snapshot.gatingState?.directionalBias !== 'neutral'),
+            pullbackDepth: Math.abs((analysisAny?.marketHealth?.rsi?.value ?? 50) - 50) / 50,
+            bounceStrength: volatilityRegime.score ?? 0.5,
+            supportLevel: breakoutZones.lower ?? finalLastPrice * 0.98,
+            resistanceLevel: breakoutZones.upper ?? finalLastPrice * 1.02
+          },
+          confirmationFactors: {
+            volumeConfirm: (analysisAny?.bullishPower?.score ?? 0) > 50 ? 'YES' : 'WEAK',
+            macdConfirm: Math.abs(analysisAny?.marketHealth?.macd?.value ?? 0) > 0.25 ? 'CONFIRMED' : 'DIVERGING',
+            priceActionConfirm: Boolean(analysisAny?.liquiditySweep?.detected),
+            emaCloudAlign: snapshot.emaTrend?.direction === mtfConsensus.trendConsensus ? 'ALIGNED' : 'CONFLICT'
+          }
+        },
+
+        // Risk/Reward Analysis
+        riskReward: {
+          entryZone: {
+            low: Number((breakoutLifecycle?.zoneLow ?? finalLastPrice * 0.995).toFixed(2)),
+            high: Number((breakoutLifecycle?.zoneHigh ?? finalLastPrice * 1.005).toFixed(2)),
+            width: Number((((breakoutLifecycle?.zoneHigh ?? finalLastPrice) - (breakoutLifecycle?.zoneLow ?? finalLastPrice)) / finalLastPrice * 100).toFixed(2))
+          },
+          stopLoss: {
+            level: Number(((breakoutZones.lower ?? finalLastPrice * 0.97)).toFixed(2)),
+            distancePct: Number((Math.abs(finalLastPrice - (breakoutZones.lower ?? finalLastPrice * 0.97)) / finalLastPrice * 100).toFixed(2)),
+            atrMultiple: (Number(((breakoutZones.lower ?? finalLastPrice * 0.97) - finalLastPrice) / (expectedMove.dollars ?? (finalLastPrice * 0.01))).toFixed(2))
+          },
+          targets: [
+            {
+              level: Number((finalLastPrice + (expectedMove.dollars ?? finalLastPrice * 0.02) * 1).toFixed(2)),
+              pct: Number(((expectedMove.pct ?? 0.02) * 100).toFixed(2)),
+              riskRewardRatio: Number((((expectedMove.dollars ?? finalLastPrice * 0.02) * 1) / Math.abs(finalLastPrice - (breakoutZones.lower ?? finalLastPrice * 0.97))).toFixed(2))
+            },
+            {
+              level: Number((finalLastPrice + (expectedMove.dollars ?? finalLastPrice * 0.02) * 2).toFixed(2)),
+              pct: Number(((expectedMove.pct ?? 0.02) * 200).toFixed(2)),
+              riskRewardRatio: Number((((expectedMove.dollars ?? finalLastPrice * 0.02) * 2) / Math.abs(finalLastPrice - (breakoutZones.lower ?? finalLastPrice * 0.97))).toFixed(2))
+            }
+          ]
+        },
+
+        // Confluence and Signal Quality
+        signalQuality: {
+          confluenceScore: Number((
+            (mtfConsensus.alignmentScore ?? 0) * 0.25 +
+            (forecast.confidence ?? 0) * 0.25 +
+            ((riskModel?.failureProb ?? 0.5) * (1 - 0.5)) * 0.25 +
+            ((institutionalSummary.marketDNA.sweepFreq ?? 0) / 100) * 0.25
+          ).toFixed(3)) * 100,
+          activeEngines: [
+            institutionalSummary.marketDNA.active ? '📊 Market DNA' : null,
+            institutionalSummary.intent.active ? '🎯 Intent' : null,
+            institutionalSummary.otmRecommendation?.hasPlay ? '⚡ OTM Signal' : null,
+            snapshot.sparkSignal?.isIgniting ? '✨ Spark' : null,
+            snapshot.gatedReversalAlert?.alert ? '🔄 Reversal' : null
+          ].filter(Boolean),
+          warningFlags: [
+            (mtfConsensus.conflictLevel ?? 0) > 0.3 ? '⚠️ MTF Conflict' : null,
+            (riskModel?.riskIndex ?? 0) > 0.7 ? '⚠️ High Risk' : null,
+            (volatilityRegime.score ?? 0) > 0.8 ? '⚠️ Extreme Volatility' : null
+          ].filter(Boolean),
+          tradability: (mtfConsensus.alignmentScore ?? 0) > 0.7 && (forecast.confidence ?? 0) > 0.6 ? 'HIGH' : (mtfConsensus.alignmentScore ?? 0) > 0.5 ? 'MEDIUM' : 'LOW'
+        },
+
+        // Position Management
+        positionManagement: {
+          sizeGuideline: 'Auto-adjust based on risk tolerance and account size',
+          scalingStrategy: (mtfConsensus.alignmentScore ?? 0) > 0.7 ? 'SCALE_IN' : 'SINGLE_ENTRY',
+          profitTakingLevels: [
+            { pct: 25, reason: 'Secure 1/4 profit' },
+            { pct: 50, reason: 'Break even + move stop' },
+            { pct: 100, reason: 'Let winners run' }
+          ],
+          trailingStop: {
+            activated: (mtfConsensus.alignmentScore ?? 0) > 0.7,
+            threshold: Number(((expectedMove.dollars ?? finalLastPrice * 0.02) * 0.5).toFixed(2)),
+            trail: Number(((expectedMove.dollars ?? finalLastPrice * 0.02) * 0.3).toFixed(2))
+          }
+        },
+
+        // Session and Timing
+        sessionTiming: {
+          currentHour: new Date().getHours(),
+          sessionPhase: new Date().getHours() < 10 ? 'PREMARKET' : new Date().getHours() < 16 ? 'RTH' : 'AFTERHOURS',
+          volumeRating: (analysisAny?.marketHealth?.breadth?.composite ?? 0.5) > 0.6 ? 'HIGH' : 'NORMAL',
+          volatilityTiming: ((volatilityRegime.score ?? 0) > 0.7 && new Date().getHours() >= 9.5 && new Date().getHours() <= 11.5) ? 'PRIME_0DTE' : 'MONITOR'
+        }
+      };
+
       // Use the unifiedSignal directly from fusion.ts (single source of truth)
       // It already contains unifiedDirection, unifiedConfidence, unifiedPlay
       // computed by computeUnifiedSignal with weighted fusion
@@ -1858,11 +2970,22 @@ export async function registerRoutes(
         currentPrice: finalLastPrice,
         lastPrice: finalLastPrice,
         unifiedSignal: unifiedSignalWithPrice,
+        smartSignal,
+        institutionalSummary,
+        tradingMetrics,
         // unifiedSignal is already part of snapshot from computeFusionSnapshot
       });
-    } catch (error) {
-      console.error("Fusion Engine error:", error);
-      res.status(500).json({ error: "Fusion analysis failed" });
+    } catch (error: any) {
+      console.error("Fusion Engine error:", error?.stack ?? error);
+      const errorPayload: Record<string, unknown> = {
+        error: "Fusion analysis failed",
+        code: error instanceof Error ? error.name : 'FusionError',
+      };
+      if (process.env.NODE_ENV !== 'production') {
+        errorPayload.details = String(error?.message ?? error);
+        errorPayload.stack = error?.stack;
+      }
+      res.status(500).json(errorPayload);
     }
   });
 

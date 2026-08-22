@@ -334,7 +334,11 @@ function modelPremiumExpansion(
   netGain = Math.max(-maxLoss, Math.min(maxGain, netGain));
 
   const rawTargetPremium = premium + netGain;
-  const targetPremium = Math.min(premium * 2.35, Math.max(premium * 1.05, rawTargetPremium));
+  const sessionCap =
+    daysToExpiry <= 1
+      ? premium * (volatilityRegime > 0.7 ? 1.55 : 1.7)
+      : premium * 2.35;
+  const targetPremium = Math.min(sessionCap, Math.max(premium * 1.04, rawTargetPremium));
   const expansionPercent = ((targetPremium - premium) / premium) * 100;
   
   // Stop loss at 40% of premium
@@ -561,6 +565,12 @@ export interface MonsterOTMPanelData {
   direction: 'bullish' | 'bearish' | 'neutral';
   setupQuality: 'A' | 'B' | 'C' | 'none';
   summary: string;
+  probability: number;
+  intentScore: number;
+  vixLevel?: number;
+  vixRegime: 'calm' | 'balanced' | 'elevated' | 'chaotic' | 'unknown';
+  targetPremium?: number;
+  stopPremium?: number;
   isSynthetic: boolean;
   disclaimer: string;
 }
@@ -568,7 +578,8 @@ export interface MonsterOTMPanelData {
 export function getMonsterOTMPanelData(
   ohlc: OHLC[],
   symbol: string,
-  spotPrice?: number
+  spotPrice?: number,
+  vixLevel?: number,
 ): MonsterOTMPanelData {
   const chain = generateSyntheticChain(ohlc, symbol, spotPrice);
   
@@ -576,14 +587,49 @@ export function getMonsterOTMPanelData(
   const topPlay = chain.topPlays[0] ?? null;
   const direction = chain.pce.direction === 'none' ? 'neutral' : chain.pce.direction;
   const setupQuality = chain.pce.quality;
+  const activePlay = chain.monsterPlay ?? topPlay;
+  const vixRegime: 'calm' | 'balanced' | 'elevated' | 'chaotic' | 'unknown' =
+    !Number.isFinite(vixLevel as number) || (vixLevel as number) <= 0
+      ? 'unknown'
+      : (vixLevel as number) < 15
+      ? 'calm'
+      : (vixLevel as number) < 22
+      ? 'balanced'
+      : (vixLevel as number) < 30
+      ? 'elevated'
+      : 'chaotic';
+  const vixAdj =
+    vixRegime === 'chaotic'
+      ? -12
+      : vixRegime === 'elevated'
+      ? -6
+      : vixRegime === 'calm'
+      ? 3
+      : 0;
+  const probability = Math.max(5, Math.min(96,
+    Math.round((
+      chain.pce.pceProb * 55 +
+      chain.meta.confidence * 20 +
+      chain.meta.dominantProb * 20 -
+      chain.meta.chop * 15
+    ) + vixAdj)
+  ));
+  const intentScore = Math.max(0, Math.min(100,
+    Math.round((
+      chain.meta.dominantProb * 42 +
+      chain.meta.confidence * 24 +
+      chain.pce.pceProb * 24 -
+      chain.meta.chop * 20
+    ) * 100)
+  ));
   
   // Generate summary
   let summary = '';
   if (hasMonsterPlay && chain.monsterPlay) {
     const mp = chain.monsterPlay;
-    summary = `MONSTER ${mp.side.toUpperCase()} $${mp.strike} (${mp.expiration.label}) - Score ${mp.score.total}/100 - Model confidence ${Math.round(mp.expansion.confidence)}%`;
+    summary = `MONSTER ${mp.side.toUpperCase()} $${mp.strike} (${mp.expiration.label}) - Probability ${probability}% - VIX ${Number.isFinite(vixLevel as number) ? (vixLevel as number).toFixed(2) : 'N/A'} - TGT ${mp.expansion.targetPremium.toFixed(2)}`;
   } else if (topPlay) {
-    summary = `Top play: ${topPlay.side.toUpperCase()} $${topPlay.strike} (${topPlay.expiration.label}) - Score ${topPlay.score.total}/100 - Delta ${Math.round(topPlay.greeks.delta * 100)}`;
+    summary = `Top play: ${topPlay.side.toUpperCase()} $${topPlay.strike} (${topPlay.expiration.label}) - Probability ${probability}% - VIX ${Number.isFinite(vixLevel as number) ? (vixLevel as number).toFixed(2) : 'N/A'} - Delta ${Math.round(topPlay.greeks.delta * 100)}`;
   } else {
     summary = 'No high-conviction plays detected. Wait for PCE setup.';
   }
@@ -595,6 +641,12 @@ export function getMonsterOTMPanelData(
     direction,
     setupQuality,
     summary,
+    probability,
+    intentScore,
+    vixLevel: Number.isFinite(vixLevel as number) ? Number(vixLevel) : undefined,
+    vixRegime,
+    targetPremium: activePlay?.expansion.targetPremium,
+    stopPremium: activePlay?.expansion.stopPremium,
     isSynthetic: true,
     disclaimer: 'Synthetic options chain for educational purposes. Premiums and Greeks are approximated. Verify with live data before trading.'
   };

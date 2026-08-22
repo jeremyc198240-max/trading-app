@@ -22,6 +22,59 @@ export function softmax(scores: number[]): number[] {
   return exps.map((value) => value / sum);
 }
 
+export function directionalBiasToScalar(value: unknown): number {
+  const raw = String(value ?? '').toLowerCase();
+  if (raw === 'bullish') return 1;
+  if (raw === 'bearish') return 0;
+  if (raw === 'neutral') return 0.5;
+  return 0.5;
+}
+
+export function phaseToVector(value: unknown): [number, number, number] {
+  const phase = String(value ?? '').toUpperCase();
+  const phaseNow = phase === 'NOW' || phase === 'TRIGGERED' || phase === 'PRIMED';
+  const phaseReady = phase === 'READY' || phase === 'ARMING';
+  const phasePrepare =
+    phase === 'PREPARE' ||
+    phase === 'PENDING' ||
+    phase === 'STANDBY' ||
+    phase === 'WAIT';
+  return [phaseNow ? 1 : 0, phaseReady ? 1 : 0, phasePrepare ? 1 : 0];
+}
+
+export function modeToScalar(value: unknown): number {
+  const modeRaw = String(value ?? '').toUpperCase();
+  if (modeRaw === 'EXECUTE' || modeRaw === 'TRIGGERED' || modeRaw === 'PRIMED') return 1;
+  if (modeRaw === 'PREPARE' || modeRaw === 'ARMING' || modeRaw === 'PENDING') return 0.6;
+  if (modeRaw === 'WAIT' || modeRaw === 'STANDBY' || modeRaw === 'DISARMED') return 0.2;
+  return 0;
+}
+
+export function edgeStateToScalar(value: unknown): number {
+  const stateRaw = String(value ?? '').toUpperCase();
+  if (stateRaw === 'TRIGGERED' || stateRaw === 'PRIMED') return 1;
+  if (stateRaw === 'ARMING' || stateRaw === 'PENDING') return 0.6;
+  if (stateRaw === 'STANDBY' || stateRaw === 'DISARMED' || stateRaw === 'WAIT') return 0.2;
+  return 0.5;
+}
+
+export function edgeSignalToScalar(value: unknown): number {
+  const signalRaw = String(value ?? '').toUpperCase();
+  if (
+    signalRaw === 'BREAK_UP' ||
+    signalRaw === 'BREAK_DOWN' ||
+    signalRaw === 'BREAKOUT' ||
+    signalRaw === 'BREAKDOWN' ||
+    signalRaw === 'EXPANSION' ||
+    signalRaw === 'MOMENTUM'
+  ) {
+    return 1;
+  }
+  if (signalRaw === 'WAIT') return 0.2;
+  if (signalRaw === 'BUILDING' || signalRaw === 'SQUEEZE' || signalRaw === 'CONSOLIDATING') return 0.6;
+  return 0.5;
+}
+
 export function computePatternAgreementScore(input: MLRawInput): number {
   const roundedBottom = input.roundedBottom ? 1 : 0;
   const doubleBottom = input.doubleBottom ? 1 : 0;
@@ -48,13 +101,10 @@ export function computeBaseFeatures(input: MLRawInput): number[] {
   const rangeTight = clamp(1 - clamp(safeNum(input.rangePct) / 1.2));
   const atrTight = clamp(1 - clamp(safeNum(input.atrPercent) / 1.5));
 
-  const phase = String(input.phase ?? '').toUpperCase();
-  const phaseNow = phase === 'NOW' ? 1 : 0;
-  const phaseReady = phase === 'READY' ? 1 : 0;
-  const phasePrepare = phase === 'PREPARE' ? 1 : 0;
+  const [phaseNow, phaseReady, phasePrepare] = phaseToVector(input.phase);
 
-  const modeRaw = String(input.mode ?? '').toUpperCase();
-  const modeScalar = modeRaw === 'EXECUTE' ? 1 : modeRaw === 'PREPARE' ? 0.6 : 0;
+  const modeScalar = modeToScalar(input.mode);
+  const directionalBiasScalar = directionalBiasToScalar(input.directionalBias);
 
   const deltaNorm = clamp(Math.abs(safeNum(input.otmDelta)) / 0.45);
 
@@ -79,6 +129,7 @@ export function computeBaseFeatures(input: MLRawInput): number[] {
     phaseReady,
     phasePrepare,
     modeScalar,
+    directionalBiasScalar,
     deltaNorm,
     qualityFusion,
     structureFusion,
@@ -95,6 +146,9 @@ export function computeExtendedFeatures(input: MLRawInput): number[] {
   const priceAcceleration = safeNum(input.priceAcceleration);
   const bollingerBandwidthExpansion = clamp(safeNum(input.bbWidth) * 2);
   const triggerLevel = clamp(safeNum(input.triggerProbability) / 100);
+  const leadTimeBias = 1 - clamp(safeNum(input.leadMinutes) / 30, 0, 1);
+  const edgeStateScore = edgeStateToScalar(input.edgeState);
+  const edgeSignalScore = edgeSignalToScalar(input.edgeSignal);
 
   let breakoutBodyPct = 0.5;
   if (
@@ -127,6 +181,9 @@ export function computeExtendedFeatures(input: MLRawInput): number[] {
     liquiditySweepFlag,
     impulseVectorSlope,
     microTrendAcceleration,
+    leadTimeBias,
+    edgeStateScore,
+    edgeSignalScore,
     patternScore,
   ];
 }

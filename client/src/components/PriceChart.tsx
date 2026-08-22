@@ -359,6 +359,21 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const displayOpen = displayCandle?.open ?? displayClose;
   const closeIsBull = displayClose >= displayOpen;
   const currentVwap = visibleVwap.length > 0 ? visibleVwap[visibleVwap.length - 1] : null;
+  const chartBiasLabel = closeIsBull ? "Bullish bias" : "Bearish bias";
+  const chartModeLabel = selectedPattern
+    ? selectedPattern.type === 'bullish'
+      ? 'Reversal up setup'
+      : selectedPattern.type === 'bearish'
+        ? 'Reversal down setup'
+        : 'Structure watch'
+    : 'Live tape';
+  const chartModeColor = selectedPattern
+    ? selectedPattern.type === 'bullish'
+      ? '#22d3ee'
+      : selectedPattern.type === 'bearish'
+        ? '#fb7185'
+        : '#a78bfa'
+    : '#67e8f9';
 
   const gridLines = useMemo(() => {
     const range = priceRange.max - priceRange.min;
@@ -410,6 +425,13 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
       <CardHeader className="py-3 px-4 border-b border-cyan-300/30 bg-gradient-to-r from-cyan-500/10 via-blue-500/5 to-indigo-500/10">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-1 shadow-[0_0_18px_rgba(34,211,238,0.18)]">
+              <div className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75 animate-ping" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-300" />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200">Live</span>
+            </div>
             <CardTitle className="text-sm font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
               {symbol}
@@ -438,19 +460,32 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" onClick={handleScrollLeft} data-testid="button-scroll-left" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <Button size="icon" variant="ghost" onClick={handleZoomIn} data-testid="button-zoom-in" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
-              <ZoomIn className="w-4 h-4" />
-            </Button>
-            <Button size="icon" variant="ghost" onClick={handleZoomOut} data-testid="button-zoom-out" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
-              <ZoomOut className="w-4 h-4" />
-            </Button>
-            <Button size="icon" variant="ghost" onClick={handleScrollRight} data-testid="button-scroll-right" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
-              <ChevronRight className="w-4 h-4" />
-            </Button>
+          <div className="flex items-center gap-2">
+            <div
+              className="rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em]"
+              style={{
+                borderColor: `${chartModeColor}66`,
+                background: `linear-gradient(135deg, ${chartModeColor}18, rgba(9,14,30,0.7))`,
+                color: chartModeColor,
+                boxShadow: `0 0 14px ${chartModeColor}1f`,
+              }}
+            >
+              {chartModeLabel}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button size="icon" variant="ghost" onClick={handleScrollLeft} data-testid="button-scroll-left" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button size="icon" variant="ghost" onClick={handleZoomIn} data-testid="button-zoom-in" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
+                <ZoomIn className="w-4 h-4" />
+              </Button>
+              <Button size="icon" variant="ghost" onClick={handleZoomOut} data-testid="button-zoom-out" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
+                <ZoomOut className="w-4 h-4" />
+              </Button>
+              <Button size="icon" variant="ghost" onClick={handleScrollRight} data-testid="button-scroll-right" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -488,10 +523,20 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
       <CardContent className="p-2 bg-transparent">
         <div
           ref={containerRef}
-          className="w-full rounded-2xl border border-cyan-200/25 shadow-none backdrop-blur-[3px]"
+          className="relative w-full rounded-2xl border border-cyan-200/25 shadow-[0_0_30px_rgba(34,211,238,0.12)] backdrop-blur-[3px] overflow-hidden"
           style={{ height: "480px", background: 'linear-gradient(125deg, rgba(2,12,30,0.97) 0%, rgba(3,20,48,0.95) 48%, rgba(4,10,24,0.97) 100%)' }}
           onWheel={handleWheel}
         >
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-between px-4 py-2 text-[9px] uppercase tracking-[0.28em] text-cyan-200/70">
+            <span>{chartBiasLabel}</span>
+            <span>{selectedPattern ? `${selectedPattern.confidence}% pattern confidence` : 'Market pulse live'}</span>
+          </div>
+          <div
+            className="pointer-events-none absolute inset-0 opacity-80"
+            style={{
+              background: `radial-gradient(circle at 20% 15%, ${chartModeColor}0a 0%, transparent 35%), radial-gradient(circle at 80% 10%, ${chartModeColor}18 0%, transparent 25%)`,
+            }}
+          />
           <svg
             width={dimensions.width}
             height={dimensions.height}
@@ -614,8 +659,18 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
                     strokeWidth={candleBodyWidth > 3 ? 1.05 : 0.7}
                     rx={candleBodyWidth > 5 ? 2 : 1}
                     opacity={dimmed ? 0.2 : (hoveredIndex === i ? 0.97 : 0.93)}
-                    style={{ filter: `drop-shadow(0 0 3px ${bodyColor})` }}
+                    style={{ filter: `drop-shadow(0 0 8px ${bodyColor})` }}
                   />
+                  {i === normalizedOhlc.length - 1 && (
+                    <circle
+                      cx={cx}
+                      cy={Math.min(yO, yC)}
+                      r={Math.max(3, candleBodyWidth * 1.05)}
+                      fill={bodyColor}
+                      opacity={0.18}
+                      style={{ filter: `drop-shadow(0 0 12px ${bodyColor})` }}
+                    />
+                  )}
                 </g>
               );
             })}

@@ -4,6 +4,7 @@ import path from "path";
 export type SystemAuditEventType =
   | 'scanner.scan'
   | 'fusion.snapshot'
+  | 'engine.snapshot'
   | 'signal.recorded'
   | 'signal.resolved'
   | 'thresholds.live';

@@ -25,6 +25,9 @@ interface SynthesizePlayParams {
 const LOW_DELTA_MIN = 0.1;
 const LOW_DELTA_MAX = 0.32;
 const DELTA_TARGET = 0.22;
+const MIN_SYNTH_SCORE = 58;
+const MIN_SYNTH_CONFIDENCE = 62;
+const MIN_SYNTH_RR = 1.35;
 
 function fusedScore(
   contract: SyntheticContract,
@@ -77,17 +80,20 @@ export function synthesizeMonsterPlay(params: SynthesizePlayParams): UnifiedOpti
       (direction === 'CALLS' && c.strike >= spot) ||
       (direction === 'PUTS' && c.strike <= spot);
 
-    const confidenceOk = c.expansion.confidence >= 55;
-    const scoreOk = c.score.total >= 50;
+    const confidenceOk = c.expansion.confidence >= MIN_SYNTH_CONFIDENCE;
+    const scoreOk = c.score.total >= MIN_SYNTH_SCORE;
 
     if (isSynthetic) {
       const premiumOk = c.premium >= 0.08 && c.premium <= spot * 0.12;
       if (!premiumOk) return false;
     }
 
-    const rrOk = c.expansion.rrRatio >= 1.2;
+    const rrOk = c.expansion.rrRatio >= MIN_SYNTH_RR;
 
-    return deltaOk && withinExpectedMove && directionalOTM && rrOk && confidenceOk && scoreOk;
+    const compressionAligned = pce.compressionScore >= 3 || pce.ignition;
+    const expansionAligned = pce.expansionScore >= 2 || pce.ignition;
+
+    return deltaOk && withinExpectedMove && directionalOTM && rrOk && confidenceOk && scoreOk && compressionAligned && expansionAligned;
   });
 
   if (viable.length === 0) return null;

@@ -1,0 +1,943 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "backtest-historical-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts SPY 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-historical-spy-cli",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts SPY 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-monster-live",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-engine-accuracy-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/engineAccuracyBacktest.ts SPY"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-historical-qqq-cli",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts QQQ 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-engine-accuracy-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/engineAccuracyBacktest.ts QQQ"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-monster-live",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-engine-accuracy-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/engineAccuracyBacktest.ts QQQ"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-types-prod-readiness",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-types-prod-readiness",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "build-prod-readiness",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-types-after-adaptive-gate",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-build",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-historical-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts SPY 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-historical-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts QQQ 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-monster",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-engine-acc-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/engineAccuracyBacktest.ts QQQ"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-monster-tuning-sweep",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-build-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-after-fixes",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-monster-sweep-after-fixes",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-monster-expanded",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "backtest-monster-expanded-sweep",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-strict-live",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-strict-live-2",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-warroom-upgrade",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-build-warroom-upgrade",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "bt-monster-sweep-now",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run backtest:monster"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "bt-historical-spy-now",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts SPY 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "bt-historical-qqq-now",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/historicalBacktestCli.ts QQQ 5m"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "bt-engine-acc-qqq-now",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/engineAccuracyBacktest.ts QQQ"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-summary",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js summary"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-triggers",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js triggers"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-summary-tsx",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx analyze-intake-logs.js summary"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-triggers-tsx",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx analyze-intake-logs.js triggers"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-symbols-tsx",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx analyze-intake-logs.js symbols"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-log-tuned",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-summary-fixed",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js summary"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-triggers-fixed",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js triggers"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-summary-js-ok",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js summary"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-triggers-js-ok",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js triggers"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "logs-symbols-js-ok",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node analyze-intake-logs.js symbols"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-check-log-driven",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "verify-build-log-driven",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-route-replay",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-route-replay",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-route-replay-2",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-route-replay-2",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-route-replay-3",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-route-replay-fusion",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-route-replay-fusion-diag",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-relax",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-relax",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-relax-2",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-relax-2",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-fallback-gate",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-fallback-gate",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-fallback-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-fallback-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-gate-diagnostics",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-with-gate-diagnostics",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-momentum-realign",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-momentum-realign",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-fallback-tighten",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-fallback-tighten",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-after-neutral-tighten",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-after-neutral-tighten",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-final-gate-pass",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-final-gate-pass",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-0dte-strict",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-spy-0dte-strict",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-strict-momentum-confluence",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-spy-strict-momentum-confluence",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-session-filter",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-spy-session-filter",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-momentum-refine",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-spy-momentum-refine",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-adx22",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-spy-adx22",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-dual-policy-risk-tier",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "replay-dual-policy-risk-tier",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"set REPLAY_FORCE_LANE=fusion&& npx tsx server/routeGateReplayBacktest.ts SPY,QQQ,IWM"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "capture-spy-walk-forward-snapshot",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/spyWalkForwardBacktest.ts --capture"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-spy-walk-forward-snapshot",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/spyWalkForwardBacktest.ts"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "diagnose-spy-walk-forward-gates",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx server/spyWalkForwardBacktest.ts"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "check-spy-walk-forward-replay",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "check-spy-replay-and-warroom",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run check"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "check-spot-price-display",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "recheck-spot-price-display",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "check-failed-breakout-put-alert",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "check-evidence-playbook-chop",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		}
+	]
+}

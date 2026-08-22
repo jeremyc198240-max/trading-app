@@ -1101,39 +1101,46 @@ export function analyzeSymbol(
 }
 
 export function generateSampleOHLC(symbol: string, count: number = 100, liveSpotPrice?: number): OHLC[] {
-  // Use live spot price if provided, otherwise fall back to estimated prices
+  // Use live spot price if provided, otherwise fall back to a realistic current-market range.
+  // This prevents stale 600-level SPY charts from visually compressing the pattern frame.
   const fallbackPrices: Record<string, number> = {
-    SPY: 690,
-    QQQ: 620,
-    AAPL: 255,
-    TSLA: 435,
-    NVDA: 185,
-    MSFT: 460,
-    AMZN: 240,
-    META: 620,
+    SPY: 770,
+    QQQ: 700,
+    AAPL: 220,
+    TSLA: 420,
+    NVDA: 175,
+    MSFT: 455,
+    AMZN: 238,
+    META: 605,
     GOOGL: 330,
-    AMD: 130,
+    AMD: 145,
   };
 
-  const basePrice = liveSpotPrice ?? fallbackPrices[symbol.toUpperCase()] ?? 100 + Math.random() * 400;
+  const upperSymbol = symbol.toUpperCase();
+  const basePrice = Number.isFinite(liveSpotPrice) && Number(liveSpotPrice) > 0
+    ? Number(liveSpotPrice)
+    : fallbackPrices[upperSymbol] ?? 100 + Math.random() * 400;
+
   const ohlc: OHLC[] = [];
   let currentPrice = basePrice;
   const now = Math.floor(Date.now() / 1000);
 
   for (let i = 0; i < count; i++) {
-    const volatility = 0.002 + Math.random() * 0.003;
-    
+    const volatility = upperSymbol === 'SPY' || upperSymbol === 'QQQ'
+      ? 0.0015 + Math.random() * 0.0025
+      : 0.002 + Math.random() * 0.0035;
+
     const meanReversion = (basePrice - currentPrice) * 0.02;
     const randomMove = (Math.random() - 0.5) * volatility * currentPrice;
-    
+
     const open = currentPrice;
     currentPrice = open + meanReversion + randomMove;
-    
-    currentPrice = Math.max(basePrice * 0.95, Math.min(basePrice * 1.05, currentPrice));
-    
+
+    currentPrice = Math.max(basePrice * 0.92, Math.min(basePrice * 1.08, currentPrice));
+
     const range = currentPrice * volatility;
-    const high = Math.max(open, currentPrice) + Math.random() * range * 0.5;
-    const low = Math.min(open, currentPrice) - Math.random() * range * 0.5;
+    const high = Math.max(open, currentPrice) + Math.random() * range * 0.45;
+    const low = Math.min(open, currentPrice) - Math.random() * range * 0.45;
     const close = currentPrice;
     
     const baseVolume = 1000000 + Math.random() * 5000000;

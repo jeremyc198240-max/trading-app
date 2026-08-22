@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import ChronosBadge from "@/components/ChronosBadge";
 import { GradeDisplay } from "@/components/GradeDisplay";
 import { TacticalAdvicePanel } from "@/components/TacticalAdvicePanel";
 import { SignalCardsGrid, DivergenceWarningCard } from "@/components/SignalCard";
@@ -21,11 +22,15 @@ import { MetaSignalPanel } from "@/components/MetaSignalPanel";
 import { FusionPanel } from "@/components/FusionPanel";
 import { EdgeTuningCard } from "@/components/EdgeTuningCard";
 import { TradeAnalysisPanel } from "@/components/TradeAnalysisPanel";
+import { MonsterOTMPanel } from "@/components/MonsterOTMPanel";
+import { WarRoomCommandDeck } from "@/components/WarRoomCommandDeck";
 import { DashboardSkeleton, EmptyState, ErrorState } from "@/components/LoadingSkeleton";
 import { SignalHistoryPanel } from "@/components/SignalHistoryPanel";
 import { PatternListPanel } from "@/components/PatternListPanel";
 import { PatternDetailPanel } from "@/components/PatternDetailPanel";
 import { CompressionStatusCard } from "@/components/CompressionStatusCard";
+import { ChronosCallout } from "@/components/FriendBreakoutCallout";
+import { SignalLoggingPanel } from "@/components/SignalLoggingPanel";
 import { queryClient } from "@/lib/queryClient";
 import { MLCalibrationGauge } from "@/components/MLCalibrationGauge";
 import type { AnalysisPayload, Timeframe, NormalizedPattern } from "@shared/schema";
@@ -53,7 +58,7 @@ export default function Dashboard() {
   const { data: spotData } = useQuery<SpotData>({
     queryKey: ["/api/spot", searchTicker],
     enabled: !!searchTicker,
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     refetchIntervalInBackground: false,
     staleTime: 5000,
     refetchOnWindowFocus: false,
@@ -128,7 +133,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="terminal-shell min-h-screen text-foreground">
+    <div className="terminal-shell warroom-shell min-h-screen text-foreground">
       <header className="terminal-header sticky top-0 z-50 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
         <div className="neon-divider h-1" />
         <div className="px-4 lg:px-6 py-2.5">
@@ -146,6 +151,7 @@ export default function Dashboard() {
                 <Radio className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
                 <span className="text-[10px] font-bold text-emerald-400 tracking-wider">LIVE</span>
               </div>
+              <ChronosBadge />
             </div>
 
             <div className="flex-1 max-w-md mx-4 relative z-[100]">
@@ -185,7 +191,7 @@ export default function Dashboard() {
       </header>
 
       <div className="flex flex-col lg:flex-row h-[calc(100vh-57px)] animate-panel-rise">
-        <aside className="quantum-sidebar hidden lg:block w-80 p-4 overflow-y-auto space-y-4">
+        <aside className="quantum-sidebar hidden lg:block w-72 p-3 overflow-y-auto space-y-3">
           <ScannerPanel onSelectSymbol={handleSubmit} selectedSymbol={searchTicker} />
           {analysis?.tactical && (
             <TacticalAdvicePanel
@@ -198,7 +204,7 @@ export default function Dashboard() {
           )}
         </aside>
 
-        <main className="quantum-main flex-1 overflow-y-auto p-4 lg:p-6">
+        <main className="quantum-main flex-1 overflow-y-auto p-3 lg:p-4">
           {!searchTicker && !isLoading ? (
             <div className="h-full flex flex-col">
               <div className="lg:hidden mb-6">
@@ -222,6 +228,7 @@ export default function Dashboard() {
               analysis={analysis}
               timeframe={timeframe}
               lastPrice={lastPrice}
+              spotIsLive={spotLooksAligned}
               priceChange={priceChange}
               priceChangePercent={priceChangePercent}
             />
@@ -254,12 +261,14 @@ function DashboardContent({
   analysis,
   timeframe,
   lastPrice,
+  spotIsLive,
   priceChange,
   priceChangePercent,
 }: {
   analysis: AnalysisPayload;
   timeframe: Timeframe;
   lastPrice: number;
+  spotIsLive: boolean;
   priceChange: number;
   priceChangePercent: number;
 }) {
@@ -310,9 +319,13 @@ function DashboardContent({
       : undefined;
 
   return (
-    <div className="space-y-6" data-testid="dashboard-content">
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        <div className="xl:col-span-8 space-y-6">
+    <div className="space-y-4" data-testid="dashboard-content">
+      <WarRoomCommandDeck analysis={analysis} lastPrice={lastPrice} spotIsLive={spotIsLive} timeframe={timeframe} />
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="xl:col-span-8 space-y-4">
+          <MonsterOTMPanel symbol={analysis.symbol} currentPriceOverride={lastPrice} />
+
           <PriceCard
             symbol={analysis.symbol}
             price={lastPrice}
@@ -322,6 +335,8 @@ function DashboardContent({
             intradayChangePercent={tapeChangePct}
             sectorData={sectorSnapshot?.sectors}
           />
+
+          <ChronosCallout symbol={analysis.symbol} timeframe={timeframe} analysis={analysis} />
 
           <CompressionStatusCard
             symbol={analysis.symbol}
@@ -405,10 +420,12 @@ function DashboardContent({
 
         </div>
 
-        <div className="xl:col-span-4 space-y-6">
+        <div className="xl:col-span-4 space-y-4">
           <FusionPanel symbol={analysis.symbol} />
 
           <MLCalibrationGauge symbol={analysis.symbol} timeframe={timeframe} />
+
+          <SignalLoggingPanel />
 
           <EdgeTuningCard />
 

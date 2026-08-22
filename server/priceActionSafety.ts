@@ -35,7 +35,7 @@ export function computePriceActionSafety(params: {
     reasons: []
   };
 
-  if (recentOhlc.length < 5 || signalDirection === 'WAIT') {
+  if (recentOhlc.length < 5) {
     return result;
   }
 
@@ -47,6 +47,7 @@ export function computePriceActionSafety(params: {
   let totalBodySize = 0;
   let bullishBodySum = 0;
   let bearishBodySum = 0;
+  let closePositionSum = 0;
 
   for (const c of candles) {
     const body = c.close - c.open;
@@ -60,10 +61,17 @@ export function computePriceActionSafety(params: {
       redCount++;
       bearishBodySum += absBody;
     }
+
+    if (c.high > c.low) {
+      closePositionSum += (c.close - c.low) / (c.high - c.low);
+    } else {
+      closePositionSum += 0.5;
+    }
   }
 
   const greenRatio = greenCount / candles.length;
   const redRatio = redCount / candles.length;
+  const closePositionBias = (closePositionSum / candles.length) * 2 - 1;
 
   const netBodyBias = totalBodySize > 0
     ? (bullishBodySum - bearishBodySum) / totalBodySize
@@ -75,23 +83,26 @@ export function computePriceActionSafety(params: {
     ? ((lastClose - firstClose) / firstClose) * 100
     : 0;
 
+  const priceMoveScore = Math.max(-1, Math.min(1, priceChangePct / 0.75));
   const hlhCount = countHigherLowsHigherHighs(candles);
   const lhllCount = countLowerHighsLowerLows(candles);
   const structureScore = (hlhCount - lhllCount) / Math.max(1, candles.length - 1);
 
   const trendScore = clamp(
-    netBodyBias * 0.35 +
-    structureScore * 0.35 +
-    (priceChangePct / 0.5) * 0.30,
+    netBodyBias * 0.25 +
+    structureScore * 0.25 +
+    closePositionBias * 0.20 +
+    priceMoveScore * 0.15 +
+    (greenRatio - redRatio) * 0.15,
     -1, 1
   );
 
   result.recentTrendScore = Math.round(trendScore * 100);
 
-  if (trendScore > 0.15) {
+  if (trendScore > 0.18) {
     result.momentumDirection = 'bullish';
     result.momentumStrength = Math.round(trendScore * 100);
-  } else if (trendScore < -0.15) {
+  } else if (trendScore < -0.18) {
     result.momentumDirection = 'bearish';
     result.momentumStrength = Math.round(Math.abs(trendScore) * 100);
   } else {
@@ -113,33 +124,38 @@ export function computePriceActionSafety(params: {
   if (hasContradiction) {
     result.contradiction = true;
     const severity = result.momentumStrength;
+    const momentumText = `${result.momentumDirection} (${severity}%)`;
 
-    if (severity >= 60 && result.candleConsistency >= 70) {
+    const shouldForceWait =
+      (severity >= 55 && result.candleConsistency >= 60) ||
+      (severity >= 45 && result.candleConsistency >= 70);
+
+    if (shouldForceWait) {
       result.contradictionSeverity = 'severe';
       result.safetyAction = 'force_wait';
       result.confidenceMultiplier = 0.0;
       result.reasons.push(
-        `SAFETY: Price strongly pushing ${result.momentumDirection} (${severity}%) contradicts ${signalDirection} signal`
+        `SAFETY: Strong ${momentumText} price action contradicts ${signalDirection}`
       );
       result.reasons.push(
         `${result.candleConsistency}% candle consistency against signal - forcing WAIT`
       );
-    } else if (severity >= 40 && result.candleConsistency >= 60) {
+    } else if (severity >= 40 && result.candleConsistency >= 55) {
       result.contradictionSeverity = 'moderate';
       result.safetyAction = 'reduce_confidence';
-      result.confidenceMultiplier = 0.5;
+      result.confidenceMultiplier = 0.4;
       result.reasons.push(
-        `CAUTION: Price momentum ${result.momentumDirection} (${severity}%) conflicts with ${signalDirection}`
+        `CAUTION: ${momentumText} price action conflicts with ${signalDirection}`
       );
       result.reasons.push(
-        `Confidence reduced 50% - wait for momentum to align before entry`
+        `Confidence reduced 60% - wait for momentum to align before entry`
       );
-    } else if (severity >= 20) {
+    } else {
       result.contradictionSeverity = 'mild';
       result.safetyAction = 'reduce_confidence';
-      result.confidenceMultiplier = 0.75;
+      result.confidenceMultiplier = 0.85;
       result.reasons.push(
-        `NOTE: Mild price drift ${result.momentumDirection} vs ${signalDirection} signal - slight confidence reduction`
+        `NOTE: Mild ${momentumText} price action is at odds with ${signalDirection}`
       );
     }
 
@@ -147,8 +163,10 @@ export function computePriceActionSafety(params: {
     const consecutiveTrend = recentCandles.every(c =>
       result.momentumDirection === 'bullish' ? c.close > c.open : c.close < c.open
     );
-    if (consecutiveTrend && result.contradictionSeverity !== 'severe') {
-      result.contradictionSeverity = result.contradictionSeverity === 'moderate' ? 'severe' : 'moderate';
+    if (consecutiveTrend) {
+      if (result.contradictionSeverity !== 'severe') {
+        result.contradictionSeverity = result.contradictionSeverity === 'moderate' ? 'severe' : 'moderate';
+      }
       if (result.contradictionSeverity === 'severe') {
         result.safetyAction = 'force_wait';
         result.confidenceMultiplier = 0.0;
@@ -163,10 +181,17 @@ export function computePriceActionSafety(params: {
       }
     }
   } else if (result.momentumDirection !== 'neutral' && result.momentumStrength >= 30) {
-    result.reasons.push(
-      `Price momentum aligns with ${signalDirection} (${result.momentumStrength}% ${result.momentumDirection})`
-    );
-    result.confidenceMultiplier = Math.min(1.1, 1 + result.momentumStrength * 0.001);
+    const actionLabel = result.momentumDirection === 'bullish' ? 'Bullish price action' : 'Bearish price action';
+    if (signalDirection === 'CALL' || signalDirection === 'PUT') {
+      result.reasons.push(
+        `${actionLabel} aligns with ${signalDirection} (${result.momentumStrength}% ${result.momentumDirection})`
+      );
+      result.confidenceMultiplier = Math.min(1.1, 1 + result.momentumStrength * 0.001);
+    } else {
+      result.reasons.push(
+        `${actionLabel} detected (${result.momentumStrength}% ${result.momentumDirection})`
+      );
+    }
   }
 
   return result;

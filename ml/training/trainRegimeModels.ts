@@ -8,6 +8,7 @@ import {
   regimeFromInput,
   safeNum,
   sigmoid,
+  clamp,
 } from '../features/featureEngineering';
 import {
   FEATURE_COUNT,
@@ -39,6 +40,7 @@ interface EdgeEngineSample {
     edgeScore?: number;
     confidence?: number;
     triggerProbability?: number;
+    leadMinutes?: number;
     indicators?: Record<string, unknown>;
   };
 }
@@ -87,8 +89,26 @@ function labelSample(sample: EdgeEngineSample): number | null {
   return null;
 }
 
+function normalizePhase(state?: string): string {
+  const raw = String(state ?? '').toUpperCase();
+  if (raw === 'TRIGGERED' || raw === 'PRIMED') return 'NOW';
+  if (raw === 'ARMING') return 'READY';
+  if (raw === 'PENDING' || raw === 'STANDBY' || raw === 'DISARMED' || raw === 'WAIT') return 'PREPARE';
+  return raw;
+}
+
+function normalizeMode(state?: string): string {
+  const raw = String(state ?? '').toUpperCase();
+  if (raw === 'TRIGGERED' || raw === 'PRIMED') return 'EXECUTE';
+  if (raw === 'ARMING' || raw === 'PENDING') return 'PREPARE';
+  if (raw === 'STANDBY' || raw === 'DISARMED' || raw === 'WAIT') return 'WAIT';
+  return raw;
+}
+
 function buildSampleInput(sample: EdgeEngineSample): MLRawInput {
   const indicators = sample.edgeEngine?.indicators ?? {};
+  const edgeState = String(sample.edgeEngine?.state ?? '');
+
   return {
     breakoutScore: sample.breakoutScore,
     edgeScore: safeNum(sample.edgeEngine?.edgeScore),
@@ -98,9 +118,12 @@ function buildSampleInput(sample: EdgeEngineSample): MLRawInput {
     bbWidth: safeNum(indicators.bbWidth),
     rangePct: safeNum(indicators.rangePct),
     atrPercent: safeNum(indicators.atrPercent),
-    phase: String(sample.edgeEngine?.state ?? ''),
-    mode: String(sample.edgeEngine?.signal ?? ''),
+    phase: normalizePhase(edgeState),
+    mode: normalizeMode(edgeState),
+    edgeSignal: String(sample.edgeEngine?.signal ?? ''),
+    edgeState,
     directionalBias: String(sample.edgeEngine?.direction ?? ''),
+    leadMinutes: safeNum(sample.edgeEngine?.leadMinutes),
     otmDelta: safeNum(indicators.otmDelta),
     macdHistogram: safeNum(indicators.macdHistogram),
     macdTrend: String(indicators.macdTrend ?? ''),

@@ -2350,7 +2350,8 @@ export function detectBreakoutFailureReversal(ohlc: OHLC[]): PatternResult | nul
   if (ohlc.length < 25) return null;
   const i = ohlc.length - 1;
   const lookback = 20;
-  const slice = ohlc.slice(-lookback - 1, -1);
+  // The range must end before the breakout candle; including `prev` makes a close above its own high impossible.
+  const slice = ohlc.slice(-lookback - 2, -2);
 
   const rangeHigh = Math.max(...slice.map(c => c.high));
   const rangeLow = Math.min(...slice.map(c => c.low));

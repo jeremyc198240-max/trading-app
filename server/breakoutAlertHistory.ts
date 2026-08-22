@@ -17,7 +17,6 @@ export type BreakoutDirection = "bullish" | "bearish" | "neutral";
 export type BreakoutOutcome = "win_t1" | "win_t2" | "loss" | "pending" | "missed";
 export type AlertCardMode = "PREPARE" | "EXECUTE";
 export type PrepareAlertOutcome = "pending" | "promoted" | "win_t1" | "win_t2" | "loss" | "missed";
-
 export interface BreakoutCompressionSnapshot {
   sparkScore?: number;
   phase?: string;
@@ -326,7 +325,7 @@ const PROJECT_ROOT = process.cwd();
 const STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "breakout_alert_history.json");
 const EDGE_TUNING_2D_STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "edge_tuning_2d_log.jsonl");
 const EDGE_SAMPLE_STORAGE_PATH = path.resolve(PROJECT_ROOT, "logs", "edge_engine_samples.json");
-const MAX_LOOKBACK_HOURS = 48;
+const MAX_LOOKBACK_HOURS = 90 * 24;
 const RETENTION_MS = MAX_LOOKBACK_HOURS * 60 * 60 * 1000;
 const RETENTION_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 const EDGE_TUNING_WINDOW_HOURS = 48;
@@ -913,8 +912,8 @@ function shouldForceExecuteMode(input: BreakoutAlertInput, direction: BreakoutDi
   const setupEtaMinutes = Number.isFinite(setupEtaRaw) ? setupEtaRaw : null;
   
   // ADX filter: require minimum trend confirmation to transition to EXECUTE
-  const adx = parseNum(input.preBreakoutSetup?.adx ?? input.edgeEngine?.adx, 0);
-  const tvAdx = parseNum(input.tvSnapshot?.adx, adx);
+  const adx = parseNum((input.edgeEngine as any)?.indicators?.adx, 0);
+  const tvAdx = parseNum(input.tvAdx, adx);
   const avgAdx = (adx + tvAdx) / 2;
   
   // Prevent PREPARE→EXECUTE transition if trend not confirmed (ADX < 20)
@@ -1174,10 +1173,19 @@ function isCardCandidate(input: BreakoutAlertInput, direction: BreakoutDirection
   const quality = String(input.signalQuality ?? "LOW").toUpperCase();
   if (quality === "UNRELIABLE") return false;
 
+  const warnings = new Set((input.warnings ?? []).map((warning) => String(warning).toUpperCase()));
+  const breakoutScore = parseNum(input.breakoutScore, 0);
+  const confirmedFailedUpsideReversal =
+    signal === "BREAKDOWN" &&
+    direction === "bearish" &&
+    breakoutScore >= 75 &&
+    warnings.has("FAILED_UPSIDE_BREAKOUT") &&
+    warnings.has("POTENTIAL_PUT_PLAY");
+  if (confirmedFailedUpsideReversal) return true;
+
   if (isStrongPrepareCandidate(input, direction)) return true;
   if (isStrongExecuteCandidate(input, direction)) return true;
 
-  const breakoutScore = parseNum(input.breakoutScore, 0);
   if (breakoutScore < MIN_BREAKOUT_SCORE) return false;
 
   const momentumAbs = Math.abs(parseNum(input.momentumStrength, 0));
@@ -1195,7 +1203,6 @@ function isCardCandidate(input: BreakoutAlertInput, direction: BreakoutDirection
     return false;
   }
 
-  const warnings = new Set((input.warnings ?? []).map((warning) => String(warning).toUpperCase()));
   const hasTrendConflict = warnings.has("TREND_CONFLICT") || warnings.has("TV_TREND_CONFLICT");
   if (hasTrendConflict && breakoutScore < 74) return false;
   if (warnings.has("LATE_PHASE_UNCONFIRMED") && breakoutScore < 76) return false;

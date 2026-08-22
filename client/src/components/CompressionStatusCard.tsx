@@ -45,6 +45,10 @@ interface CompressionAiResponse {
     high: number;
     chop: number;
   };
+  runnerGate?: {
+    pass: boolean;
+    blockers: string[];
+  };
   training: {
     sampleCount: number;
     positiveRate: number;
@@ -303,7 +307,7 @@ export function CompressionStatusCard({
     queryKey: ["/api/compression-ai", symbol, timeframe],
     enabled: Boolean(symbol),
     staleTime: 15000,
-    refetchInterval: 20000,
+    refetchInterval: 30000,
     retry: false,
   });
 
@@ -655,6 +659,32 @@ export function CompressionStatusCard({
               <div className="ncx-lab__label">Prepare Threshold</div>
               <div className="ncx-lab__value">{aiData?.training.config?.prepareThreshold ?? "--"}</div>
               <div className="ncx-lab__sub">P {thresholdDiag ? `${(thresholdDiag.prepare.precision * 100).toFixed(0)}%` : "--"}</div>
+            </div>
+          </div>
+        </section>
+
+        <section className="ncx-lab ncx-lab--diag">
+          <div className="ncx-lab__title">Compression Diagnostics</div>
+          <div className="mt-2 grid gap-2 md:grid-cols-[auto,1fr]">
+            <div className={cn(
+              "rounded-md border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em]",
+              aiData?.runnerGate?.pass
+                ? "border-emerald-500/45 bg-emerald-500/12 text-emerald-300"
+                : "border-amber-500/45 bg-amber-500/12 text-amber-300"
+            )}>
+              Runner Gate {aiData?.runnerGate?.pass ? "Pass" : "Blocked"}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(aiData?.runnerGate?.blockers ?? []).slice(0, 6).map((blocker) => (
+                <span key={blocker} className="rounded-md border border-rose-500/30 bg-rose-500/12 px-2 py-1 text-[10px] font-mono text-rose-200">
+                  {blocker}
+                </span>
+              ))}
+              {(!aiData?.runnerGate?.blockers || aiData.runnerGate.blockers.length === 0) && (
+                <span className="rounded-md border border-emerald-500/30 bg-emerald-500/12 px-2 py-1 text-[10px] font-mono text-emerald-200">
+                  clean_lane
+                </span>
+              )}
             </div>
           </div>
         </section>

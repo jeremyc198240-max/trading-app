@@ -7,6 +7,22 @@ import { computeReversalSignal, ReversalSignal } from './reversalEngine';
 import { fusionReversalAlert, ReversalAlert, PatternFusionState } from './patterns';
 import { computeUnifiedSignal, UnifiedSignal } from './unifiedSignal';
 import { computeMTFReversal, MTFReversalSignal } from './mtfReversalEngine';
+import { analyzeLiquidityGeometry, LiquidityGeometryResult } from './engines/liquidityGeometry';
+import { analyzeOrderBlocks, OrderBlockResult } from './engines/orderBlockEngine';
+import { analyzeBreaker, BreakerResult } from './engines/breakerEngine';
+import { analyzeDisplacement, DisplacementResult } from './engines/displacementEngine';
+import { analyzeMitigation, MitigationResult } from './engines/mitigationEngine';
+import { analyzeInducement, InducementResult } from './engines/inducementEngine';
+import { analyzeShadow, ShadowResult } from './engines/shadowEngine';
+import { analyzeIntent, IntentResult } from './engines/intentEngine';
+import { analyzeCycle, CycleResult } from './engines/cycleEngine';
+import { analyzeMarketDNA, MarketDNAResult } from './engines/marketDnaEngine';
+import { analyzeHTFBias, HTFBiasResult } from './engines/htfBiasEngine';
+import { analyzeLTFStructure, LTFStructureResult } from './engines/ltfStructureEngine';
+import { analyzeInstitutionalSignature, InstitutionalSignatureResult } from './engines/institutionalSignatureEngine';
+import { detectSpark, type SparkSignal } from './sparkDetector';
+import { runMonsterOTMEngine, type MonsterOTMEngineOutput } from './monsterOtmEngine';
+import { detectLiquiditySweep, computeCandleStrength, computeBullishPower, computeEMACloud, computeVWAPSeries, detectVolumeSpike } from './finance';
 
 // Re-export for external use
 export type { EMACloudTrend } from './emaTrendAdapter';
@@ -32,7 +48,7 @@ export interface GatedReversalAlert {
 
 // =============== CORE TYPES ===============
 
-export type Timeframe = '5m' | '15m' | '30m' | '1h' | '4h' | '1D';
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D';
 
 export interface OHLC {
   open: number;
@@ -180,6 +196,10 @@ export interface BreakoutZones {
   lower: number;
   invalidation: number;
   retest: number;
+  upsideTarget1: number;
+  upsideTarget2: number;
+  downsideTarget1: number;
+  downsideTarget2: number;
 }
 
 // =============== FUSION V2 GATING TYPES ===============
@@ -250,6 +270,7 @@ export interface FusionSnapshot {
   timeframes: TimeframePatternIntel[];
   mtfConsensus: MTFConsensus;
   marketHealth: MarketHealthIndicators;
+  sparkSignal?: SparkSignal;
   forecast: PatternForecast;
   directionalProbabilities: DirectionalProbabilities;
   expectedMove: ExpectedMove;
@@ -278,6 +299,21 @@ export interface FusionSnapshot {
     score: number;
     reasons: string[];
   };
+  // Institutional engine outputs (scaffolding)
+  liquidityGeometry?: LiquidityGeometryResult;
+  orderBlock?: OrderBlockResult;
+  breaker?: BreakerResult;
+  displacement?: DisplacementResult;
+  mitigation?: MitigationResult;
+  inducement?: InducementResult;
+  shadow?: ShadowResult;
+  intent?: IntentResult;
+  cycle?: CycleResult;
+  marketDNA?: MarketDNAResult;
+  monsterOtm?: MonsterOTMEngineOutput;
+  htfBias?: HTFBiasResult;
+  ltfStructure?: LTFStructureResult;
+  institutionalSignature?: InstitutionalSignatureResult;
 }
 
 function computeDivergenceFromOHLC(ohlc: OHLC[], currentPrice: number, marketHealth: MarketHealthIndicators): DivergenceData {
@@ -412,17 +448,47 @@ function computeCompressionCluster(
   consensus: MTFConsensus
 ): CompressionCluster {
   const reasons: string[] = [];
-  
+
   const bbSqueeze = detectBBSqueeze(ohlc);
   if (bbSqueeze.active) reasons.push('Bollinger Band squeeze active');
-  
+
   const keltnerSide = detectKeltnerBreakout(ohlc);
   if (keltnerSide !== 'none') reasons.push(`Keltner breakout: ${keltnerSide}`);
-  
-  const healthLow = health.healthScore < 0.5;
+
+  const healthAny = health as any;
+  const atrPct = Number(healthAny?.atr?.percent ?? 0);
+  const volRatio = Number(healthAny?.compression?.volRatio ?? 0);
+  const preBreakoutScore = Number(healthAny?.preBreakoutSetup?.score ?? 0);
+  const stackAgreement = Number(healthAny?.timeframeStack?.agreement ?? 0);
+  const triggerProb = Number(healthAny?.edgeEngine?.triggerProbability ?? 0);
+
+  const atrTight = atrPct > 0 ? Math.max(0, Math.min(1, (1.4 - atrPct) / 1.4)) : 0.45;
+  const volSweet = volRatio > 0 ? Math.max(0, Math.min(1, 1 - Math.abs(volRatio - 0.35) / 0.9)) : 0.35;
+  const preScoreNorm = Math.max(0, Math.min(1, preBreakoutScore / 100));
+  const stackNorm = Math.max(0, Math.min(1, stackAgreement / 100));
+  const triggerNorm = Math.max(0, Math.min(1, triggerProb / 100));
+  const bbNorm = Math.max(0, Math.min(1, 1 - Math.max(0, bbSqueeze.width - 0.9) / 1.2));
+
+  const compressionReadiness =
+    bbNorm * 0.28 +
+    atrTight * 0.16 +
+    volSweet * 0.14 +
+    preScoreNorm * 0.18 +
+    stackNorm * 0.14 +
+    triggerNorm * 0.1;
+
+  const healthLow = health.healthScore < 0.45;
   if (healthLow) reasons.push(`Market health low (${(health.healthScore * 100).toFixed(0)}%)`);
-  
-  const active = bbSqueeze.active && keltnerSide !== 'none' && healthLow;
+
+  if (preBreakoutScore >= 75) reasons.push(`Pre-breakout structure strong (${preBreakoutScore.toFixed(0)})`);
+  if (stackAgreement >= 70) reasons.push(`MTF stack aligned (${stackAgreement.toFixed(0)}%)`);
+  if (triggerProb >= 70) reasons.push(`Trigger pressure elevated (${triggerProb.toFixed(0)}%)`);
+  if (volRatio > 0 && volRatio < 0.12) reasons.push(`Volume too dry (${volRatio.toFixed(2)})`);
+
+  const active =
+    (bbSqueeze.active || compressionReadiness >= 0.62) &&
+    !healthLow &&
+    (preBreakoutScore >= 62 || stackAgreement >= 65 || triggerProb >= 68);
   
   return {
     active,
@@ -964,7 +1030,11 @@ function governBreakoutZones(params: {
     upper: newUpper,
     lower: newLower,
     invalidation,
-    retest
+    retest,
+    upsideTarget1: newUpper + (newUpper - newLower),
+    upsideTarget2: newUpper + (newUpper - newLower) * 2,
+    downsideTarget1: newLower - (newUpper - newLower),
+    downsideTarget2: newLower - (newUpper - newLower) * 2,
   };
 }
 
@@ -1192,25 +1262,44 @@ function computeTFIntel(
   };
 }
 
-function computeMTFConsensus(tfIntel: TimeframePatternIntel[]): MTFConsensus {
-  let bullishStack = 0;
-  let bearishStack = 0;
-  let neutralStack = 0;
+function computeMTFConsensus(tfIntel: TimeframePatternIntel[], marketHealth?: MarketHealthIndicators): MTFConsensus {
+  // Weighted multi-timeframe stack focusing on 15m/5m/1m as requested
+  const weights: Record<string, number> = {
+    '1m': 0.1,
+    '5m': 0.3,
+    '15m': 0.6,
+    '30m': 0.5,
+    '1h': 0.6,
+    '4h': 0.7,
+    '1D': 0.8
+  };
+
+  let bullishWeighted = 0;
+  let bearishWeighted = 0;
+  let neutralWeighted = 0;
   const compressionVals: number[] = [];
   const volVals: number[] = [];
+  let totalWeight = 0;
 
   for (const tf of tfIntel) {
+    const w = weights[tf.timeframe] ?? 0.5;
+    totalWeight += w;
     const bias = tf.trendBias;
-    if (bias === 'bullish') bullishStack++;
-    else if (bias === 'bearish') bearishStack++; 
-    else neutralStack++;
+    if (bias === 'bullish') bullishWeighted += w;
+    else if (bias === 'bearish') bearishWeighted += w;
+    else neutralWeighted += w;
     compressionVals.push(tf.structuralCompression);
     volVals.push(tf.volatilityExpansionProb);
   }
 
-  const total = bullishStack + bearishStack + neutralStack || 1;
-  const alignmentScore = (Math.max(bullishStack, bearishStack, neutralStack) / total);
-  const conflictLevel = 1 - alignmentScore;
+  const maxWeighted = Math.max(bullishWeighted, bearishWeighted, neutralWeighted);
+  const alignmentScoreRaw = totalWeight > 0 ? maxWeighted / totalWeight : 0;
+  const conflictLevel = 1 - alignmentScoreRaw;
+
+  // Slight bias from slope geometry (vwapSlope) if available
+  const slope = marketHealth?.vwapSlope?.value ?? 0;
+  const slopeBoost = Math.max(-0.1, Math.min(0.1, slope * 0.2));
+  const alignmentScore = clamp01(alignmentScoreRaw + slopeBoost);
 
   const compressionConsensus =
     compressionVals.reduce((a, b) => a + b, 0) / (compressionVals.length || 1);
@@ -1218,13 +1307,13 @@ function computeMTFConsensus(tfIntel: TimeframePatternIntel[]): MTFConsensus {
     volVals.reduce((a, b) => a + b, 0) / (volVals.length || 1);
 
   let trendConsensus: 'bullish' | 'bearish' | 'neutral' = 'neutral';
-  if (bullishStack > bearishStack && bullishStack > neutralStack) trendConsensus = 'bullish';
-  else if (bearishStack > bullishStack && bearishStack > neutralStack) trendConsensus = 'bearish';
+  if (bullishWeighted > bearishWeighted && bullishWeighted > neutralWeighted) trendConsensus = 'bullish';
+  else if (bearishWeighted > bullishWeighted && bearishWeighted > neutralWeighted) trendConsensus = 'bearish';
 
   return {
-    bullishStack,
-    bearishStack,
-    neutralStack,
+    bullishStack: Math.round(bullishWeighted * 10) / 10,
+    bearishStack: Math.round(bearishWeighted * 10) / 10,
+    neutralStack: Math.round(neutralWeighted * 10) / 10,
     alignmentScore: clamp01(alignmentScore),
     conflictLevel: clamp01(conflictLevel),
     compressionConsensus: clamp01(compressionConsensus),
@@ -1445,10 +1534,43 @@ function computeDirectionalProbabilities(params: {
     healthScore * 0.10 +
     volScore * 0.05;
 
-  const rawDown = 1 - rawUp;
+  // Calculate bearish indicators independently (don't just use 1 - rawUp)
+  const slopeScoreBearish =
+    clamp01((slopeShort < 0 ? 1 : 0) * 0.6 +
+            (slopeMedium < 0 ? 1 : 0) * 0.4);
+
+  let persistenceBearish = 0;
+  for (let i = len - 1; i > len - 10 && i > 0; i--) {
+    if (closes[i] < closes[i - 1]) persistenceBearish++;
+  }
+  const persistenceScoreBearish = clamp01(persistenceBearish / 10);
+
+  let vwapScoreBearish = 0.5;
+  if (vwapPrice) {
+    if (currentPrice < vwapPrice) vwapScoreBearish = 0.7;
+    if (currentPrice > vwapPrice) vwapScoreBearish = 0.3;
+  }
+
+  let breakoutScoreBearish = 0.5;
+  if (state === 'IN_ZONE') {
+    const dist = (zoneHigh - currentPrice) / (zoneHigh - zoneLow);
+    breakoutScoreBearish = clamp01(dist);
+  } else if (state === 'POST_LATE') {
+    breakoutScoreBearish = currentPrice < zoneLow ? 0.8 : 0.2;
+  }
+
+  const rawDown =
+    slopeScoreBearish * 0.25 +
+    persistenceScoreBearish * 0.20 +
+    vwapScoreBearish * 0.15 +
+    breakoutScoreBearish * 0.15 +
+    (1 - mtfScore) * 0.10 +  // Lower MTF alignment favors bearish
+    (marketHealth.vwapSlope.value < 0 ? 0.6 : marketHealth.orderflow.value < 0 ? 0.4 : 0.2) * 0.10 +
+    volScore * 0.05;
 
   const chopRaw =
-    (1 - mtfScore) * 0.4 +
+    (1 - Math.max(rawUp, rawDown)) * 0.6 +  // Higher chop when neither direction is confident
+    (1 - mtfScore) * 0.2 +                   // Lower MTF alignment increases chop
     (volatilityRegime.regime === 'expanding' ? 0.3 : 0.1) +
     (state === 'IN_ZONE' ? 0.3 : 0.1);
 
@@ -1492,7 +1614,11 @@ function computeBreakoutZones(params: {
       upper: 0,
       lower: 0,
       invalidation: 0,
-      retest: lastPrice ?? 0
+      retest: lastPrice ?? 0,
+      upsideTarget1: 0,
+      upsideTarget2: 0,
+      downsideTarget1: 0,
+      downsideTarget2: 0,
     };
   }
 
@@ -1504,7 +1630,11 @@ function computeBreakoutZones(params: {
       upper: 0,
       lower: 0,
       invalidation: 0,
-      retest: defaultPrice
+      retest: defaultPrice,
+      upsideTarget1: 0,
+      upsideTarget2: 0,
+      downsideTarget1: 0,
+      downsideTarget2: 0,
     };
   }
 
@@ -1544,7 +1674,11 @@ function computeBreakoutZones(params: {
       upper: 0,
       lower: 0,
       invalidation: 0,
-      retest: defaultPrice
+      retest: defaultPrice,
+      upsideTarget1: 0,
+      upsideTarget2: 0,
+      downsideTarget1: 0,
+      downsideTarget2: 0,
     };
   }
 
@@ -1558,7 +1692,11 @@ function computeBreakoutZones(params: {
     upper,
     lower,
     invalidation,
-    retest
+    retest,
+    upsideTarget1: upper + (upper - lower),
+    upsideTarget2: upper + (upper - lower) * 2,
+    downsideTarget1: lower - (upper - lower),
+    downsideTarget2: lower - (upper - lower) * 2,
   };
 }
 
@@ -1618,6 +1756,78 @@ function computeConfidenceBreakdown(
     vol: vol / sum,
     orderflow: orderflow / sum,
     trend: trend / sum
+  };
+}
+
+function computeInstitutionalCoreSignal(params: {
+  orderBlock: OrderBlockResult;
+  liquidityGeometry: LiquidityGeometryResult;
+  institutionalSignature: InstitutionalSignatureResult;
+  forecast: PatternForecast;
+  marketHealth: MarketHealthIndicators;
+}): {
+  direction: 'bull' | 'bear' | 'neutral';
+  score: number;
+  reasons: string[];
+} {
+  const { orderBlock, liquidityGeometry, institutionalSignature, forecast, marketHealth } = params;
+  const reasons: string[] = [];
+
+  const obDir = orderBlock.direction ?? 'neutral';
+  const sigDir = institutionalSignature.likelyAction === 'accumulate'
+    ? 'bullish'
+    : institutionalSignature.likelyAction === 'distribute'
+      ? 'bearish'
+      : 'neutral';
+
+  const baseScore = clamp01(
+    orderBlock.score * 0.5 +
+    institutionalSignature.signatureScore * 0.35 +
+    (liquidityGeometry.score ?? 0.5) * 0.15
+  );
+
+  let directionScore = 0;
+  if (obDir === 'bullish') directionScore += 0.55;
+  if (obDir === 'bearish') directionScore -= 0.55;
+  if (sigDir === 'bullish') directionScore += 0.45;
+  if (sigDir === 'bearish') directionScore -= 0.45;
+
+  const direction: 'bull' | 'bear' | 'neutral' =
+    directionScore > 0.22 ? 'bull' :
+    directionScore < -0.22 ? 'bear' : 'neutral';
+
+  if (orderBlock.volumeProfile) {
+    reasons.push(
+      `Volume profile VPOC ${orderBlock.volumeProfile.vpoc.toFixed(2)} ` +
+      `(VA ${orderBlock.volumeProfile.valueAreaLow.toFixed(2)}-${orderBlock.volumeProfile.valueAreaHigh.toFixed(2)})`
+    );
+  }
+
+  if (obDir !== 'neutral') {
+    reasons.push(`Order blocks ${obDir} (${orderBlock.fresh} fresh / ${orderBlock.used} used)`);
+  } else {
+    reasons.push(`Order blocks mixed (${orderBlock.fresh} fresh / ${orderBlock.used} used)`);
+  }
+
+  if (institutionalSignature.clues?.length) {
+    reasons.push(`Institutional signature: ${institutionalSignature.clues.slice(0, 2).join(', ')}`);
+  }
+
+  const forecastDir = forecast.direction === 'up' ? 'bull' : forecast.direction === 'down' ? 'bear' : 'neutral';
+  const alignsWithForecast = direction === 'neutral' || forecastDir === 'neutral' || direction === forecastDir;
+  const trendBoost = clamp01(((marketHealth.adx?.value ?? 20) - 18) / 20) * 0.08;
+  const finalScore = clamp01(baseScore + (alignsWithForecast ? 0.08 : -0.08) + trendBoost);
+
+  if (!alignsWithForecast) {
+    reasons.push('Institutional confluence conflicts with active forecast direction');
+  } else if (direction !== 'neutral') {
+    reasons.push('Institutional confluence aligns with active forecast direction');
+  }
+
+  return {
+    direction,
+    score: Math.round(finalScore * 100),
+    reasons
   };
 }
 
@@ -1750,7 +1960,7 @@ export interface FusionInput {
 export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   const { symbol, ohlcByTF, patternsByTF, marketHealth, lastPrice } = input;
 
-  const orderedTFs: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1D'];
+  const orderedTFs: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
 
   const timeframes: TimeframePatternIntel[] = orderedTFs
     .filter(tf => ohlcByTF[tf] && ohlcByTF[tf]!.length > 0)
@@ -1762,14 +1972,14 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
       )
     );
 
-  const mtfConsensus = computeMTFConsensus(timeframes);
+  const mtfConsensus = computeMTFConsensus(timeframes, marketHealth);
   const volRegime = computeVolatilityRegime(mtfConsensus, marketHealth);
   const dominant = pickDominantPattern(timeframes);
   const sequence = computeSequenceInfo(timeframes);
   const forecast = buildForecast(mtfConsensus, dominant, marketHealth, volRegime, symbol);
 
   const findDominantTF = (): Timeframe => {
-    const tfWeight: Record<Timeframe, number> = { '5m': 1, '15m': 2, '30m': 3, '1h': 4, '4h': 5, '1D': 6 };
+    const tfWeight: Record<Timeframe, number> = { '1m': 0.5, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '4h': 5, '1D': 6 };
     let bestTF: Timeframe = '15m';
     let bestScore = -1;
     for (const tfInfo of timeframes) {
@@ -1785,7 +1995,7 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   };
   const dominantTF: Timeframe = findDominantTF();
   const ohlcForBreakout = ohlcByTF[dominantTF] ?? [];
-  const primaryOhlc = ohlcByTF['15m'] ?? ohlcByTF['5m'] ?? ohlcByTF['1h'] ?? [];
+  const primaryOhlc = ohlcByTF['15m'] ?? ohlcByTF['5m'] ?? ohlcByTF['1m'] ?? ohlcByTF['1h'] ?? [];
   const currentPrice = lastPrice ?? primaryOhlc[primaryOhlc.length - 1]?.close ?? 0;
 
   const priorSessionOhlc = ohlcByTF['1D'] ?? ohlcByTF['4h'] ?? [];
@@ -1842,6 +2052,10 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
     marketHealth,
     breakoutLifecycle
   });
+
+  // Spark / breakout detection on the most granular available TF (prefer 1m -> 5m -> 15m)
+  const granularOhlc = ohlcByTF['1m'] ?? ohlcByTF['5m'] ?? ohlcByTF['15m'] ?? [];
+  const sparkSignal = granularOhlc.length ? detectSpark(granularOhlc) : undefined;
 
   const expectedMove = computeExpectedMove(forecast, lastPrice);
   const riskModel = computeRiskModel(mtfConsensus, forecast, volRegime, marketHealth);
@@ -1904,6 +2118,72 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   // ---- Divergence detection ----
   const divergenceOhlc = ohlcByTF['5m'] ?? primaryOhlc;
   const divergence = computeDivergenceFromOHLC(divergenceOhlc, currentPrice, marketHealth);
+
+  // Run institutional engines (scaffolds)
+  const liquidityGeometry = analyzeLiquidityGeometry(ohlcByTF, marketHealth, timeframes);
+  const orderBlock = analyzeOrderBlocks(ohlcByTF, marketHealth, timeframes);
+  const breaker = analyzeBreaker(ohlcByTF, marketHealth, timeframes);
+  const displacement = analyzeDisplacement(ohlcByTF, marketHealth, timeframes);
+  const mitigation = analyzeMitigation(ohlcByTF, marketHealth, timeframes);
+  const inducement = analyzeInducement(ohlcByTF, marketHealth, timeframes);
+  const shadow = analyzeShadow(ohlcByTF, marketHealth, timeframes);
+  const intent = analyzeIntent(ohlcByTF, marketHealth, timeframes);
+  const cycle = analyzeCycle(ohlcByTF, marketHealth, timeframes);
+  const marketDNA = analyzeMarketDNA(ohlcByTF, marketHealth, timeframes);
+  const htfBias = analyzeHTFBias(timeframes, marketHealth);
+  const ltfStructure = analyzeLTFStructure(timeframes, ohlcByTF);
+  const institutionalSignature = analyzeInstitutionalSignature(ohlcByTF, marketHealth, timeframes);
+  const institutionalCore = computeInstitutionalCoreSignal({
+    orderBlock,
+    liquidityGeometry,
+    institutionalSignature,
+    forecast,
+    marketHealth
+  });
+  if (institutionalCore.direction !== 'neutral') {
+    gatedNarrative.push(
+      `Institutional confluence ${institutionalCore.direction.toUpperCase()} (${institutionalCore.score}): ${institutionalCore.reasons[1] ?? institutionalCore.reasons[0]}`
+    );
+  }
+
+  // ---- Tactical / OTM support metrics ----
+  const liquiditySweep = detectLiquiditySweep(primaryOhlc);
+  const candleStrength = computeCandleStrength(primaryOhlc);
+  const vwapSeries = computeVWAPSeries(primaryOhlc);
+  const volSpike = detectVolumeSpike(primaryOhlc);
+  const bullishPower = computeBullishPower(currentPrice, vwapSeries, null, volSpike, { maxAbsGammaStrike: null });
+  const emaCloudVal = computeEMACloud(primaryOhlc) || null;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // Monster OTM: attempt to compute a recommended OTM play (options chain often unavailable here)
+  let monsterOtm: MonsterOTMEngineOutput | undefined = undefined;
+  try {
+    monsterOtm = runMonsterOTMEngine(
+      primaryOhlc,
+      marketHealth as any,
+      liquiditySweep,
+      null,
+      null,
+      candleStrength,
+      bullishPower,
+      emaCloudVal,
+      {
+        strategy: "Fusion placeholder",
+        bias: "neutral",
+        confidence: "low",
+        volRegime: "normal",
+        notes: ["Synthetic tactical placeholder from fusion"],
+        directionScore: 0,
+      }, // tactical placeholder
+      [], // options chain placeholder
+      nowMinutes,
+      undefined,
+      currentPrice
+    );
+  } catch (err) {
+    console.warn('[FUSION] Monster OTM engine error:', err && (err as Error).message);
+  }
 
   // ---- Reversal detection + full Fusion gating ----
   // CRITICAL: Use 5m OHLC for bounce detection - 15m is too slow to catch momentum reversals
@@ -1999,6 +2279,22 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
     timeframes,
     mtfConsensus,
     marketHealth,
+    sparkSignal,
+    liquidityGeometry,
+    orderBlock,
+    breaker,
+    displacement,
+    mitigation,
+    inducement,
+    shadow,
+    intent,
+    cycle,
+    marketDNA,
+    htfBias,
+    ltfStructure,
+    institutionalSignature,
+    institutionalCore,
+    monsterOtm,
     forecast,
     directionalProbabilities,
     expectedMove,

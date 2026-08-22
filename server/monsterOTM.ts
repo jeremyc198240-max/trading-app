@@ -79,6 +79,8 @@ export interface OTMPlay {
   stopPremium: number;
   targetPremium: number;
   expectedMovePoints: number;
+  probability?: number;
+  intentScore?: number;
   notes: string[];
 }
 
@@ -550,6 +552,23 @@ function pickDirection(meta: MetaEngineOutput): "bullish" | "bearish" | null {
   return null;
 }
 
+function hasDirectionalPush(ohlc: OHLC[], direction: "bullish" | "bearish"): boolean {
+  if (ohlc.length < 10) return false;
+
+  const recent = ohlc.slice(-12);
+  const last = recent[recent.length - 1];
+  const prev = recent[recent.length - 2] ?? last;
+  const smaFast = recent.slice(-5).reduce((sum, bar) => sum + bar.close, 0) / 5;
+  const smaSlow = recent.reduce((sum, bar) => sum + bar.close, 0) / recent.length;
+  const momentum = (last.close - prev.close) / Math.max(prev.close, 1e-6);
+
+  if (direction === "bullish") {
+    return last.close > smaFast && smaFast > smaSlow && momentum > 0.0009;
+  }
+
+  return last.close < smaFast && smaFast < smaSlow && momentum < -0.0009;
+}
+
 interface OptionContract {
   strike: number;
   bid: number;
@@ -804,7 +823,22 @@ export function runMonsterOTMSimple(ohlc: OHLC[]): MonsterOTMEngineOutput {
     confidence: pceProb
   };
 
-  const hasMonsterPlay = pce.monster || (quality !== "none" && ignition);
+  const intendedDirection = direction === "none" ? null : direction;
+  const pushConfirmed = intendedDirection ? hasDirectionalPush(ohlc, intendedDirection) : false;
+  const intentScore = Math.max(0, Math.min(1,
+    pce.pceProb * 0.45 +
+    (ignition ? 0.2 : 0) +
+    (pushConfirmed ? 0.2 : 0) +
+    (quality === "A" ? 0.15 : quality === "B" ? 0.08 : 0)
+  ));
+  const probability = Math.max(0.05, Math.min(0.96,
+    pce.pceProb * 0.55 +
+    intentScore * 0.25 +
+    (pushConfirmed ? 0.12 : -0.12) +
+    (ignition ? 0.08 : 0)
+  ));
+
+  const hasMonsterPlay = (pce.monster || (quality !== "none" && ignition)) && pushConfirmed && probability >= 0.6;
 
   if (!hasMonsterPlay) {
     return { hasPlay: false, play: null, meta: baseMeta, pce };
@@ -825,7 +859,11 @@ export function runMonsterOTMSimple(ohlc: OHLC[]): MonsterOTMEngineOutput {
     stopPremium: lastPrice * 0.01 * (1 - CFG.otm.rrStopFraction),
     targetPremium: lastPrice * 0.01 * (1 + CFG.otm.rrTargetFraction),
     expectedMovePoints: roomPoints,
-    notes: pce.monster ? ["monster_setup"] : ["aggressive_setup"]
+    probability: Number((probability * 100).toFixed(1)),
+    intentScore: Number((intentScore * 100).toFixed(1)),
+    notes: pce.monster
+      ? ["monster_setup", "directional_push_confirmed", `intent_${(intentScore * 100).toFixed(0)}`]
+      : ["aggressive_setup", "directional_push_confirmed", `intent_${(intentScore * 100).toFixed(0)}`]
   };
 
   return { hasPlay: true, play, meta: baseMeta, pce };

@@ -48,17 +48,17 @@ export function computeRegime(
   let regime: RegimeClassification['regime'] = 'range';
   let bias: 'bullish' | 'bearish' | 'neutral' = 'neutral';
 
-  const adx = marketHealth.adx;
-  const vwapSlope = marketHealth.vwapSlope;
-  const vol = marketHealth.atr.percent;
+  const adx = marketHealth.adx ?? { trendStrength: 'weak', value: 0 } as any;
+  const vwapSlope = marketHealth.vwapSlope ?? { contribution: 0, value: 0 } as any;
+  const vol = Number.isFinite((marketHealth as any).atr?.percent) ? (marketHealth as any).atr.percent : 0.5;
 
-  if (emaCloud?.trend !== 'neutral' && adx.trendStrength !== 'weak' && Math.abs(vwapSlope.contribution) > 4) {
+  if (emaCloud?.trend !== 'neutral' && adx.trendStrength !== 'weak' && Math.abs(vwapSlope.contribution ?? vwapSlope.value ?? 0) > 4) {
     regime = 'trend';
     bias = emaCloud?.trend || 'neutral';
     notes.push('EMA cloud + ADX trend alignment');
   }
 
-  if (adx.trendStrength === 'weak' && emaCloud?.trend === 'neutral' && Math.abs(vwapSlope.value) < 0.2) {
+  if (adx.trendStrength === 'weak' && emaCloud?.trend === 'neutral' && Math.abs(vwapSlope.value ?? 0) < 0.2) {
     regime = 'range';
     notes.push('Weak trend + VWAP magnet');
   }
@@ -76,12 +76,13 @@ export function computeRegime(
     }
   }
 
-  if (marketHealth.orderflow.contribution > 6 || candleStrength.score > 80) {
+  if ((marketHealth.orderflow?.contribution ?? 0) > 6 || candleStrength.score > 80) {
     regime = 'news_expansion';
     notes.push('Sudden volatility expansion');
   }
 
-  const confidence = Math.min(1, Math.abs(marketHealth.overallHealth - 50) / 50);
+  const healthValue = Number.isFinite((marketHealth as any).overallHealth) ? (marketHealth as any).overallHealth : 50;
+  const confidence = Math.min(1, Math.abs(healthValue - 50) / 50);
 
   return { regime, bias, confidence, notes };
 }
@@ -344,7 +345,8 @@ export function computeMetaConfidence(
 export function computeRecommended0DTEPlay(
   regime: RegimeClassification,
   probabilities: DirectionalProbabilities,
-  timeOfDay: TimeOfDayVolatility
+  timeOfDay: TimeOfDayVolatility,
+  metaConfidence: number
 ): Recommended0DTEPlay {
   const notes: string[] = [];
   let structure = 'FLAT';
@@ -352,6 +354,37 @@ export function computeRecommended0DTEPlay(
   let aggressiveness: Recommended0DTEPlay['aggressiveness'] = 'scalp';
 
   const dom = probabilities.dominant;
+  const directionalValues = [
+    probabilities.continuationUp,
+    probabilities.continuationDown,
+    probabilities.reversalUp,
+    probabilities.reversalDown,
+    probabilities.chop
+  ];
+  const dominantValue = Math.max(...directionalValues);
+  const sortedValues = [...directionalValues].sort((a, b) => b - a);
+  const secondBestValue = sortedValues[1] ?? 0;
+  const weakDominance = dominantValue - secondBestValue < 0.08;
+  const lowQualitySignal =
+    metaConfidence < 0.35 ||
+    probabilities.confidence < 0.35 ||
+    regime.confidence < 0.3 ||
+    dominantValue < 0.45 ||
+    weakDominance;
+
+  if (lowQualitySignal) {
+    structure = 'FLAT';
+    direction = 'neutral';
+    aggressiveness = 'premium_sell';
+    notes.push('Market lacks sufficient 0DTE conviction; wait for clearer, tradable setups.');
+    if (timeOfDay.session === 'after_hours') {
+      notes.push('After-hours spreads and liquidity reduce 0DTE tradability.');
+    }
+    if (regime.regime === 'range') {
+      notes.push('Range regime detected - avoid directional 0DTE entries.');
+    }
+    return { structure, direction, aggressiveness, notes };
+  }
 
   if (dom === 'continuationUp') {
     direction = 'bullish';
@@ -473,7 +506,8 @@ export function computeMetaEngine(
   const recommendedPlay = computeRecommended0DTEPlay(
     regime,
     probabilities,
-    timeOfDay
+    timeOfDay,
+    metaConfidence
   );
 
   return { 

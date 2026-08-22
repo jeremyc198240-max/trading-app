@@ -116,6 +116,7 @@ function PatternRow({
   const qg = qualityGrade(pattern.quality);
   const lc = lifecycleConfig[pattern.state];
   const LcIcon = lc.icon;
+  const confidencePct = Math.round(pattern.confidence);
 
   const handleClick = () => {
     setExpanded(!expanded);
@@ -147,18 +148,31 @@ function PatternRow({
           {pattern.direction === "neutral" && <Minus className="w-3.5 h-3.5 text-muted-foreground" />}
         </div>
 
-        <span className={cn(
-          "text-xs font-semibold truncate flex-1",
-          pattern.direction === "bullish" && "text-emerald-300",
-          pattern.direction === "bearish" && "text-red-300",
-          pattern.direction === "neutral" && "text-foreground"
-        )}>
-          {pattern.name}
-        </span>
-
-        <Badge variant="outline" className={cn("text-[9px] px-1.5 py-0 h-5", categoryColors[pattern.category])}>
-          {categoryLabels[pattern.category]}
-        </Badge>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={cn(
+              "text-xs font-semibold truncate",
+              pattern.direction === "bullish" && "text-emerald-300",
+              pattern.direction === "bearish" && "text-red-300",
+              pattern.direction === "neutral" && "text-foreground"
+            )}>
+              {pattern.name}
+            </span>
+            <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground/80">{categoryLabels[pattern.category]}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1.5">
+            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={cn(
+                  "h-full rounded-full",
+                  pattern.direction === "bullish" ? "bg-emerald-400" : pattern.direction === "bearish" ? "bg-red-400" : "bg-cyan-400"
+                )}
+                style={{ width: `${Math.min(confidencePct, 100)}%` }}
+              />
+            </div>
+            <span className="text-[9px] font-mono text-cyan-100/80">{confidencePct}%</span>
+          </div>
+        </div>
 
         <Badge variant="outline" className={cn("text-[9px] px-1.5 py-0 h-5", lc.color)}>
           <LcIcon className="w-2.5 h-2.5 mr-0.5" />
@@ -168,10 +182,6 @@ function PatternRow({
         <Badge variant="outline" className={cn("text-[9px] font-mono px-1.5 py-0 h-5", qg.color)}>
           {qg.grade}
         </Badge>
-
-        <span className="text-[10px] font-mono text-cyan-100/85 w-8 text-right">
-          {Math.round(pattern.confidence)}%
-        </span>
 
         {expanded ? (
           <ChevronUp className="w-3 h-3 text-muted-foreground flex-shrink-0" />
@@ -236,7 +246,7 @@ function PatternRow({
               <div className="text-[8px] text-cyan-100/60 uppercase">Quality</div>
             </div>
             <div className="text-center">
-              <div className="text-[10px] font-mono font-bold text-cyan-100">{Math.round(pattern.confidence)}%</div>
+              <div className="text-[10px] font-mono font-bold text-cyan-100">{confidencePct}%</div>
               <div className="text-[8px] text-cyan-100/60 uppercase">Confidence</div>
             </div>
             <div className="text-center">
@@ -406,6 +416,10 @@ export function PatternListPanel({
 
   const bullCount = allPatterns.filter((p) => p.direction === "bullish").length;
   const bearCount = allPatterns.filter((p) => p.direction === "bearish").length;
+  const formingCount = allPatterns.filter((p) => p.state === "forming").length;
+  const breakingCount = allPatterns.filter((p) => p.state === "breaking").length;
+  const topSetups = [...sorted].slice(0, 4);
+  const dominantLabel = patternSignal?.dominantPattern ?? topSetups[0]?.name ?? "No active setup";
 
   return (
     <Card className="overflow-visible relative border-cyan-500/30 bg-gradient-to-b from-[#040816]/95 via-[#060d1e]/90 to-[#070f24]/85 shadow-[0_0_34px_rgba(34,211,238,0.14)]" data-testid="pattern-list-panel">
@@ -467,6 +481,52 @@ export function PatternListPanel({
       </CardHeader>
       <CardContent className="relative p-3 space-y-3">
         {patternSignal && <FusionSignalCard signal={patternSignal} />}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="rounded-md border border-cyan-500/20 bg-cyan-500/8 p-2">
+            <div className="text-[9px] uppercase tracking-[0.18em] text-cyan-200/70">Forming</div>
+            <div className="mt-1 text-lg font-mono font-black text-cyan-300">{formingCount}</div>
+          </div>
+          <div className="rounded-md border border-amber-500/20 bg-amber-500/8 p-2">
+            <div className="text-[9px] uppercase tracking-[0.18em] text-amber-200/70">Breaking</div>
+            <div className="mt-1 text-lg font-mono font-black text-amber-300">{breakingCount}</div>
+          </div>
+          <div className="rounded-md border border-emerald-500/20 bg-emerald-500/8 p-2">
+            <div className="text-[9px] uppercase tracking-[0.18em] text-emerald-200/70">Bullish</div>
+            <div className="mt-1 text-lg font-mono font-black text-emerald-300">{bullCount}</div>
+          </div>
+          <div className="rounded-md border border-red-500/20 bg-red-500/8 p-2">
+            <div className="text-[9px] uppercase tracking-[0.18em] text-red-200/70">Bearish</div>
+            <div className="mt-1 text-lg font-mono font-black text-red-300">{bearCount}</div>
+          </div>
+        </div>
+
+        {topSetups.length > 0 && (
+          <div className="rounded-md border border-cyan-500/20 bg-black/20 p-2">
+            <div className="text-[9px] font-bold uppercase tracking-[0.22em] text-cyan-300/80 mb-2">Top setups</div>
+            <div className="flex flex-wrap gap-1.5">
+              {topSetups.map((pattern) => (
+                <button
+                  key={`${pattern.name}-${pattern.startIndex}`}
+                  type="button"
+                  onClick={() => onSelectPattern?.(pattern)}
+                  className={cn(
+                    "rounded-full border px-2 py-1 text-[9px] font-medium transition-all",
+                    pattern.direction === "bullish" ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" :
+                    pattern.direction === "bearish" ? "border-red-400/40 bg-red-500/10 text-red-200" :
+                    "border-cyan-400/40 bg-cyan-500/10 text-cyan-200",
+                    selectedPatternName === pattern.name && "ring-1 ring-cyan-300/60"
+                  )}
+                >
+                  {pattern.name} · {Math.round(pattern.confidence)}%
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 text-[10px] text-cyan-100/70">
+              Dominant watch: <span className="font-semibold text-cyan-300">{dominantLabel}</span>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5 flex-wrap rounded-md border border-cyan-500/20 bg-cyan-500/5 p-1.5">
           <Filter className="w-3 h-3 text-muted-foreground" />

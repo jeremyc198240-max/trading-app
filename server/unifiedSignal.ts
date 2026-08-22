@@ -1280,7 +1280,7 @@ export function computeUnifiedSignal(params: {
   // 0DTE Entry Zone: TIGHT ±0.15% around current price for same-day execution
   // This is the actionable entry window, NOT the full breakout range
   const ENTRY_ZONE_PCT = 0.0015; // ±0.15%
-  const entryZone = params.entryZone ?? {
+  let entryZone = params.entryZone ?? {
     low: currentPrice * (1 - ENTRY_ZONE_PCT),
     high: currentPrice * (1 + ENTRY_ZONE_PCT)
   };
@@ -1288,10 +1288,16 @@ export function computeUnifiedSignal(params: {
   // Generate 0DTE-appropriate targets and stop loss
   // For 0DTE options, we need TIGHT levels - typically 0.3-0.8% moves
   const corvonaLevels = snapshot.corvonaLevels;
-  const volatilityMultiplier = snapshot.volatilityRegime.regime === 'high' ? 1.4 : 
-                                snapshot.volatilityRegime.regime === 'low' ? 0.6 : 1.0;
+  const volatilityMultiplier = snapshot.volatilityRegime?.regime === 'high' ? 1.4 : 
+                                snapshot.volatilityRegime?.regime === 'low' ? 0.6 : 1.0;
   
   const { mtfConsensus, forecast, volatilityRegime, riskModel, directionalProbabilities, gatingState } = snapshot;
+  const mtfBullish = Number(mtfConsensus.bullishStack ?? 0);
+  const mtfBearish = Number(mtfConsensus.bearishStack ?? 0);
+  const mtfDominanceGap = Math.abs(mtfBullish - mtfBearish);
+  const mtfDirectionMismatch =
+    (mtfConsensus.trendConsensus === 'bullish' && mtfBearish > mtfBullish) ||
+    (mtfConsensus.trendConsensus === 'bearish' && mtfBullish > mtfBearish);
 
   // =============== NEW WEIGHTED FUSION PIPELINE ===============
   // Step 1: Determine dominant trend for context
@@ -1303,19 +1309,36 @@ export function computeUnifiedSignal(params: {
   const normalizedInputs = normalizeInputs({ snapshot, dominantTrend });
 
   // Step 3: Apply weighted fusion with timeframe priority, trend bonuses, and volatility mode switching
-  const fusionResult = computeWeightedFusion(normalizedInputs, volatilityRegime.regime);
+  const fusionResult = computeWeightedFusion(normalizedInputs, volatilityRegime?.regime);
+
+  const breakoutType = String((snapshot as any)?.monsterOtm?.breakout?.type ?? 'none').toLowerCase();
+  const breakoutTriggered = Boolean((snapshot as any)?.monsterOtm?.breakout?.triggered);
+  const breakoutBias: 'CALL' | 'PUT' | 'WAIT' =
+    breakoutTriggered && breakoutType.includes('up')
+      ? 'CALL'
+      : breakoutTriggered && breakoutType.includes('down')
+        ? 'PUT'
+        : 'WAIT';
+
+  // If the spark detector indicates an imminent breakout, modestly boost fusion confidence
+  if (snapshot.sparkSignal && snapshot.sparkSignal.isIgniting) {
+    const boost = Math.round(snapshot.sparkSignal.sparkScore * 0.18); // up to ~18 points
+    fusionResult.confidence = Math.min(100, fusionResult.confidence + boost);
+    fusionResult.reasonStack.unshift(`Spark detector: ${snapshot.sparkSignal.phase} (score ${snapshot.sparkSignal.sparkScore})`);
+  }
 
   // =============== TARGET CALCULATION ===============
   // 0DTE PREMIUM-OPTIMIZED targets based on CURRENT price
   // H1/L1 = ±0.30% from current = ~25-30% premium gain
   // H2/L2 = ±0.50% from current = ~40-50% premium gain  
   // H3/L3 = ±0.75% from current = ~60-75% premium gain
-  const h1 = Math.round(currentPrice * 1.003 * 100) / 100;  // +0.30%
-  const h2 = Math.round(currentPrice * 1.005 * 100) / 100;  // +0.50%
-  const h3 = Math.round(currentPrice * 1.0075 * 100) / 100; // +0.75%
-  const l1 = Math.round(currentPrice * 0.997 * 100) / 100;  // -0.30%
-  const l2 = Math.round(currentPrice * 0.995 * 100) / 100;  // -0.50%
-  const l3 = Math.round(currentPrice * 0.9925 * 100) / 100; // -0.75%
+  const validPrice = Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : 100;
+  const h1 = Math.round(validPrice * 1.003 * 100) / 100;  // +0.30%
+  const h2 = Math.round(validPrice * 1.005 * 100) / 100;  // +0.50%
+  const h3 = Math.round(validPrice * 1.0075 * 100) / 100; // +0.75%
+  const l1 = Math.round(validPrice * 0.997 * 100) / 100;  // -0.30%
+  const l2 = Math.round(validPrice * 0.995 * 100) / 100;  // -0.50%
+  const l3 = Math.round(validPrice * 0.9925 * 100) / 100; // -0.75%
 
   const buildLevelsForDirection = (
     direction: 'CALL' | 'PUT' | 'WAIT'
@@ -1347,10 +1370,10 @@ export function computeUnifiedSignal(params: {
       direction: snapshot.emaTrend.direction,
       strength: snapshot.emaTrend.strength
     } : undefined,
-    riskModel: {
+    riskModel: riskModel ? {
       riskIndex: riskModel.riskIndex,
       failureProb: riskModel.failureProb
-    }
+    } : { riskIndex: 0.5, failureProb: 0.5 }
   });
 
   const confResult = computeUnifiedConfidence({
@@ -1451,7 +1474,7 @@ export function computeUnifiedSignal(params: {
   );
 
   // Calculate 0DTE strike targets
-  const expectedMove = snapshot.forecast.expectedMovePct ?? 0;
+  const expectedMove = snapshot.forecast?.expectedMovePct ?? 0;
   const signalStrikeTargets = calculateStrikeTargets(currentPrice, dirResult.direction, state, expectedMove);
 
   // 0DTE-focused recommended actions
@@ -1646,6 +1669,46 @@ export function computeUnifiedSignal(params: {
     }
   }
 
+  const pushAgainstSignal =
+    (safeDirection === 'CALL' && priceActionSafety.momentumDirection === 'bearish' && priceActionSafety.momentumStrength >= 0.45) ||
+    (safeDirection === 'PUT' && priceActionSafety.momentumDirection === 'bullish' && priceActionSafety.momentumStrength >= 0.45);
+
+  if (pushAgainstSignal) {
+    safeDirection = 'WAIT';
+    safeConfidence = Math.min(safeConfidence, 35);
+    state = 'STALE';
+    recommendedAction = `INTRADAY SAFETY: Price pushing ${priceActionSafety.momentumDirection}. Hold ${fusionResult.direction} and wait for push alignment.`;
+    reasons.push({
+      label: `Intraday push mismatch: momentum ${priceActionSafety.momentumDirection} contradicts ${fusionResult.direction}`,
+      weight: 0.85,
+      impact: 'risk'
+    });
+  }
+
+  if (mtfDirectionMismatch || (mtfDominanceGap < 0.15 && mtfConsensus.alignmentScore < 0.62)) {
+    safeDirection = 'WAIT';
+    safeConfidence = Math.min(safeConfidence, 40);
+    state = 'STALE';
+    recommendedAction = 'MTF stack conflict. Wait for cleaner intraday alignment before entering.';
+    reasons.push({
+      label: `MTF stack sanity gate tripped (${mtfBullish.toFixed(2)} bull vs ${mtfBearish.toFixed(2)} bear)`,
+      weight: 0.8,
+      impact: 'risk'
+    });
+  }
+
+  if (breakoutBias !== 'WAIT' && safeDirection !== 'WAIT' && safeDirection !== breakoutBias) {
+    safeDirection = 'WAIT';
+    safeConfidence = Math.min(safeConfidence, 35);
+    state = 'STALE';
+    recommendedAction = `Breakout alert is ${breakoutBias}. Blocking opposite ${fusionResult.direction} until direction confirms.`;
+    reasons.push({
+      label: `Breakout guard: breakout alert ${breakoutBias} conflicts with ${fusionResult.direction}`,
+      weight: 0.85,
+      impact: 'risk'
+    });
+  }
+
   // =============== MEMORY SMOOTHING ===============
   const hasActiveReversal = !!(snapshot.reversalSignal && snapshot.reversalSignal.reversalSignal);
   const memorySmoothing = applyMemorySmoothing(
@@ -1659,7 +1722,21 @@ export function computeUnifiedSignal(params: {
     hadReversal: hasActiveReversal
   });
 
-  const finalDirection = memorySmoothing.smoothedDirection;
+  let finalDirection = memorySmoothing.smoothedDirection;
+
+  // A prior directional reading must never revive an entry after the current fusion gate blocks it.
+  // Memory smoothing is for display stability, not permission to bypass live risk controls.
+  if (!gatingState.metaAllowed) {
+    finalDirection = 'WAIT';
+    safeConfidence = Math.min(safeConfidence, 30);
+    state = 'INACTIVE';
+    recommendedAction = `❌ INACTIVE - Gating blocked. ${gatingState.reasons[0] ?? 'Conditions not met for 0DTE entry.'}`;
+    reasons.push({
+      label: 'Live gate blocks memory-smoothed direction',
+      weight: 0.9,
+      impact: 'risk'
+    });
+  }
 
   const levelsAlignWithDirection = (
     direction: 'CALL' | 'PUT' | 'WAIT',
@@ -1677,9 +1754,40 @@ export function computeUnifiedSignal(params: {
     return (stopLossValue as number) > entryPrice && targetValues.every((target) => target < entryPrice);
   };
 
+  const expansionDetected = breakoutTriggered && breakoutBias !== 'WAIT';
+  if (expansionDetected) {
+    finalDirection = breakoutBias;
+    if (state !== 'INACTIVE') {
+      state = 'ACTIVE';
+    }
+  }
+
   const finalDirectionalLevels = buildLevelsForDirection(finalDirection);
-  let resolvedTargets = providedTargets ?? finalDirectionalLevels.targets;
+  let resolvedTargets = Array.isArray(providedTargets) && providedTargets.length > 0
+    ? providedTargets
+    : finalDirectionalLevels.targets;
   let resolvedStopLoss = providedStopLoss ?? finalDirectionalLevels.stopLoss;
+
+  if (expansionDetected && corvonaLevels) {
+    if (finalDirection === 'CALL') {
+      resolvedTargets = [corvonaLevels.H1, corvonaLevels.H2, corvonaLevels.H3].filter((x) => Number.isFinite(x) && x > currentPrice);
+      resolvedStopLoss = Number.isFinite(corvonaLevels.L1) ? corvonaLevels.L1 : resolvedStopLoss;
+      if (resolvedTargets.length > 0) {
+        recommendedAction = `EXPANSION DETECTED: Target R1 ${corvonaLevels.H1.toFixed(2)}, R2 ${corvonaLevels.H2.toFixed(2)}, R3 ${corvonaLevels.H3.toFixed(2)}.`;
+      }
+    } else if (finalDirection === 'PUT') {
+      resolvedTargets = [corvonaLevels.L1, corvonaLevels.L2, corvonaLevels.L3].filter((x) => Number.isFinite(x) && x < currentPrice);
+      resolvedStopLoss = Number.isFinite(corvonaLevels.H1) ? corvonaLevels.H1 : resolvedStopLoss;
+      if (resolvedTargets.length > 0) {
+        recommendedAction = `EXPANSION DETECTED: Target S1 ${corvonaLevels.L1.toFixed(2)}, S2 ${corvonaLevels.L2.toFixed(2)}, S3 ${corvonaLevels.L3.toFixed(2)}.`;
+      }
+    }
+    reasons.push({
+      label: `Expansion detected from breakout alert (${breakoutType || 'triggered'})`,
+      weight: 0.72,
+      impact: breakoutBias === 'CALL' ? 'bullish' : breakoutBias === 'PUT' ? 'bearish' : 'info'
+    });
+  }
 
   if (!levelsAlignWithDirection(finalDirection, currentPrice, resolvedStopLoss, resolvedTargets)) {
     resolvedTargets = finalDirectionalLevels.targets;
@@ -1716,7 +1824,7 @@ export function computeUnifiedSignal(params: {
     finalDirection === 'PUT' ? 'bearish' : 'neutral';
   const strikeTargets = calculateStrikeTargets(currentPrice, strikeBias, state, expectedMove);
 
-  const rr =
+  let rr =
     entryZone && resolvedStopLoss && resolvedTargets.length > 0 && entryZone.low > 0
       ? Math.abs((resolvedTargets[0] - entryZone.low) / (entryZone.low - resolvedStopLoss))
       : null;
@@ -1737,7 +1845,7 @@ export function computeUnifiedSignal(params: {
     optionBReasons.push(`✅ OPTION B QUALIFIED - Trade this setup!`);
   }
 
-  if (finalDirection !== 'WAIT') {
+  if (state === 'ACTIVE' && finalDirection !== 'WAIT') {
     unifiedPlay = {
       type: finalDirection,
       symbol: snapshot.symbol,
@@ -1751,6 +1859,13 @@ export function computeUnifiedSignal(params: {
       confidence: outputConfidence,
       reason: fusionResult.reasonStack[0] ?? 'Weighted fusion signal'
     };
+  }
+
+  if (state === 'INACTIVE' || finalDirection === 'WAIT') {
+    entryZone = { low: 0, high: 0 };
+    resolvedStopLoss = null;
+    resolvedTargets = [];
+    rr = null;
   }
 
   return {

@@ -406,7 +406,7 @@ function FuturisticLineMeter({
 }
 
 export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalysisPanelProps) {
-  const { data: fusionData, isLoading: fusionLoading } = useQuery<FusionData>({
+  const { data: fusionData, isLoading: fusionLoading, error: fusionError, refetch: refetchFusion } = useQuery<FusionData>({
     queryKey: ['/api/fusion', symbol],
     enabled: !!symbol,
     staleTime: 8000,
@@ -455,6 +455,28 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
             <div className="h-10 bg-cyan-500/5 rounded" />
             <div className="h-10 bg-cyan-500/5 rounded" />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (fusionError) {
+    return (
+      <div className="relative rounded-md border border-rose-500/30 bg-rose-950/5 p-3">
+        <div className="text-center text-sm text-rose-100">
+          Fusion trade data failed to load.
+        </div>
+        <div className="text-center text-xs text-rose-300 mt-2">
+          {fusionError instanceof Error ? fusionError.message : 'Unknown error'}
+        </div>
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={() => refetchFusion()}
+            className="rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-100 transition hover:bg-rose-500/20"
+          >
+            Retry fusion
+          </button>
         </div>
       </div>
     );

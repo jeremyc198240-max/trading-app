@@ -1,0 +1,5 @@
+{
+  "freshnessTauMs": 7200000,
+  "ensembleCalibrationAlpha": 1,
+  "ensembleCalibrationPrior": 0.4788051209103841
+}

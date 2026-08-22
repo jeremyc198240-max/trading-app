@@ -3,7 +3,7 @@ import { Target, AlertTriangle, CheckCircle, Sparkles, Activity, Zap, TrendingUp
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { UnifiedOptionsPlay } from "@shared/schema";
+import type { SmartSignal, UnifiedOptionsPlay } from "@shared/schema";
 import { useState, useEffect } from "react";
 
 interface UnifiedSignalSummary {
@@ -46,6 +46,7 @@ interface MLCalibrationData {
   panelTopPlay?: PanelTopPlay | null;
   panelSummary?: string;
   panelDirection?: 'bullish' | 'bearish' | 'neutral';
+  smartSignal?: SmartSignal | null;
 }
 
 export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; timeframe?: string }) {
@@ -79,6 +80,7 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
       let panelTopPlay: PanelTopPlay | null = null;
       let panelSummary = "";
       let panelDirection: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+      let smartSignal: SmartSignal | null = null;
 
       if (volatilityResponse.ok) {
         const volData = await volatilityResponse.json();
@@ -93,8 +95,10 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
             unifiedConfidence: Number(fusionData?.unifiedSignal?.unifiedConfidence ?? calibrationData?.calibration?.confidence ?? 0),
             state: fusionData?.unifiedSignal?.state ?? undefined,
           };
+          smartSignal = fusionData?.smartSignal ?? null;
         } catch {
           unifiedSignal = null;
+          smartSignal = null;
         }
       }
 
@@ -121,6 +125,7 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
         panelTopPlay,
         panelSummary,
         panelDirection,
+        smartSignal,
       };
     },
     refetchInterval: 30000,
@@ -139,6 +144,7 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
     panelTopPlay: null,
     panelSummary: "",
     panelDirection: 'neutral' as const,
+    smartSignal: null,
   };
 
   const fallbackCandidate = (topPlay: PanelTopPlay, panelDirection: 'bullish' | 'bearish' | 'neutral'): PanelOptionCandidate => {
@@ -156,7 +162,6 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
       confidence,
       score: topPlay.score.total,
       source: 'Top play',
-      label: panelDirection === 'neutral' ? 'Top synthetic play' : `${panelDirection.toUpperCase()} candidate`,
     };
   };
 
@@ -229,7 +234,7 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
   const SCAN = { background: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.009) 3px,rgba(255,255,255,0.009) 4px)" };
 
   // Arc dial — engine HUD style
-  const ArcDial = ({ value, label, hex, size = 72 }: { value: number; label: string; hex: string; size?: number }) => {
+  const ArcDial = ({ value, label, hex, size = 72, stateLabel }: { value: number; label: string; hex: string; size?: number; stateLabel?: string }) => {
     const [v, setV] = useState(0);
     useEffect(() => { const t = setTimeout(() => setV(value), 130); return () => clearTimeout(t); }, [value]);
     const r = size / 2 - 11; const outerR = size / 2 - 4; const cx = size / 2; const cy = size / 2;
@@ -280,7 +285,7 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
             fontSize={size < 80 ? 13 : 15} fontWeight="900" fontFamily="monospace"
             style={{ filter: `drop-shadow(0 0 6px ${hex}99)` }}>{Math.round(v)}</text>
           <text x={cx} y={cy + 9} textAnchor="middle" dominantBaseline="middle" fill="rgba(255,255,255,0.32)" fontSize="5.5" fontWeight="700" letterSpacing="1.5">
-            {v >= 65 ? "BULL" : v <= 35 ? "BEAR" : "NEUT"}
+            {stateLabel ?? (v >= 65 ? "BULL" : v <= 35 ? "BEAR" : "NEUT")}
           </text>
         </svg>
         <span className="text-[7px] font-black tracking-widest uppercase text-white/25">{label}</span>
@@ -384,11 +389,18 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
           </div>
         </div>
 
-        {/* 3 Signal Dials */}
-        <div className="grid grid-cols-3 gap-1 pt-0.5">
+        {/* Signal dials */}
+        <div className="grid grid-cols-2 gap-1 pt-0.5 sm:grid-cols-4">
           <ArcDial value={calibrationData.calibrationScore} label="Calibration" hex={theme.hex} size={68} />
           <ArcDial value={calibrationData.stability} label="Stability" hex={theme.hex} size={68} />
           <ArcDial value={Math.min(100, Math.round(calibrationData.volatilityPrediction * 100))} label="Volatility" hex={theme.hex} size={68} />
+          <ArcDial
+            value={calibrationData.smartSignal?.probability ?? 0}
+            label="Smart Move"
+            hex={theme.hex}
+            size={68}
+            stateLabel={calibrationData.smartSignal?.direction ?? "WAIT"}
+          />
         </div>
 
         {/* Intraday meter strip */}
@@ -396,6 +408,12 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
           <div className="text-[8px] font-black tracking-widest uppercase text-white/28">Signal Pulse</div>
           <BarGauge name="ML Score" strength={calibrationData.calibrationScore} subtext={`${calibrationData.status === 'stable' ? '✓ STABLE' : calibrationData.status === 'needs_attention' ? '⚠ CAUTION' : '● CALIBRATING'}`} />
           <BarGauge name="Confidence" strength={calibrationData.confidence} subtext={calibrationData.volatilityPrediction <= 0.035 ? "✓ 0DTE READY" : "● MONITOR"} delay={60} />
+          <BarGauge
+            name="Historical Reliability"
+            strength={calibrationData.smartSignal?.reliability ?? 0}
+            subtext={calibrationData.smartSignal ? `${calibrationData.smartSignal.sampleSize} MATCHES · ${calibrationData.smartSignal.status}` : "SYNCING HISTORY"}
+            delay={120}
+          />
         </div>
 
         {/* Option play preview */}

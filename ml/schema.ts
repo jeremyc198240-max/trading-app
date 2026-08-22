@@ -23,6 +23,9 @@ export interface MLRawInput {
   phase?: string;
   mode?: string;
   directionalBias?: number | string;
+  leadMinutes?: number;
+  edgeSignal?: string;
+  edgeState?: string;
   otmDelta?: number;
   macdHistogram?: number;
   macdTrend?: string;
@@ -120,6 +123,7 @@ export const BASE_FEATURE_NAMES = [
   'phaseReady',
   'phasePrepare',
   'modeScalar',
+  'directionalBiasScalar',
   'deltaNorm',
   'qualityFusion',
   'structureFusion',
@@ -140,6 +144,9 @@ export const NEW_FEATURE_NAMES = [
   'liquiditySweepFlag',
   'impulseVectorSlope',
   'microTrendAcceleration',
+  'leadTimeBias',
+  'edgeStateScore',
+  'edgeSignalScore',
   'patternScore',
 ];
 

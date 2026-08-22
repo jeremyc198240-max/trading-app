@@ -36,6 +36,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    hmr: {
+      overlay: false, // Disable error overlay to see real errors in console
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],

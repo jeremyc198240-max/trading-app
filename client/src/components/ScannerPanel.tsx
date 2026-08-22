@@ -159,7 +159,7 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
 
   const { data: results, isLoading } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     staleTime: 5000,
   });
 

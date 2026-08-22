@@ -593,6 +593,52 @@ export const analysisPayloadSchema = z.object({
   drawablePatterns: z.array(drawablePatternSchema).optional(),
   normalizedPatterns: z.array(normalizedPatternSchema).optional(),
   patternSignal: fusionPatternSignalSchema.optional(),
+  marketDNA: z.object({
+    reliability: z.number(),
+    fingerprint: z.record(z.number()),
+  }).optional(),
+  monsterOtm: z.object({
+    hasPlay: z.boolean(),
+    play: z.object({
+      side: z.enum(['call', 'put']),
+      strike: z.number(),
+      premium: z.number(),
+      delta: z.number(),
+      roomPoints: z.number(),
+      quality: z.enum(['A', 'B', 'none']),
+      monster: z.boolean(),
+      probability: z.number().optional(),
+      hitProbability: z.number().optional(),
+      targetPrice: z.number().optional(),
+      stopPrice: z.number().optional(),
+      supportLevel: z.number().optional(),
+      resistanceLevel: z.number().optional(),
+      breakoutAlert: z.string().optional(),
+      intentScore: z.number().optional(),
+      reason: z.string().optional(),
+    }).nullable(),
+    pce: z.object({
+      pullbackScore: z.number(),
+      compressionScore: z.number(),
+      expansionScore: z.number(),
+      pceRaw: z.number(),
+      pceScore: z.number(),
+      pceProb: z.number(),
+      quality: z.enum(['A', 'B', 'C', 'none']),
+      direction: z.enum(['bullish', 'bearish', 'none']),
+      notes: z.array(z.string()),
+      ignition: z.boolean(),
+    }),
+  }).optional(),
+  highWinSystem: z.object({
+    engine: z.enum(['fusion', 'scanner']),
+    label: z.string(),
+    winRate: z.number(),
+    sampleSize: z.number(),
+    lookbackHours: z.number(),
+    confidence: z.enum(['high', 'medium', 'low']),
+    recommendation: z.string(),
+  }).optional(),
 });
 
 export type AnalysisPayload = z.infer<typeof analysisPayloadSchema>;
@@ -700,3 +746,119 @@ export const unifiedOptionsPlaySchema = z.object({
 });
 
 export type UnifiedOptionsPlay = z.infer<typeof unifiedOptionsPlaySchema>;
+
+export const smartSignalSideSchema = z.object({
+  direction: z.enum(['CALL', 'PUT']),
+  probability: z.number(),
+  historicalWinRate: z.number().nullable(),
+  modelProbability: z.number(),
+  sampleSize: z.number(),
+  reliability: z.number(),
+  averageSimilarity: z.number(),
+});
+
+export const smartSignalSchema = z.object({
+  direction: z.enum(['CALL', 'PUT', 'WAIT']),
+  probability: z.number(),
+  confidence: z.number(),
+  historicalWinRate: z.number().nullable(),
+  sampleSize: z.number(),
+  reliability: z.number(),
+  status: z.enum(['READY', 'LEARNING', 'COLD_START']),
+  agreement: z.boolean(),
+  sides: z.object({
+    call: smartSignalSideSchema,
+    put: smartSignalSideSchema,
+  }),
+  reasons: z.array(z.string()),
+  trainedAt: z.number(),
+});
+
+export type SmartSignal = z.infer<typeof smartSignalSchema>;
+
+// Engine Intake Log Entry (10-minute signal collection)
+export const signalSnapshotSchema = z.object({
+  symbol: z.string(),
+  timeframe: z.string(),
+  signalType: z.string().nullable(),
+  direction: z.enum(['bullish', 'bearish', 'neutral']),
+  breakoutScore: z.number().optional(),
+  edgeScore: z.number().optional(),
+  confidence: z.number().optional(),
+  triggers: z.array(z.string()),
+  indicators: z.object({
+    rsi: z.number().optional(),
+    adx: z.number().optional(),
+    momentum: z.number().optional(),
+    volumeSpike: z.number().optional(),
+    bbPercentB: z.number().optional(),
+    stochasticK: z.number().optional(),
+  }).optional(),
+});
+
+export const engineOutputSnapshotSchema = z.object({
+  engineName: z.string(),
+  outputType: z.string(),
+  symbol: z.string(),
+  timeframe: z.string().optional(),
+  active: z.boolean().optional(),
+  bias: z.string().optional(),
+  strength: z.number().optional(),
+  edgeScore: z.number().optional(),
+  confidence: z.number().optional(),
+  modelProbability: z.number().optional(),
+  decision: z.string().optional(),
+  reasons: z.array(z.string()).optional(),
+  details: z.record(z.unknown()).optional(),
+});
+
+export type SignalSnapshot = z.infer<typeof signalSnapshotSchema>;
+export type EngineOutputSnapshot = z.infer<typeof engineOutputSnapshotSchema>;
+
+export const topTriggerSchema = z.object({
+  reason: z.string(),
+  frequency: z.number(),
+  avgScore: z.number(),
+});
+
+export type TopTrigger = z.infer<typeof topTriggerSchema>;
+
+export const engineIntakeEntrySchema = z.object({
+  timestamp: z.string(),
+  unixMs: z.number(),
+  intervalMinutes: z.number(),
+  isMarketOpen: z.boolean(),
+  summary: z.object({
+    totalSymbolsScanned: z.number(),
+    signalsCreated: z.number(),
+    engineOutputsCaptured: z.number(),
+    signalsByType: z.record(z.number()),
+    signalsByDirection: z.record(z.number()),
+    avgBreakoutScore: z.number(),
+    avgEdgeScore: z.number(),
+    avgConfidence: z.number(),
+  }),
+  signals: z.array(signalSnapshotSchema),
+  engineOutputs: z.array(engineOutputSnapshotSchema),
+  bySymbol: z.record(z.object({
+    scanned: z.boolean(),
+    signalsCreated: z.number(),
+    signalTypes: z.array(z.string()),
+    highestScore: z.number(),
+    avgConfidence: z.number(),
+  })),
+  topTriggers: z.array(topTriggerSchema),
+  engineState: z.object({
+    averageState: z.record(z.number()),
+    averageLeadMinutes: z.number(),
+    triggerReadiness: z.number(),
+  }),
+  quality: z.object({
+    readinessScore: z.number(),
+    healthScore: z.enum(['A', 'B', 'C', 'D', 'F']),
+    volatilityRegime: z.string(),
+    marketCondition: z.string(),
+  }),
+});
+
+export type EngineIntakeEntry = z.infer<typeof engineIntakeEntrySchema>;

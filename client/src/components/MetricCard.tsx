@@ -314,6 +314,7 @@ import { cn } from "@/lib/utils";
 import type { DrawablePattern } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { toast } from "@/hooks/use-toast";
 
 interface ScannerResult {
   lastIndex?: number;
@@ -1667,7 +1668,7 @@ export function PriceCard({
   const { data: scannerResults } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
     enabled: !!symbol,
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     staleTime: 5000,
   });
 
@@ -3092,10 +3093,11 @@ export function BreakoutAlertBar({
   const cardHoldRef = useRef<Map<string, { until: number; direction: 'bullish' | 'bearish' | 'neutral' }>>(new Map());
   const lastVisibleSymbolsRef = useRef<Set<string>>(new Set());
   const directionLockRef = useRef<Map<string, { until: number; direction: 'bullish' | 'bearish' | 'neutral' }>>(new Map());
+  const deliveredExecuteAlertKeysRef = useRef<Set<string>>(new Set());
 
   const { data: results } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     staleTime: 5000,
   });
 
@@ -4056,6 +4058,32 @@ export function BreakoutAlertBar({
   ]
     .slice(0, MAX_VISIBLE_ALERTS);
 
+  const spyExecuteNotices = monitoredAlertsStable
+    .map((row) => {
+      if (row.symbolUpper !== "SPY" || !row.strongExecuteCard) return null;
+
+      const executeLog = symbolLogStats.get("SPY")?.latestExecute;
+      const executeTimestamp = toFiniteNumber(executeLog?.timestamp);
+      const executeAgeMs = executeTimestamp == null ? Number.POSITIVE_INFINITY : Math.max(0, Date.now() - executeTimestamp);
+      const executeDirection = String(executeLog?.direction ?? "").toLowerCase();
+      if (
+        getBreakoutLogMode(executeLog) !== "EXECUTE" ||
+        String(executeLog?.outcome ?? "").toLowerCase() !== "pending" ||
+        executeAgeMs > BREAKOUT_SCAN_FRESHNESS_MAX_MS ||
+        (executeDirection !== "bullish" && executeDirection !== "bearish")
+      ) {
+        return null;
+      }
+
+      const side = executeDirection === "bullish" ? "CALL" : "PUT";
+      return {
+        key: `SPY:${executeTimestamp}:${executeDirection}`,
+        title: `SPY ${side} execute alert`,
+        description: `${side} setup is live: ${Math.round(row.alert.breakoutScore ?? 0)} breakout score, ${Math.round(row.alert.edgeEngine?.confidence ?? 0)}% confidence. Confirm the live price break before entry.`,
+      };
+    })
+    .filter((notice): notice is { key: string; title: string; description: string } => notice !== null);
+
   useEffect(() => {
     const next = new Set<string>();
     for (const row of monitoredAlertsStable) {
@@ -4063,6 +4091,18 @@ export function BreakoutAlertBar({
     }
     lastVisibleSymbolsRef.current = next;
   }, [monitoredAlertsStable]);
+
+  useEffect(() => {
+    for (const notice of spyExecuteNotices) {
+      if (deliveredExecuteAlertKeysRef.current.has(notice.key)) continue;
+      deliveredExecuteAlertKeysRef.current.add(notice.key);
+
+      toast({ title: notice.title, description: notice.description });
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification(notice.title, { body: notice.description });
+      }
+    }
+  }, [spyExecuteNotices]);
 
   if (monitoredAlertsStable.length > 0) {
     return (
