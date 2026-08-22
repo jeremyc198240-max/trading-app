@@ -2623,41 +2623,45 @@ export function PriceCard({
               </div>
             </div>
 
-            {/* ── EXPLOSION ALERT BANNER (compact, top of engine, when surging) ── */}
+            {/* ── EXPLOSIVE MOVE ALERT BANNER (radar-style compact card) ── */}
             {surgeHeat >= 0.45 && (
-              <div className="relative mb-1.5 overflow-hidden rounded-lg border px-3 py-2"
-                style={{ borderColor: surgeColor + (isSurging ? "99" : "55"), background: isSurging ? surgeColor + "15" : surgeColor + "08",
-                  boxShadow: isSurging ? `0 0 22px ${surgeColor}45, inset 0 0 18px ${surgeColor}10` : "none" }}>
-                {isSurging && <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,255,255,0.007) 3px,rgba(255,255,255,0.007) 4px)" }} />}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {isSurging && (
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: surgeColor }} />
-                        <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: surgeColor }} />
-                      </span>
-                    )}
-                    <span className="text-[9px] font-black tracking-[0.2em] uppercase" style={{ color: surgeColor }}>⚡ {isSurging ? "EXPLOSIVE MOVE" : "BUILDING"}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {/* CALL/PUT prominent badge in surge banner */}
-                    <div className="rounded border px-3 py-1" style={{ borderColor: callPutColor + "66", background: callPutColor + "18" }}>
-                      <span className="text-[18px] font-black font-mono tracking-[0.12em]" style={{ color: callPutColor, textShadow: `0 0 12px ${callPutColor}99` }}>
-                        {callPutSignal}
-                      </span>
+              <div className={`aegis-alert-banner ${isSurging ? "is-flashing" : ""}`} style={{ borderColor: surgeColor + "66", boxShadow: isSurging ? `0 0 24px ${surgeColor}35` : `0 0 18px ${surgeColor}18` }}>
+                <div className={`aegis-alert-radar is-${callPutSignal.toLowerCase()}`}>
+                  <div className="warroom-smart-engine is-call" style={{ minHeight: "7.2rem", minWidth: 0 }}>
+                    <div className="warroom-smart-engine__orbit"><i /><i /><i /></div>
+                    <svg viewBox="0 0 180 180" role="img" aria-label={`${callPutSignal} alert radar`}>
+                      <circle className="warroom-smart-engine__halo" cx="90" cy="90" r="82" />
+                      <circle className="warroom-smart-engine__track" cx="90" cy="90" r="70" pathLength="100" />
+                      <circle className="warroom-smart-engine__probability" cx="90" cy="90" r="70" pathLength="100" style={{ strokeDasharray: `${Math.min(100, Math.round(surgeHeat * 100))} ${100 - Math.min(100, Math.round(surgeHeat * 100))}` }} />
+                      <circle className="warroom-smart-engine__track is-inner" cx="90" cy="90" r="55" pathLength="100" />
+                      <circle className="warroom-smart-engine__confidence" cx="90" cy="90" r="55" pathLength="100" style={{ strokeDasharray: `${Math.min(100, Math.round(surgeHeat * 100 + 12))} ${100 - Math.min(100, Math.round(surgeHeat * 100 + 12))}` }} />
+                      <circle className="warroom-smart-engine__track is-core" cx="90" cy="90" r="40" pathLength="100" />
+                      <circle className="warroom-smart-engine__reliability" cx="90" cy="90" r="40" pathLength="100" style={{ strokeDasharray: `${Math.min(100, Math.round((surgeHeat + 0.08) * 100))} ${100 - Math.min(100, Math.round((surgeHeat + 0.08) * 100))}` }} />
+                    </svg>
+                    <div className="warroom-smart-engine__readout">
+                      <span>{isSurging ? "ALERT" : "BUILDING"}</span>
+                      <strong>{Math.round(surgeHeat * 100)}</strong>
+                      <em>{callPutSignal}</em>
+                      <small>{surgeLabel}</small>
                     </div>
-                    <span className="text-[9px] font-black px-2 py-1 rounded border" style={{ color: surgeColor, borderColor: surgeColor + "45", background: surgeColor + "12" }}>
-                      {surgeLabel}
-                    </span>
                   </div>
                 </div>
-                {/* Surge heat mini-bar */}
-                <div className="mt-1.5 flex gap-[1.5px] h-[5px]">
-                  {Array.from({ length: 16 }).map((_, i) => {
-                    const active = i < Math.round(surgeHeat * 16);
-                    return <div key={i} className="flex-1 h-full rounded-[1px]"
-                      style={{ backgroundColor: active ? (i < 7 ? "#22d3ee" : i < 11 ? "#f59e0b" : "#f43f5e") + "ee" : "rgba(255,255,255,0.04)" }} />;
-                  })}
+
+                <div className="aegis-alert-copy">
+                  <div className="aegis-alert-copy__label-row">
+                    <span className="aegis-alert-copy__tag" style={{ color: surgeColor, borderColor: surgeColor + "55", background: surgeColor + "12" }}>
+                      {isSurging ? "EXPLOSIVE MOVE" : "BUILDING"}
+                    </span>
+                    <span className="aegis-alert-copy__signal" style={{ color: callPutColor, borderColor: callPutColor + "55", background: callPutColor + "15" }}>
+                      {callPutSignal}
+                    </span>
+                  </div>
+                  <div className="aegis-alert-copy__meter">
+                    {Array.from({ length: 16 }).map((_, i) => {
+                      const active = i < Math.round(surgeHeat * 16);
+                      return <span key={i} className={active ? "is-active" : ""} style={{ background: active ? surgeColor : "rgba(255,255,255,0.08)" }} />;
+                    })}
+                  </div>
                 </div>
               </div>
             )}

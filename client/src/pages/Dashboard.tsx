@@ -135,26 +135,26 @@ export default function Dashboard() {
   return (
     <div className="terminal-shell warroom-shell min-h-screen text-foreground">
       <header className="terminal-header sticky top-0 z-50 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
-        <div className="neon-divider h-1" />
-        <div className="px-4 lg:px-6 py-2.5">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg hud-chip">
-                  <BarChart3 className="w-5 h-5 text-cyan-400" />
+        <div className="neon-divider h-0.5" />
+        <div className="px-1.5 lg:px-2 py-0">
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
+                <div className="p-0.5 rounded-lg hud-chip">
+                  <BarChart3 className="w-3 h-3 text-cyan-400" />
                 </div>
-                <h1 className="font-display text-lg font-extrabold tracking-tight hidden sm:block bg-gradient-to-r from-cyan-300 via-teal-300 to-sky-400 bg-clip-text text-transparent" data-testid="text-title">
+                <h1 className="font-display text-xs font-extrabold tracking-tight hidden sm:block bg-gradient-to-r from-cyan-300 via-teal-300 to-sky-400 bg-clip-text text-transparent" data-testid="text-title">
                   Aegis Neural Terminal
                 </h1>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md hud-chip">
-                <Radio className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
-                <span className="text-[10px] font-bold text-emerald-400 tracking-wider">LIVE</span>
+              <div className="flex items-center gap-0.5 px-1 py-0 rounded-md hud-chip">
+                <Radio className="w-1.5 h-1.5 text-emerald-400 animate-pulse" />
+                <span className="text-[7px] font-bold text-emerald-400 tracking-wider">LIVE</span>
               </div>
               <ChronosBadge />
             </div>
 
-            <div className="flex-1 max-w-md mx-4 relative z-[100]">
+            <div className="flex-1 max-w-[20rem] mx-2 relative z-[100]">
               <div onClick={(e) => e.stopPropagation()}>
                 <TickerInput
                   value={ticker}
@@ -165,7 +165,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <TimeframeSelector value={timeframe} onChange={handleTimeframeChange} />
               {searchTicker && (
                 <Button
@@ -173,15 +173,15 @@ export default function Dashboard() {
                   size="icon"
                   onClick={handleRefresh}
                   disabled={isFetching}
-                  className="hover:bg-cyan-500/10 hover:text-cyan-400"
+                  className="h-6 w-6 hover:bg-cyan-500/10 hover:text-cyan-400"
                   data-testid="button-refresh"
                 >
-                  <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin text-cyan-400" : ""}`} />
+                  <RefreshCw className={`w-3 h-3 ${isFetching ? "animate-spin text-cyan-400" : ""}`} />
                 </Button>
               )}
               <a href="/manage-subscription" data-testid="link-manage-subscription">
-                <Button variant="ghost" size="icon" title="Manage Subscription">
-                  <CreditCard className="w-4 h-4" />
+                <Button variant="ghost" size="icon" className="h-6 w-6" title="Manage Subscription">
+                  <CreditCard className="w-3 h-3" />
                 </Button>
               </a>
               <ThemeToggle />

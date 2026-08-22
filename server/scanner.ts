@@ -1,7 +1,7 @@
 import { analyzeSymbol } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
 import { detectAllPatterns, type PatternResult } from "./patterns";
-import { runMonsterOTMEngine } from "./monsterOtmEngine";
+import { runMonsterOTMEngine, type MonsterOTMEngineOutput } from "./monsterOtmEngine";
 import {
 	getBreakoutAlertLog,
 	getBreakoutAlertSummary,
@@ -308,6 +308,15 @@ interface SymbolScanState {
 	squeezeCandles: number;
 }
 
+interface MonsterConfirmState {
+	streak: number;
+	direction: "bullish" | "bearish" | null;
+}
+
+// A monster play must agree across this many consecutive scans before it is
+// surfaced as a valid play; prevents single-bar noise from flipping signals.
+const MONSTER_PLAY_CONFIRMATION_SCANS = 2;
+
 const DEFAULT_WATCHLIST = [
 	"SPY",
 	"QQQ",
@@ -396,6 +405,7 @@ const state = {
 	scanTimer: null as ReturnType<typeof setInterval> | null,
 	scanInFlight: false,
 	symbolState: new Map<string, SymbolScanState>(),
+	monsterConfirmState: new Map<string, MonsterConfirmState>(),
 };
 
 function signalQualityRank(quality: ScannerResult["signalQuality"] | undefined): number {
@@ -3539,7 +3549,7 @@ async function scanSymbol(
 
 		const now = new Date();
 		const nowMinutes = now.getHours() * 60 + now.getMinutes();
-		const monster = runMonsterOTMEngine(
+		const rawMonster = runMonsterOTMEngine(
 			ohlc,
 			analysis.marketHealth,
 			analysis.liquiditySweep,
@@ -3554,6 +3564,32 @@ async function scanSymbol(
 			sessionSplit,
 			lastPrice
 		);
+
+		const rawMonsterDirection: "bullish" | "bearish" | null =
+			rawMonster.hasPlay && rawMonster.play
+				? rawMonster.play.side === "call"
+					? "bullish"
+					: "bearish"
+				: null;
+		const prevMonsterConfirm = state.monsterConfirmState.get(upperSymbol) ?? { streak: 0, direction: null };
+		const monsterStreak =
+			rawMonsterDirection && rawMonsterDirection === prevMonsterConfirm.direction
+				? prevMonsterConfirm.streak + 1
+				: rawMonsterDirection
+					? 1
+					: 0;
+		state.monsterConfirmState.set(upperSymbol, { streak: monsterStreak, direction: rawMonsterDirection });
+		const monsterConfirmed = Boolean(rawMonsterDirection) && monsterStreak >= MONSTER_PLAY_CONFIRMATION_SCANS;
+		const monster: MonsterOTMEngineOutput = monsterConfirmed
+			? rawMonster
+			: {
+				...rawMonster,
+				hasPlay: false,
+				play: null,
+				breakout: rawMonster.breakout
+					? { ...rawMonster.breakout, triggered: false, alert: undefined }
+					: rawMonster.breakout,
+			};
 
 		const warningPayload = computeWarningsAndQuality({
 			volumeSpike,
@@ -4131,6 +4167,7 @@ export function removeFromWatchlist(symbol: string): boolean {
 	if (removed) {
 		state.results.delete(upperSymbol);
 		state.symbolState.delete(upperSymbol);
+		state.monsterConfirmState.delete(upperSymbol);
 	}
 	return removed;
 }

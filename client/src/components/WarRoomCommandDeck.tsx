@@ -471,8 +471,13 @@ export function WarRoomCommandDeck({ analysis, lastPrice, spotIsLive, timeframe 
   const radarAverageScore = radarTracks.length
     ? Math.round(radarTracks.reduce((sum, track) => sum + (track.score ?? 0), 0) / radarTracks.length)
     : 0;
-  const radarTone = radarState === "TRIGGERED" ? "call" : radarState === "ARMING" ? "neutral" : "put";
-  const radarDirection = radarState === "TRIGGERED" ? "CALL" : radarState === "ARMING" ? "WAIT" : "PUT";
+  const radarLeadTrack = [...radarTracks]
+    .filter((track) => track.state === radarState)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
+  const radarDirection = radarState === "STANDBY"
+    ? "WAIT"
+    : radarLeadTrack?.direction === "SHORT" ? "PUT" : "CALL";
+  const radarTone = radarDirection === "CALL" ? "call" : radarDirection === "PUT" ? "put" : "neutral";
   const radarAlerting = radarState === "ARMING" || radarState === "TRIGGERED" || scalpCandidates.length > 0;
   const topEvidenceRule = evidence?.topRules?.[0];
   const compression = fusion?.compressionCluster;
@@ -556,6 +561,10 @@ export function WarRoomCommandDeck({ analysis, lastPrice, spotIsLive, timeframe 
     : "Await a clean break of the trigger range";
   const positionKey = `aegis-warroom-position:${analysis.symbol}`;
   const executionState = optionPlayLive ? "MANAGE" : isBreakoutTriggered ? "TRIGGERED" : isCompressionArmed ? "ARMED" : "WATCH";
+  const executionTiltDirection = direction === "CALL" ? "CALL" : direction === "PUT" ? "PUT" : "WAIT";
+  const executionTiltScore = executionTiltDirection === "CALL" ? upProb : executionTiltDirection === "PUT" ? downProb : Math.max(upProb, downProb);
+  const executionTone = executionTiltDirection === "CALL" ? "call" : executionTiltDirection === "PUT" ? "put" : "neutral";
+  const compressionStrength = clampScore((compression?.active ? 70 : 38) + (volumeRead.ratio >= 1.3 ? 22 : volumeRead.ratio >= 1 ? 8 : 0) + (isCompressionArmed ? 10 : 0));
   const fusionSyncLabel = fusionUpdatedAt
     ? `Fusion synced ${new Date(fusionUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
     : "Fusion data pending";
@@ -694,18 +703,40 @@ export function WarRoomCommandDeck({ analysis, lastPrice, spotIsLive, timeframe 
       {activeView === "execution" ? (
         <div className="warroom-execution">
           <div className={`warroom-execution__state is-${executionState.toLowerCase()}`}>
-            <span>Trade State</span>
-            <strong>{executionState}</strong>
-            <small>{action}</small>
-            <em>{fusionSyncLabel}</em>
-          </div>
-          <div className="warroom-execution__ladder">
-            <div className="warroom-command-deck__label"><Waves className="h-3.5 w-3.5" /> Live Price Ladder</div>
-            <div className="warroom-structure-map" aria-label="Execution price ladder">
-              {structureLevels.length ? structureLevels.map((level) => (
-                <StructureLevelRow key={`execution-${level.label}-${level.price}`} level={level} spot={spot} />
-              )) : <div className="warroom-structure-map__empty">Synchronizing live structural levels...</div>}
+            <div className="warroom-execution__radar-pair">
+              <div className={`warroom-execution__radar-card is-${executionTone}`}>
+                <div className="warroom-command-deck__label"><Radar className="h-3.5 w-3.5" /> Market Tilt</div>
+                <SmartEngineDial
+                  probability={executionTiltScore}
+                  confidence={Math.min(100, Math.round(executionTiltScore + 12))}
+                  reliability={Math.min(100, Math.round((volumeRead.ratio / 1.5) * 100))}
+                  direction={executionTiltDirection}
+                  tone={executionTone as "call" | "put" | "neutral"}
+                  levels={structureLevels}
+                  spot={spot}
+                />
+              </div>
+              <div className={`warroom-execution__radar-card is-${isCompressionArmed ? "neutral" : "neutral"} ${isCompressionArmed ? "is-active" : ""}`}>
+                <div className="warroom-command-deck__label"><Activity className="h-3.5 w-3.5" /> Compression</div>
+                <SmartEngineDial
+                  probability={compressionStrength}
+                  confidence={compressionStrength}
+                  reliability={Math.min(100, compressionStrength + 10)}
+                  direction={"WAIT"}
+                  tone={isCompressionArmed ? "neutral" : "neutral"}
+                />
+              </div>
             </div>
+            <div className="warroom-execution__state-copy">
+              <span>Trade State</span>
+              <strong>{executionState}</strong>
+              <small>{action}</small>
+              <em>{fusionSyncLabel}</em>
+            </div>
+          </div>
+          <div className="warroom-execution__ladder-summary">
+            <div className="warroom-command-deck__label"><Waves className="h-3.5 w-3.5" /> Live Price Ladder</div>
+            <PriceLadderRadar levels={structureLevels} spot={spot} direction={direction} tone={executionTone as "call" | "put" | "neutral"} />
             <div className="warroom-structure-map__spot"><span>{spotIsLive ? "LIVE SPOT" : "ANALYSIS PRICE"}</span><strong>{value(spot)}</strong><small>{nextStructureTest}</small></div>
           </div>
           <div className="warroom-execution__gate">
@@ -803,6 +834,8 @@ export function WarRoomCommandDeck({ analysis, lastPrice, spotIsLive, timeframe 
               reliability={smartSignal?.reliability ?? 0}
               direction={smartSignal?.direction ?? "WAIT"}
               tone={smartTone}
+              levels={structureLevels}
+              spot={spot}
             />
             <div className="warroom-smart-signal__callout">
               <span>Predicted Move</span>
@@ -1098,8 +1131,9 @@ function SignalChip({ label, value: signalValue, active }: { label: string; valu
 function StructureLevelRow({ level, spot }: { level: StructureLevel; spot: number }) {
   const distance = ((level.price - spot) / spot) * 100;
   const isAbove = level.price > spot;
+  const isActive = Math.abs(level.price - spot) / Math.max(Math.abs(spot), 1) <= 0.006 || level.kind === "trigger" || level.kind === "target" || level.kind === "liquidity";
   return (
-    <div className={`warroom-structure-map__row is-${level.kind} ${isAbove ? "is-above" : "is-below"}`}>
+    <div className={`warroom-structure-map__row is-${level.kind} ${isAbove ? "is-above" : "is-below"} ${isActive ? "is-active" : ""}`}>
       <span className="warroom-structure-map__marker" />
       <span className="warroom-structure-map__label">{level.label}</span>
       <strong>{value(level.price)}</strong>
@@ -1172,6 +1206,39 @@ function ScalpRadar({ tracks, focusedSymbol }: { tracks: NonNullable<ScalpConflu
   );
 }
 
+function CompressionRadar({ score, active }: { score: number; active: boolean }) {
+  const ringValue = clampScore(score);
+  const points = [
+    [80, 22],
+    [122, 50],
+    [118, 112],
+    [80, 138],
+    [42, 112],
+    [38, 50],
+  ] as const;
+  const polygon = points.map(([x, y], index) => {
+    const pulse = index % 2 === 0 ? 1 : 0.8;
+    const offset = (ringValue / 100) * 16 * pulse;
+    return `${x + (index < 3 ? offset : -offset)},${y + (index < 2 ? -offset : offset)}`;
+  }).join(" ");
+
+  return <div className={`warroom-compression-radar ${active ? "is-active" : ""}`} aria-label={`Compression radar at ${score} percent`}>
+    <svg viewBox="0 0 160 160" role="img">
+      <circle cx="80" cy="80" r="60" className="warroom-scalp-radar__ring" />
+      <circle cx="80" cy="80" r="42" className="warroom-scalp-radar__ring" />
+      <circle cx="80" cy="80" r="24" className="warroom-scalp-radar__ring" />
+      <path d="M80 10V150M10 80H150" className="warroom-scalp-radar__axis" />
+      <polygon points={polygon} className="warroom-compression-radar__polygon" />
+      <circle cx="80" cy="80" r="8" className="warroom-scalp-radar__core" />
+    </svg>
+    <div className="warroom-compression-radar__readout">
+      <span>Compression</span>
+      <strong>{Math.round(score)}%</strong>
+      <small>{active ? "TIGHT" : "LOOSE"}</small>
+    </div>
+  </div>;
+}
+
 function formatEvidenceRule(rule?: string): string {
   if (!rule) return "Awaiting validated recurrence data.";
   return rule
@@ -1199,18 +1266,50 @@ function SmartEngineDial({
   reliability,
   direction,
   tone,
+  levels = [],
+  spot,
 }: {
   probability: number;
   confidence: number;
   reliability: number;
   direction: SmartSignal["direction"];
   tone: "call" | "put" | "neutral";
+  levels?: StructureLevel[];
+  spot?: number;
 }) {
   const score = clampScore(probability);
   const confidenceScore = clampScore(confidence);
   const reliabilityScore = clampScore(reliability);
-  return <div className={`warroom-smart-engine is-${tone}`} aria-label={`Smart signal engine ${direction} at ${score} percent`}>
-    <div className="warroom-smart-engine__orbit"><i /><i /><i /></div>
+  const orbitSeconds = Math.max(4.2, 18 - score * 0.12);
+  const directionalBias = tone === "put" ? -1 : tone === "call" ? 1 : 0;
+  const activeLevelStrength = 0.72 + (score / 100) * 0.8 + (reliabilityScore / 100) * 0.35;
+  const dialLevels = levels.slice(0, 6).map((level, index) => {
+    const angle = (index / Math.max(levels.length || 1, 1)) * Math.PI * 2 - Math.PI / 2;
+    const radius = 45;
+    const x = 50 + Math.cos(angle) * radius;
+    const y = 50 + Math.sin(angle) * radius;
+    const isBreak = level.kind === "trigger" || level.kind === "invalidation" || level.kind === "target" || level.kind === "liquidity";
+    const toneClass = level.kind === "invalidation" ? "put" : level.kind === "trigger" || level.kind === "target" ? "call" : level.kind === "liquidity" ? "neutral" : "neutral";
+    return {
+      ...level,
+      x,
+      y,
+      isBreak,
+      toneClass,
+    };
+  });
+
+  return <div
+    className={`warroom-smart-engine is-${tone}`}
+    aria-label={`Smart signal engine ${direction} at ${score} percent`}
+    style={{
+      ["--engine-spin-speed" as string]: `${orbitSeconds}s`,
+      ["--engine-spin-direction" as string]: tone === "put" ? "reverse" : "normal",
+      ["--engine-bias" as string]: String(directionalBias),
+      ["--engine-push-strength" as string]: `${Math.min(1.26, activeLevelStrength).toFixed(2)}`,
+    }}
+  >
+    <div className="warroom-smart-engine__orbit" style={{ animationDuration: `${orbitSeconds}s`, animationDirection: tone === "put" ? "reverse" : "normal" }}><i /><i /><i /></div>
     <svg viewBox="0 0 180 180" role="img">
       <circle className="warroom-smart-engine__halo" cx="90" cy="90" r="82" />
       <circle className="warroom-smart-engine__track" cx="90" cy="90" r="70" pathLength="100" />
@@ -1220,8 +1319,73 @@ function SmartEngineDial({
       <circle className="warroom-smart-engine__track is-core" cx="90" cy="90" r="40" pathLength="100" />
       <circle className="warroom-smart-engine__reliability" cx="90" cy="90" r="40" pathLength="100" style={{ strokeDasharray: `${reliabilityScore} ${100 - reliabilityScore}` }} />
     </svg>
+    <div className="warroom-smart-engine__radar-levels">
+      {dialLevels.map((level) => {
+        const isActive = level.isBreak || level.kind === "target" || level.kind === "liquidity" || level.kind === "trigger";
+        return (
+          <div
+            key={`${level.label}-${level.price}`}
+            className={`warroom-smart-engine__radar-level is-${level.toneClass} ${level.isBreak ? "is-break" : ""} ${isActive ? "is-active" : ""}`}
+            style={{
+              left: `${level.x}%`,
+              top: `${level.y}%`,
+              opacity: isActive ? 1 : 0.8,
+              transform: `translate(-50%, -50%) scale(${isActive ? 1.04 : 0.97})`,
+            }}
+          >
+            <span>{level.label}</span>
+            <strong>{value(level.price)}</strong>
+          </div>
+        );
+      })}
+    </div>
+    <div className="warroom-smart-engine__spot" aria-label={`Live spot price ${value(spot)}`}>
+      <span>SPOT</span>
+      <strong>{value(spot)}</strong>
+    </div>
     <div className="warroom-smart-engine__readout"><span>SMART ENGINE</span><strong>{score}</strong><em>{direction}</em><small>{reliabilityScore}% history lock</small></div>
   </div>;
+}
+
+function PriceLadderRadar({ levels, spot, direction, tone }: { levels: StructureLevel[]; spot: number; direction: string; tone: "call" | "put" | "neutral" }) {
+  const topLevels = levels.slice(0, 5);
+  const orbitSeconds = Math.max(5, 16 - (topLevels.length * 0.8));
+  const spinDirection = tone === "put" ? "reverse" : "normal";
+  
+  const ladderLevels = topLevels.map((level, index) => {
+    const angle = (index / Math.max(topLevels.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    const radius = 33;
+    const x = 50 + Math.cos(angle) * radius;
+    const y = 50 + Math.sin(angle) * radius;
+    const distance = Math.abs(level.price - spot);
+    const isNearest = distance === Math.min(...topLevels.map(l => Math.abs(l.price - spot)));
+    return { ...level, x, y, isNearest };
+  });
+
+  return (
+    <div className={`warroom-price-ladder-radar is-${tone}`} style={{ ["--engine-spin-speed" as string]: `${orbitSeconds}s`, ["--engine-spin-direction" as string]: spinDirection }}>
+      <div className="warroom-price-ladder-radar__orbit" style={{ animationDuration: `${orbitSeconds}s`, animationDirection: spinDirection }}><i /><i /></div>
+      <svg viewBox="0 0 160 160" role="img">
+        <circle cx="80" cy="80" r="48" className="warroom-price-ladder-radar__track" />
+        <circle cx="80" cy="80" r="32" className="warroom-price-ladder-radar__track" />
+        <path d="M80 20V140M20 80H140" className="warroom-price-ladder-radar__axis" />
+        <circle cx="80" cy="80" r="8" className="warroom-price-ladder-radar__core" />
+      </svg>
+      <div className="warroom-price-ladder-radar__levels">
+        {ladderLevels.map((level) => (
+          <div
+            key={`ladder-${level.label}-${level.price}`}
+            className={`warroom-price-ladder-radar__level is-${level.kind} ${level.isNearest ? "is-nearest" : ""}`}
+            style={{ left: `${level.x}%`, top: `${level.y}%` }}
+          >
+            <span>{level.label}</span>
+            <strong>{value(level.price)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="warroom-price-ladder-radar__center"><strong>{value(spot)}</strong></div>
+    </div>
+  );
 }
 
 function WarRoomCandleChart({ candles, spot, upper, lower }: { candles: OHLC[]; spot: number; upper?: number; lower?: number }) {

@@ -20,12 +20,12 @@ const timeframes: { value: Timeframe; label: string }[] = [
 export function TimeframeSelector({ value, onChange }: TimeframeSelectorProps) {
   return (
     <div
-      className="relative inline-flex items-center gap-0.5 p-1 rounded-lg bg-gradient-to-br from-muted/60 to-muted/40 border border-border/50 shadow-inner"
+      className="relative inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-gradient-to-br from-muted/60 to-muted/40 border border-border/50 shadow-inner"
       data-testid="selector-timeframe"
     >
       <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-amber-500/5 via-transparent to-orange-500/5" />
-      <div className="flex items-center gap-1.5 pr-2 border-r border-border/50 mr-1">
-        <Clock className="w-3.5 h-3.5 text-amber-400" />
+      <div className="flex items-center gap-1 pr-1 border-r border-border/50 mr-0.5">
+        <Clock className="w-2.5 h-2.5 text-amber-400" />
       </div>
       {timeframes.map((tf) => (
         <Button
@@ -34,7 +34,7 @@ export function TimeframeSelector({ value, onChange }: TimeframeSelectorProps) {
           size="sm"
           onClick={() => onChange(tf.value)}
           className={cn(
-            "relative font-mono text-xs px-2.5 h-7 rounded-md transition-all duration-200",
+            "relative font-mono text-[10px] px-1.5 h-5 rounded-md transition-all duration-200",
             value === tf.value 
               ? "bg-gradient-to-br from-amber-500/20 to-orange-500/20 text-amber-400 shadow-sm border border-amber-500/30 font-bold" 
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
