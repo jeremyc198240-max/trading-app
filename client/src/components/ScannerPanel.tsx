@@ -400,11 +400,6 @@ function ScannerRow({
       >
         <div className="h-0.5 bg-gradient-to-r from-cyan-500/60 to-blue-500/40" />
         <div className="relative p-3">
-          {isHotPlay && <div className={`scanner-row__gold-alert ${result.hasMonsterPlay ? "is-monster" : ""}`}>
-            <span className="scanner-row__gold-spark"><Zap className="h-3.5 w-3.5" /></span>
-            <div><strong>{result.hasMonsterPlay ? "MONSTER PLAY" : "GOLD SIGNAL"}</strong><small>{result.breakoutSignal ?? "VALIDATED SCANNER SETUP"}</small></div>
-            <b>{tradeDirection === "WAIT" ? "WATCH" : tradeDirection}</b>
-          </div>}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="font-mono font-bold text-sm tracking-wide text-cyan-200">{result.symbol}</span>
@@ -497,6 +492,11 @@ function ScannerRow({
       )} />
       
       <div className="relative p-3">
+        {isHotPlay && <div className={`scanner-row__gold-alert ${result.hasMonsterPlay ? "is-monster" : ""}`}>
+          <span className="scanner-row__gold-spark"><Zap className="h-3.5 w-3.5" /></span>
+          <div><strong>{result.hasMonsterPlay ? "MONSTER PLAY" : "GOLD SIGNAL"}</strong><small>{result.breakoutSignal ?? "VALIDATED SCANNER SETUP"}</small></div>
+          <b>{tradeDirection === "WAIT" ? "WATCH" : tradeDirection}</b>
+        </div>}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <div className="flex flex-col">
