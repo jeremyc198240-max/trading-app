@@ -1,5 +1,5 @@
 import type { PatternResult } from './patterns';
-import type { NormalizedPattern, FusionPatternSignal, PatternGeometry, PatternLifecycle, PatternCategory } from '@shared/schema';
+import type { DrawablePattern, NormalizedPattern, FusionPatternSignal, PatternGeometry, PatternLifecycle, PatternCategory } from '@shared/schema';
 
 interface OHLC {
   open: number;
@@ -166,6 +166,7 @@ function deriveLifecycle(
   const age = lastIdx - pattern.endIndex;
 
   if (age > 50) return 'expired';
+  if (pattern.endIndex >= lastIdx) return 'forming';
 
   if (invalidationLevel !== null) {
     const failed = pattern.type === 'bullish'
@@ -228,36 +229,75 @@ function mapCategory(cat: string): PatternCategory {
   return 'classical';
 }
 
+const patternNameAliases: Record<string, string> = {
+  'piercing line (piercing pattern)': 'piercing line',
+  'stick sandwich': 'stick sandwich (bullish)',
+  'bullish separating lines': 'separating lines (bullish)',
+  'bearish separating lines': 'separating lines (bearish)',
+  'last engulfing bottom': 'bullish engulfing',
+  'last engulfing top': 'bearish engulfing',
+  'bullish gap reversal': 'piercing line',
+  'bearish gap reversal': 'dark cloud cover',
+  'bullish window reversal': 'bullish engulfing',
+  'bearish window reversal': 'bearish engulfing',
+};
+
+function getPatternSignature(pattern: { name: string; direction?: 'bullish' | 'bearish' | 'neutral'; type?: 'bullish' | 'bearish' | 'neutral'; startIndex: number; endIndex: number; }): string {
+  const direction = pattern.direction ?? pattern.type ?? 'neutral';
+  const name = pattern.name.toLowerCase();
+  return `${patternNameAliases[name] ?? name}|${direction}|${pattern.startIndex}|${pattern.endIndex}`;
+}
+
 export function normalizePatterns(
   patterns: PatternResult[],
-  ohlc: OHLC[]
+  ohlc: OHLC[],
+  drawablePatterns: DrawablePattern[] = [],
 ): NormalizedPattern[] {
   if (!ohlc || ohlc.length === 0) return [];
 
-  return patterns.map((p) => {
-    const quality = computePatternQuality(p, ohlc);
-    const howToTrade = generateTradePlan(p, ohlc);
-    const geometry = buildSimpleGeometry(p, ohlc);
-    const state = deriveLifecycle(p, ohlc, geometry.breakoutLevel, geometry.invalidationLevel);
+  const drawableByDetection = new Map(drawablePatterns.map((pattern) => [
+    `${pattern.name}|${pattern.type}|${pattern.startIndex}|${pattern.endIndex}`,
+    pattern,
+  ]));
+  const seen = new Set<string>();
 
-    return {
-      name: p.name,
-      category: mapCategory(p.category),
-      direction: p.type,
-      confidence: p.confidence,
-      quality,
-      state,
-      startIndex: Math.max(0, Math.min(p.startIndex, ohlc.length - 1)),
-      endIndex: Math.max(0, Math.min(p.endIndex, ohlc.length - 1)),
-      breakoutLevel: geometry.breakoutLevel,
-      invalidationLevel: geometry.invalidationLevel,
-      geometry,
-      howToTrade,
-      description: p.description,
-      priceTarget: p.priceTarget ?? null,
-      stopLoss: p.stopLoss ?? null,
-    };
-  });
+  return patterns
+    .filter((p) => {
+      const key = getPatternSignature({
+        name: p.name,
+        type: p.type,
+        startIndex: p.startIndex,
+        endIndex: p.endIndex,
+      });
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((p) => {
+      const quality = computePatternQuality(p, ohlc);
+      const howToTrade = generateTradePlan(p, ohlc);
+      const drawable = drawableByDetection.get(`${p.name}|${p.type}|${p.startIndex}|${p.endIndex}`);
+      const geometry = drawable?.geometry ?? buildSimpleGeometry(p, ohlc);
+      const state = drawable?.lifecycle ?? deriveLifecycle(p, ohlc, geometry.breakoutLevel, geometry.invalidationLevel);
+
+      return {
+        name: p.name,
+        category: mapCategory(p.category),
+        direction: p.type,
+        confidence: p.confidence,
+        quality,
+        state,
+        startIndex: Math.max(0, Math.min(p.startIndex, ohlc.length - 1)),
+        endIndex: Math.max(0, Math.min(p.endIndex, ohlc.length - 1)),
+        breakoutLevel: geometry.breakoutLevel,
+        invalidationLevel: geometry.invalidationLevel,
+        geometry,
+        howToTrade,
+        description: p.description,
+        priceTarget: p.priceTarget ?? p.pt1 ?? drawable?.pt1 ?? null,
+        stopLoss: p.stopLoss ?? drawable?.stopLoss ?? null,
+      };
+    });
 }
 
 export function computePatternFusionSignal(
@@ -274,7 +314,10 @@ export function computePatternFusionSignal(
     };
   }
 
-  const active = patterns.filter(p => p.state !== 'expired' && p.state !== 'failed');
+  const deduped = Array.from(new Map(
+    patterns.map((pattern) => [getPatternSignature(pattern), pattern])
+  ).values());
+  const active = deduped.filter(p => p.state !== 'expired' && p.state !== 'failed');
   if (active.length === 0) {
     return {
       direction: 'WAIT',
@@ -282,13 +325,15 @@ export function computePatternFusionSignal(
       reasons: ['All patterns expired or failed'],
       howToTrade: [],
       dominantPattern: null,
-      patternCount: patterns.length,
+      patternCount: deduped.length,
     };
   }
 
   let bullScore = 0;
   let bearScore = 0;
   const reasons: string[] = [];
+
+  const averageQuality = active.reduce((sum, p) => sum + p.quality, 0) / active.length;
 
   for (const p of active) {
     const weight = (p.confidence / 100) * p.quality;
@@ -321,21 +366,29 @@ export function computePatternFusionSignal(
   const dominant = sorted[0];
   const totalScore = bullScore + bearScore;
   const edgeRatio = totalScore > 0 ? Math.abs(bullScore - bearScore) / totalScore : 0;
+  const evidenceScore = Math.min(1, Math.min(active.length / 4, 1) * 0.4 + averageQuality * 0.6);
+  const confidenceFloor = 26 + evidenceScore * 22;
 
   let direction: 'CALL' | 'PUT' | 'WAIT';
   let confidence: number;
 
   if (edgeRatio < 0.15 || totalScore < 0.1) {
     direction = 'WAIT';
-    confidence = Math.round(edgeRatio * 100);
+    confidence = Math.max(18, Math.min(58, Math.round(edgeRatio * 100 + confidenceFloor * 0.6)));
     reasons.push(`Conflicting patterns: bull ${bullScore.toFixed(2)} vs bear ${bearScore.toFixed(2)}`);
   } else if (bullScore > bearScore) {
     direction = 'CALL';
-    confidence = Math.round(Math.min(edgeRatio * 100 + 20, 95));
+    confidence = Math.max(
+      confidenceFloor,
+      Math.min(78, Math.round((edgeRatio * 100) * 0.7 + confidenceFloor + 6))
+    );
     reasons.push(`Bullish pattern edge: ${bullScore.toFixed(2)} vs ${bearScore.toFixed(2)}`);
   } else {
     direction = 'PUT';
-    confidence = Math.round(Math.min(edgeRatio * 100 + 20, 95));
+    confidence = Math.max(
+      confidenceFloor,
+      Math.min(78, Math.round((edgeRatio * 100) * 0.7 + confidenceFloor + 6))
+    );
     reasons.push(`Bearish pattern edge: ${bearScore.toFixed(2)} vs ${bullScore.toFixed(2)}`);
   }
 

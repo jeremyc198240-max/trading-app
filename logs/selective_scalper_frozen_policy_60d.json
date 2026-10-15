@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-05T14:48:42.065Z",
+  "lookbackDays": 60,
+  "methodology": "Full development window; candidate must pass aggregate criteria and three chronological folds. Only post-freeze candles qualify for release validation.",
+  "criteria": {
+    "folds": 3,
+    "minDevelopmentTrades": 30,
+    "minDevelopmentWinRate": 60,
+    "minDevelopmentProfitFactor": 1,
+    "minFoldTrades": 5,
+    "minFoldWinRate": 55,
+    "minFoldProfitFactor": 0.8,
+    "minFoldExpectancy": -2,
+    "minProspectiveTrades": 30,
+    "targetProspectiveWinRate": 70
+  },
+  "symbols": [
+    {
+      "symbol": "SPY",
+      "selectedProfile": "baseline_v1.04_puts",
+      "profile": null,
+      "eligible": false,
+      "rejectionReason": "No profile passed aggregate performance and all three chronological stability folds",
+      "development": {
+        "totalSignals": 111,
+        "wins": 59,
+        "winRate": 53.2,
+        "profitFactor": 0.92,
+        "expectancy": -0.38
+      },
+      "folds": [
+        {
+          "totalSignals": 51,
+          "wins": 28,
+          "winRate": 54.9,
+          "profitFactor": 0.71,
+          "expectancy": -1.6
+        },
+        {
+          "totalSignals": 33,
+          "wins": 17,
+          "winRate": 51.5,
+          "profitFactor": 1.47,
+          "expectancy": 1.93
+        },
+        {
+          "totalSignals": 27,
+          "wins": 14,
+          "winRate": 51.9,
+          "profitFactor": 0.76,
+          "expectancy": -0.92
+        }
+      ],
+      "frozenAfter": 1788566398
+    },
+    {
+      "symbol": "QQQ",
+      "selectedProfile": "baseline_v1.04_puts",
+      "profile": {
+        "minVolumeRatio": 1.04,
+        "allowedDirections": [
+          "PUT"
+        ]
+      },
+      "eligible": true,
+      "rejectionReason": null,
+      "development": {
+        "totalSignals": 164,
+        "wins": 100,
+        "winRate": 61,
+        "profitFactor": 1.11,
+        "expectancy": 0.61
+      },
+      "folds": [
+        {
+          "totalSignals": 73,
+          "wins": 44,
+          "winRate": 60.3,
+          "profitFactor": 1.01,
+          "expectancy": 0.06
+        },
+        {
+          "totalSignals": 42,
+          "wins": 28,
+          "winRate": 66.7,
+          "profitFactor": 1.15,
+          "expectancy": 0.88
+        },
+        {
+          "totalSignals": 49,
+          "wins": 28,
+          "winRate": 57.1,
+          "profitFactor": 1.28,
+          "expectancy": 1.19
+        }
+      ],
+      "frozenAfter": 1788566399
+    },
+    {
+      "symbol": "AAPL",
+      "selectedProfile": "volume_v1.10_calls",
+      "profile": {
+        "minVolumeRatio": 1.1,
+        "allowedDirections": [
+          "CALL"
+        ]
+      },
+      "eligible": true,
+      "rejectionReason": null,
+      "development": {
+        "totalSignals": 211,
+        "wins": 135,
+        "winRate": 64,
+        "profitFactor": 1.23,
+        "expectancy": 1.54
+      },
+      "folds": [
+        {
+          "totalSignals": 80,
+          "wins": 51,
+          "winRate": 63.7,
+          "profitFactor": 1.24,
+          "expectancy": 1.74
+        },
+        {
+          "totalSignals": 60,
+          "wins": 38,
+          "winRate": 63.3,
+          "profitFactor": 1.19,
+          "expectancy": 1.21
+        },
+        {
+          "totalSignals": 71,
+          "wins": 46,
+          "winRate": 64.8,
+          "profitFactor": 1.24,
+          "expectancy": 1.59
+        }
+      ],
+      "frozenAfter": 1788566399
+    },
+    {
+      "symbol": "MSFT",
+      "selectedProfile": "volume_v1.10_puts",
+      "profile": {
+        "minVolumeRatio": 1.1,
+        "allowedDirections": [
+          "PUT"
+        ]
+      },
+      "eligible": true,
+      "rejectionReason": null,
+      "development": {
+        "totalSignals": 117,
+        "wins": 80,
+        "winRate": 68.4,
+        "profitFactor": 1.62,
+        "expectancy": 3.19
+      },
+      "folds": [
+        {
+          "totalSignals": 47,
+          "wins": 36,
+          "winRate": 76.6,
+          "profitFactor": 2.11,
+          "expectancy": 4.74
+        },
+        {
+          "totalSignals": 39,
+          "wins": 25,
+          "winRate": 64.1,
+          "profitFactor": 1.5,
+          "expectancy": 2.68
+        },
+        {
+          "totalSignals": 31,
+          "wins": 19,
+          "winRate": 61.3,
+          "profitFactor": 1.24,
+          "expectancy": 1.48
+        }
+      ],
+      "frozenAfter": 1788566396
+    },
+    {
+      "symbol": "GOOGL",
+      "selectedProfile": "strong_bar_v1.10_puts",
+      "profile": null,
+      "eligible": false,
+      "rejectionReason": "No profile passed aggregate performance and all three chronological stability folds",
+      "development": {
+        "totalSignals": 69,
+        "wins": 39,
+        "winRate": 56.5,
+        "profitFactor": 0.89,
+        "expectancy": -0.93
+      },
+      "folds": [
+        {
+          "totalSignals": 28,
+          "wins": 16,
+          "winRate": 57.1,
+          "profitFactor": 1.07,
+          "expectancy": 0.59
+        },
+        {
+          "totalSignals": 26,
+          "wins": 15,
+          "winRate": 57.7,
+          "profitFactor": 0.87,
+          "expectancy": -1.08
+        },
+        {
+          "totalSignals": 15,
+          "wins": 8,
+          "winRate": 53.3,
+          "profitFactor": 0.67,
+          "expectancy": -3.52
+        }
+      ],
+      "frozenAfter": 1788566396
+    },
+    {
+      "symbol": "AMZN",
+      "selectedProfile": "baseline_v1.04_puts",
+      "profile": null,
+      "eligible": false,
+      "rejectionReason": "No profile passed aggregate performance and all three chronological stability folds",
+      "development": {
+        "totalSignals": 198,
+        "wins": 119,
+        "winRate": 60.1,
+        "profitFactor": 0.98,
+        "expectancy": -0.16
+      },
+      "folds": [
+        {
+          "totalSignals": 75,
+          "wins": 43,
+          "winRate": 57.3,
+          "profitFactor": 0.9,
+          "expectancy": -0.77
+        },
+        {
+          "totalSignals": 65,
+          "wins": 40,
+          "winRate": 61.5,
+          "profitFactor": 1.05,
+          "expectancy": 0.38
+        },
+        {
+          "totalSignals": 58,
+          "wins": 36,
+          "winRate": 62.1,
+          "profitFactor": 1,
+          "expectancy": 0.01
+        }
+      ],
+      "frozenAfter": 1788566393
+    },
+    {
+      "symbol": "TSLA",
+      "selectedProfile": "volume_v1.20_both",
+      "profile": {
+        "minVolumeRatio": 1.2,
+        "allowedDirections": [
+          "CALL",
+          "PUT"
+        ]
+      },
+      "eligible": true,
+      "rejectionReason": null,
+      "development": {
+        "totalSignals": 299,
+        "wins": 207,
+        "winRate": 69.2,
+        "profitFactor": 1.2,
+        "expectancy": 1.5
+      },
+      "folds": [
+        {
+          "totalSignals": 105,
+          "wins": 73,
+          "winRate": 69.5,
+          "profitFactor": 1.14,
+          "expectancy": 1.04
+        },
+        {
+          "totalSignals": 101,
+          "wins": 68,
+          "winRate": 67.3,
+          "profitFactor": 1.18,
+          "expectancy": 1.33
+        },
+        {
+          "totalSignals": 93,
+          "wins": 66,
+          "winRate": 71,
+          "profitFactor": 1.32,
+          "expectancy": 2.19
+        }
+      ],
+      "frozenAfter": 1788566399
+    },
+    {
+      "symbol": "NVDA",
+      "selectedProfile": "baseline_v1.04_calls",
+      "profile": {
+        "minVolumeRatio": 1.04,
+        "allowedDirections": [
+          "CALL"
+        ]
+      },
+      "eligible": true,
+      "rejectionReason": null,
+      "development": {
+        "totalSignals": 186,
+        "wins": 124,
+        "winRate": 66.7,
+        "profitFactor": 1.03,
+        "expectancy": 0.23
+      },
+      "folds": [
+        {
+          "totalSignals": 55,
+          "wins": 40,
+          "winRate": 72.7,
+          "profitFactor": 1.28,
+          "expectancy": 1.89
+        },
+        {
+          "totalSignals": 76,
+          "wins": 49,
+          "winRate": 64.5,
+          "profitFactor": 0.94,
+          "expectancy": -0.46
+        },
+        {
+          "totalSignals": 55,
+          "wins": 35,
+          "winRate": 63.6,
+          "profitFactor": 0.94,
+          "expectancy": -0.48
+        }
+      ],
+      "frozenAfter": 1788566400
+    },
+    {
+      "symbol": "GLD",
+      "selectedProfile": "baseline_v1.04_puts",
+      "profile": null,
+      "eligible": false,
+      "rejectionReason": "No profile passed aggregate performance and all three chronological stability folds",
+      "development": {
+        "totalSignals": 139,
+        "wins": 70,
+        "winRate": 50.4,
+        "profitFactor": 0.83,
+        "expectancy": -0.99
+      },
+      "folds": [
+        {
+          "totalSignals": 46,
+          "wins": 21,
+          "winRate": 45.7,
+          "profitFactor": 0.68,
+          "expectancy": -1.68
+        },
+        {
+          "totalSignals": 44,
+          "wins": 20,
+          "winRate": 45.5,
+          "profitFactor": 0.76,
+          "expectancy": -1.5
+        },
+        {
+          "totalSignals": 49,
+          "wins": 29,
+          "winRate": 59.2,
+          "profitFactor": 1.02,
+          "expectancy": 0.11
+        }
+      ],
+      "frozenAfter": 1788566388
+    }
+  ]
+}

@@ -1,0 +1,5369 @@
+{
+  "generatedAt": "2026-09-06T15:25:56.699Z",
+  "methodology": {
+    "symbols": [
+      "SPY",
+      "QQQ",
+      "AAPL",
+      "MSFT",
+      "GOOGL"
+    ],
+    "sourceTimeframe": "Yahoo 1m only; exact 5m bars aggregated from the same minute timeline",
+    "requestedLookbackDays": 7,
+    "breakoutDefinition": "Closed 5m candle crosses the previous 12-bar high/low",
+    "breakoutEntry": "Next available 1m open after the 5m breakout closes",
+    "retestEntry": "Next 1m open after a touch and close beyond the level within three minutes",
+    "exits": [
+      "10 minutes from the applicable entry",
+      "15 minutes from the applicable entry",
+      "20 minutes from the applicable entry",
+      "30 minutes from the applicable entry"
+    ],
+    "optionModel": "Nearest listed strike theoretical 0DTE premium with 3% half-spread; no historical option quotes",
+    "featureTiming": "1m ignition and pre-break 5m features end before the breakout candle; acceptance uses the closed breakout candle",
+    "split": "Sessions before 2026-09-03 train; 2026-09-03 and later untouched chronological holdout",
+    "tradingViewJoin": "Real stored 5m snapshot at or before the pre-break candle and no older than 15 minutes"
+  },
+  "coverage": {
+    "sessions": 5,
+    "events": 54,
+    "trainEvents": 20,
+    "holdoutEvents": 34,
+    "tradingViewMatched": 23,
+    "warnings": [
+      "SPY: Using Yahoo direct candles (Yahoo rate-limited (cooldown 60s))",
+      "QQQ: Using Yahoo direct candles (Yahoo rate-limited (cooldown 60s))",
+      "AAPL: Using Yahoo direct candles (Yahoo rate-limited (cooldown 60s))",
+      "MSFT: Using Yahoo direct candles (Yahoo rate-limited (cooldown 60s))",
+      "GOOGL: Using Yahoo direct candles (Yahoo rate-limited (cooldown 60s))"
+    ]
+  },
+  "baselineByHorizon": {
+    "10": {
+      "train": {
+        "events": 20,
+        "premiumWins": 5,
+        "premiumWinRate": 25,
+        "averagePremiumReturnPct": -5.1,
+        "medianPremiumReturnPct": -20.05,
+        "premiumProfitFactor": 0.78
+      },
+      "holdout": {
+        "events": 34,
+        "premiumWins": 12,
+        "premiumWinRate": 35.3,
+        "averagePremiumReturnPct": -6.53,
+        "medianPremiumReturnPct": -6.6,
+        "premiumProfitFactor": 0.46
+      },
+      "all": {
+        "events": 54,
+        "premiumWins": 17,
+        "premiumWinRate": 31.5,
+        "averagePremiumReturnPct": -6,
+        "medianPremiumReturnPct": -10.02,
+        "premiumProfitFactor": 0.63
+      }
+    },
+    "15": {
+      "train": {
+        "events": 20,
+        "premiumWins": 6,
+        "premiumWinRate": 30,
+        "averagePremiumReturnPct": -9.68,
+        "medianPremiumReturnPct": -26.13,
+        "premiumProfitFactor": 0.59
+      },
+      "holdout": {
+        "events": 34,
+        "premiumWins": 13,
+        "premiumWinRate": 38.2,
+        "averagePremiumReturnPct": -4.22,
+        "medianPremiumReturnPct": -6,
+        "premiumProfitFactor": 0.73
+      },
+      "all": {
+        "events": 54,
+        "premiumWins": 19,
+        "premiumWinRate": 35.2,
+        "averagePremiumReturnPct": -6.24,
+        "medianPremiumReturnPct": -8.47,
+        "premiumProfitFactor": 0.66
+      }
+    },
+    "20": {
+      "train": {
+        "events": 20,
+        "premiumWins": 5,
+        "premiumWinRate": 25,
+        "averagePremiumReturnPct": -17.43,
+        "medianPremiumReturnPct": -30.38,
+        "premiumProfitFactor": 0.43
+      },
+      "holdout": {
+        "events": 34,
+        "premiumWins": 16,
+        "premiumWinRate": 47.1,
+        "averagePremiumReturnPct": -7.84,
+        "medianPremiumReturnPct": -7.88,
+        "premiumProfitFactor": 0.57
+      },
+      "all": {
+        "events": 54,
+        "premiumWins": 21,
+        "premiumWinRate": 38.9,
+        "averagePremiumReturnPct": -11.39,
+        "medianPremiumReturnPct": -16.79,
+        "premiumProfitFactor": 0.5
+      }
+    },
+    "30": {
+      "train": {
+        "events": 20,
+        "premiumWins": 4,
+        "premiumWinRate": 20,
+        "averagePremiumReturnPct": -23.28,
+        "medianPremiumReturnPct": -36.3,
+        "premiumProfitFactor": 0.42
+      },
+      "holdout": {
+        "events": 34,
+        "premiumWins": 13,
+        "premiumWinRate": 38.2,
+        "averagePremiumReturnPct": -13.5,
+        "medianPremiumReturnPct": -22.42,
+        "premiumProfitFactor": 0.43
+      },
+      "all": {
+        "events": 54,
+        "premiumWins": 17,
+        "premiumWinRate": 31.5,
+        "averagePremiumReturnPct": -17.12,
+        "medianPremiumReturnPct": -28.68,
+        "premiumProfitFactor": 0.42
+      }
+    }
+  },
+  "retestBaselineByHorizon": {
+    "10": {
+      "train": {
+        "events": 12,
+        "premiumWins": 4,
+        "premiumWinRate": 33.3,
+        "averagePremiumReturnPct": -3.98,
+        "medianPremiumReturnPct": -12.97,
+        "premiumProfitFactor": 0.73
+      },
+      "holdout": {
+        "events": 25,
+        "premiumWins": 13,
+        "premiumWinRate": 52,
+        "averagePremiumReturnPct": -0.3,
+        "medianPremiumReturnPct": 4.18,
+        "premiumProfitFactor": 0.97
+      },
+      "all": {
+        "events": 37,
+        "premiumWins": 17,
+        "premiumWinRate": 45.9,
+        "averagePremiumReturnPct": -1.49,
+        "medianPremiumReturnPct": -4.27,
+        "premiumProfitFactor": 0.88
+      }
+    },
+    "15": {
+      "train": {
+        "events": 12,
+        "premiumWins": 4,
+        "premiumWinRate": 33.3,
+        "averagePremiumReturnPct": 3.65,
+        "medianPremiumReturnPct": -12.09,
+        "premiumProfitFactor": 1.22
+      },
+      "holdout": {
+        "events": 25,
+        "premiumWins": 14,
+        "premiumWinRate": 56,
+        "averagePremiumReturnPct": -1.43,
+        "medianPremiumReturnPct": 6.04,
+        "premiumProfitFactor": 0.89
+      },
+      "all": {
+        "events": 37,
+        "premiumWins": 18,
+        "premiumWinRate": 48.6,
+        "averagePremiumReturnPct": 0.22,
+        "medianPremiumReturnPct": -2.26,
+        "premiumProfitFactor": 1.02
+      }
+    },
+    "20": {
+      "train": {
+        "events": 12,
+        "premiumWins": 4,
+        "premiumWinRate": 33.3,
+        "averagePremiumReturnPct": 0.25,
+        "medianPremiumReturnPct": -16.78,
+        "premiumProfitFactor": 1.01
+      },
+      "holdout": {
+        "events": 25,
+        "premiumWins": 13,
+        "premiumWinRate": 52,
+        "averagePremiumReturnPct": -2,
+        "medianPremiumReturnPct": 5.98,
+        "premiumProfitFactor": 0.88
+      },
+      "all": {
+        "events": 37,
+        "premiumWins": 17,
+        "premiumWinRate": 45.9,
+        "averagePremiumReturnPct": -1.27,
+        "medianPremiumReturnPct": -5.88,
+        "premiumProfitFactor": 0.93
+      }
+    },
+    "30": {
+      "train": {
+        "events": 12,
+        "premiumWins": 3,
+        "premiumWinRate": 25,
+        "averagePremiumReturnPct": -2.1,
+        "medianPremiumReturnPct": -22.8,
+        "premiumProfitFactor": 0.93
+      },
+      "holdout": {
+        "events": 25,
+        "premiumWins": 14,
+        "premiumWinRate": 56,
+        "averagePremiumReturnPct": -5.84,
+        "medianPremiumReturnPct": 4.06,
+        "premiumProfitFactor": 0.69
+      },
+      "all": {
+        "events": 37,
+        "premiumWins": 17,
+        "premiumWinRate": 45.9,
+        "averagePremiumReturnPct": -4.62,
+        "medianPremiumReturnPct": -18.52,
+        "premiumProfitFactor": 0.79
+      }
+    }
+  },
+  "bySymbol": [
+    {
+      "symbol": "SPY",
+      "horizons": {
+        "10": {
+          "events": 21,
+          "premiumWins": 9,
+          "premiumWinRate": 42.9,
+          "averagePremiumReturnPct": -5.1,
+          "medianPremiumReturnPct": -9.17,
+          "premiumProfitFactor": 0.67
+        },
+        "15": {
+          "events": 21,
+          "premiumWins": 8,
+          "premiumWinRate": 38.1,
+          "averagePremiumReturnPct": -6.25,
+          "medianPremiumReturnPct": -6.8,
+          "premiumProfitFactor": 0.69
+        },
+        "20": {
+          "events": 21,
+          "premiumWins": 8,
+          "premiumWinRate": 38.1,
+          "averagePremiumReturnPct": -12.4,
+          "medianPremiumReturnPct": -13.86,
+          "premiumProfitFactor": 0.49
+        },
+        "30": {
+          "events": 21,
+          "premiumWins": 8,
+          "premiumWinRate": 38.1,
+          "averagePremiumReturnPct": -21.32,
+          "medianPremiumReturnPct": -29.28,
+          "premiumProfitFactor": 0.29
+        }
+      }
+    },
+    {
+      "symbol": "QQQ",
+      "horizons": {
+        "10": {
+          "events": 18,
+          "premiumWins": 7,
+          "premiumWinRate": 38.9,
+          "averagePremiumReturnPct": 3.23,
+          "medianPremiumReturnPct": -6.17,
+          "premiumProfitFactor": 1.23
+        },
+        "15": {
+          "events": 18,
+          "premiumWins": 9,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -3.21,
+          "medianPremiumReturnPct": 1.21,
+          "premiumProfitFactor": 0.82
+        },
+        "20": {
+          "events": 18,
+          "premiumWins": 9,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -6.96,
+          "medianPremiumReturnPct": -9.7,
+          "premiumProfitFactor": 0.69
+        },
+        "30": {
+          "events": 18,
+          "premiumWins": 6,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -11.42,
+          "medianPremiumReturnPct": -33.71,
+          "premiumProfitFactor": 0.66
+        }
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "horizons": {
+        "10": {
+          "events": 6,
+          "premiumWins": 1,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": -15.83,
+          "medianPremiumReturnPct": -9.38,
+          "premiumProfitFactor": 0.06
+        },
+        "15": {
+          "events": 6,
+          "premiumWins": 1,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": -11.08,
+          "medianPremiumReturnPct": -10.16,
+          "premiumProfitFactor": 0.21
+        },
+        "20": {
+          "events": 6,
+          "premiumWins": 2,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -10.99,
+          "medianPremiumReturnPct": -7.88,
+          "premiumProfitFactor": 0.22
+        },
+        "30": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -25.86,
+          "medianPremiumReturnPct": -24.57,
+          "premiumProfitFactor": 0
+        }
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "horizons": {
+        "10": {
+          "events": 3,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -24.11,
+          "medianPremiumReturnPct": -24.78,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 3,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -36.18,
+          "medianPremiumReturnPct": -31.17,
+          "premiumProfitFactor": 0
+        },
+        "20": {
+          "events": 3,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -45.8,
+          "medianPremiumReturnPct": -44.42,
+          "premiumProfitFactor": 0
+        },
+        "30": {
+          "events": 3,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -44.1,
+          "medianPremiumReturnPct": -45.32,
+          "premiumProfitFactor": 0
+        }
+      }
+    },
+    {
+      "symbol": "GOOGL",
+      "horizons": {
+        "10": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -18.01,
+          "medianPremiumReturnPct": -16.75,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 6,
+          "premiumWins": 1,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": 4.46,
+          "medianPremiumReturnPct": -9.5,
+          "premiumProfitFactor": 1.39
+        },
+        "20": {
+          "events": 6,
+          "premiumWins": 2,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -4.36,
+          "medianPremiumReturnPct": -17.66,
+          "premiumProfitFactor": 0.73
+        },
+        "30": {
+          "events": 6,
+          "premiumWins": 3,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": 2.69,
+          "medianPremiumReturnPct": -1.13,
+          "premiumProfitFactor": 1.24
+        }
+      }
+    }
+  ],
+  "byDirection": [
+    {
+      "direction": "CALL",
+      "horizons": {
+        "10": {
+          "events": 31,
+          "premiumWins": 9,
+          "premiumWinRate": 29,
+          "averagePremiumReturnPct": -9.82,
+          "medianPremiumReturnPct": -11.62,
+          "premiumProfitFactor": 0.34
+        },
+        "15": {
+          "events": 31,
+          "premiumWins": 10,
+          "premiumWinRate": 32.3,
+          "averagePremiumReturnPct": -7.47,
+          "medianPremiumReturnPct": -8.41,
+          "premiumProfitFactor": 0.52
+        },
+        "20": {
+          "events": 31,
+          "premiumWins": 12,
+          "premiumWinRate": 38.7,
+          "averagePremiumReturnPct": -13.07,
+          "medianPremiumReturnPct": -13.86,
+          "premiumProfitFactor": 0.39
+        },
+        "30": {
+          "events": 31,
+          "premiumWins": 9,
+          "premiumWinRate": 29,
+          "averagePremiumReturnPct": -22.86,
+          "medianPremiumReturnPct": -28.07,
+          "premiumProfitFactor": 0.22
+        }
+      }
+    },
+    {
+      "direction": "PUT",
+      "horizons": {
+        "10": {
+          "events": 23,
+          "premiumWins": 8,
+          "premiumWinRate": 34.8,
+          "averagePremiumReturnPct": -0.86,
+          "medianPremiumReturnPct": -9.73,
+          "premiumProfitFactor": 0.95
+        },
+        "15": {
+          "events": 23,
+          "premiumWins": 9,
+          "premiumWinRate": 39.1,
+          "averagePremiumReturnPct": -4.6,
+          "medianPremiumReturnPct": -27.05,
+          "premiumProfitFactor": 0.79
+        },
+        "20": {
+          "events": 23,
+          "premiumWins": 9,
+          "premiumWinRate": 39.1,
+          "averagePremiumReturnPct": -9.13,
+          "medianPremiumReturnPct": -24.2,
+          "premiumProfitFactor": 0.63
+        },
+        "30": {
+          "events": 23,
+          "premiumWins": 8,
+          "premiumWinRate": 34.8,
+          "averagePremiumReturnPct": -9.39,
+          "medianPremiumReturnPct": -29.28,
+          "premiumProfitFactor": 0.68
+        }
+      }
+    }
+  ],
+  "rules": [
+    {
+      "rule": "1m_volume_1.15+",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 5,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -31.42,
+          "medianPremiumReturnPct": -33.02,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -19.48,
+          "medianPremiumReturnPct": -6.8,
+          "premiumProfitFactor": 0.06
+        },
+        "20": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -16.12,
+          "medianPremiumReturnPct": -12.77,
+          "premiumProfitFactor": 0.4
+        },
+        "30": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": 18.51,
+          "medianPremiumReturnPct": -15.49,
+          "premiumProfitFactor": 1.59
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 7,
+          "premiumWins": 3,
+          "premiumWinRate": 42.9,
+          "averagePremiumReturnPct": -0.65,
+          "medianPremiumReturnPct": -2.67,
+          "premiumProfitFactor": 0.92
+        },
+        "15": {
+          "events": 7,
+          "premiumWins": 4,
+          "premiumWinRate": 57.1,
+          "averagePremiumReturnPct": 6.58,
+          "medianPremiumReturnPct": 5.99,
+          "premiumProfitFactor": 2.18
+        },
+        "20": {
+          "events": 7,
+          "premiumWins": 6,
+          "premiumWinRate": 85.7,
+          "averagePremiumReturnPct": 13.02,
+          "medianPremiumReturnPct": 11.02,
+          "premiumProfitFactor": 3.22
+        },
+        "30": {
+          "events": 7,
+          "premiumWins": 4,
+          "premiumWinRate": 57.1,
+          "averagePremiumReturnPct": -4.38,
+          "medianPremiumReturnPct": 6.16,
+          "premiumProfitFactor": 0.73
+        }
+      }
+    },
+    {
+      "rule": "1m_acceleration_1.15+",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 8,
+          "premiumWins": 3,
+          "premiumWinRate": 37.5,
+          "averagePremiumReturnPct": 17.04,
+          "medianPremiumReturnPct": -7.06,
+          "premiumProfitFactor": 2.02
+        },
+        "15": {
+          "events": 8,
+          "premiumWins": 3,
+          "premiumWinRate": 37.5,
+          "averagePremiumReturnPct": 13.56,
+          "medianPremiumReturnPct": -3.94,
+          "premiumProfitFactor": 1.81
+        },
+        "20": {
+          "events": 8,
+          "premiumWins": 2,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -5.98,
+          "medianPremiumReturnPct": -16.24,
+          "premiumProfitFactor": 0.75
+        },
+        "30": {
+          "events": 8,
+          "premiumWins": 1,
+          "premiumWinRate": 12.5,
+          "averagePremiumReturnPct": -36.22,
+          "medianPremiumReturnPct": -38.87,
+          "premiumProfitFactor": 0.07
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 11,
+          "premiumWins": 3,
+          "premiumWinRate": 27.3,
+          "averagePremiumReturnPct": -8.96,
+          "medianPremiumReturnPct": -12.07,
+          "premiumProfitFactor": 0.38
+        },
+        "15": {
+          "events": 11,
+          "premiumWins": 6,
+          "premiumWinRate": 54.5,
+          "averagePremiumReturnPct": 2.55,
+          "medianPremiumReturnPct": 5.37,
+          "premiumProfitFactor": 1.15
+        },
+        "20": {
+          "events": 11,
+          "premiumWins": 6,
+          "premiumWinRate": 54.5,
+          "averagePremiumReturnPct": -7.47,
+          "medianPremiumReturnPct": 1.87,
+          "premiumProfitFactor": 0.63
+        },
+        "30": {
+          "events": 11,
+          "premiumWins": 3,
+          "premiumWinRate": 27.3,
+          "averagePremiumReturnPct": -23.6,
+          "medianPremiumReturnPct": -39.82,
+          "premiumProfitFactor": 0.3
+        }
+      }
+    },
+    {
+      "rule": "1m_pressure_0.15+",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 9,
+          "premiumWins": 3,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 6.45,
+          "medianPremiumReturnPct": -21.02,
+          "premiumProfitFactor": 1.27
+        },
+        "15": {
+          "events": 9,
+          "premiumWins": 3,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -12.01,
+          "medianPremiumReturnPct": -23.55,
+          "premiumProfitFactor": 0.49
+        },
+        "20": {
+          "events": 9,
+          "premiumWins": 2,
+          "premiumWinRate": 22.2,
+          "averagePremiumReturnPct": -18.23,
+          "medianPremiumReturnPct": -25.45,
+          "premiumProfitFactor": 0.39
+        },
+        "30": {
+          "events": 9,
+          "premiumWins": 1,
+          "premiumWinRate": 11.1,
+          "averagePremiumReturnPct": -45.04,
+          "medianPremiumReturnPct": -63.72,
+          "premiumProfitFactor": 0.1
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 23,
+          "premiumWins": 7,
+          "premiumWinRate": 30.4,
+          "averagePremiumReturnPct": -7.72,
+          "medianPremiumReturnPct": -6.05,
+          "premiumProfitFactor": 0.39
+        },
+        "15": {
+          "events": 23,
+          "premiumWins": 7,
+          "premiumWinRate": 30.4,
+          "averagePremiumReturnPct": -7.36,
+          "medianPremiumReturnPct": -10.58,
+          "premiumProfitFactor": 0.58
+        },
+        "20": {
+          "events": 23,
+          "premiumWins": 10,
+          "premiumWinRate": 43.5,
+          "averagePremiumReturnPct": -10.68,
+          "medianPremiumReturnPct": -13.86,
+          "premiumProfitFactor": 0.48
+        },
+        "30": {
+          "events": 23,
+          "premiumWins": 10,
+          "premiumWinRate": 43.5,
+          "averagePremiumReturnPct": -12.48,
+          "medianPremiumReturnPct": -5.83,
+          "premiumProfitFactor": 0.42
+        }
+      }
+    },
+    {
+      "rule": "1m_pressure_2_of_3",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 12,
+          "premiumWins": 3,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -4.92,
+          "medianPremiumReturnPct": -27.19,
+          "premiumProfitFactor": 0.82
+        },
+        "15": {
+          "events": 12,
+          "premiumWins": 3,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -21.66,
+          "medianPremiumReturnPct": -34.08,
+          "premiumProfitFactor": 0.28
+        },
+        "20": {
+          "events": 12,
+          "premiumWins": 2,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": -27.79,
+          "medianPremiumReturnPct": -39.34,
+          "premiumProfitFactor": 0.24
+        },
+        "30": {
+          "events": 12,
+          "premiumWins": 1,
+          "premiumWinRate": 8.3,
+          "averagePremiumReturnPct": -48.44,
+          "medianPremiumReturnPct": -63.79,
+          "premiumProfitFactor": 0.07
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 27,
+          "premiumWins": 10,
+          "premiumWinRate": 37,
+          "averagePremiumReturnPct": -4.91,
+          "medianPremiumReturnPct": -5.83,
+          "premiumProfitFactor": 0.56
+        },
+        "15": {
+          "events": 27,
+          "premiumWins": 10,
+          "premiumWinRate": 37,
+          "averagePremiumReturnPct": -2.93,
+          "medianPremiumReturnPct": -6.16,
+          "premiumProfitFactor": 0.81
+        },
+        "20": {
+          "events": 27,
+          "premiumWins": 13,
+          "premiumWinRate": 48.1,
+          "averagePremiumReturnPct": -6.19,
+          "medianPremiumReturnPct": -5.64,
+          "premiumProfitFactor": 0.65
+        },
+        "30": {
+          "events": 27,
+          "premiumWins": 12,
+          "premiumWinRate": 44.4,
+          "averagePremiumReturnPct": -8.02,
+          "medianPremiumReturnPct": -5.83,
+          "premiumProfitFactor": 0.61
+        }
+      }
+    },
+    {
+      "rule": "1m_volume_trend_positive",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 5.68,
+          "medianPremiumReturnPct": -11.3,
+          "premiumProfitFactor": 1.26
+        },
+        "15": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -0.36,
+          "medianPremiumReturnPct": -18.81,
+          "premiumProfitFactor": 0.98
+        },
+        "20": {
+          "events": 12,
+          "premiumWins": 3,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -11.25,
+          "medianPremiumReturnPct": -26.46,
+          "premiumProfitFactor": 0.6
+        },
+        "30": {
+          "events": 12,
+          "premiumWins": 2,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": -32.69,
+          "medianPremiumReturnPct": -35.3,
+          "premiumProfitFactor": 0.14
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 19,
+          "premiumWins": 7,
+          "premiumWinRate": 36.8,
+          "averagePremiumReturnPct": -7.16,
+          "medianPremiumReturnPct": -9.73,
+          "premiumProfitFactor": 0.4
+        },
+        "15": {
+          "events": 19,
+          "premiumWins": 7,
+          "premiumWinRate": 36.8,
+          "averagePremiumReturnPct": -8.7,
+          "medianPremiumReturnPct": -5.73,
+          "premiumProfitFactor": 0.4
+        },
+        "20": {
+          "events": 19,
+          "premiumWins": 10,
+          "premiumWinRate": 52.6,
+          "averagePremiumReturnPct": -8.91,
+          "medianPremiumReturnPct": 0.31,
+          "premiumProfitFactor": 0.45
+        },
+        "30": {
+          "events": 19,
+          "premiumWins": 8,
+          "premiumWinRate": 42.1,
+          "averagePremiumReturnPct": -12.74,
+          "medianPremiumReturnPct": -36.16,
+          "premiumProfitFactor": 0.46
+        }
+      }
+    },
+    {
+      "rule": "1m_ignition_stack",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 1,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -19.08,
+          "medianPremiumReturnPct": -19.08,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 1,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -1.08,
+          "medianPremiumReturnPct": -1.08,
+          "premiumProfitFactor": 0
+        },
+        "20": {
+          "events": 1,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -9.84,
+          "medianPremiumReturnPct": -9.84,
+          "premiumProfitFactor": 0
+        },
+        "30": {
+          "events": 1,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -15.49,
+          "medianPremiumReturnPct": -15.49,
+          "premiumProfitFactor": 0
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 4,
+          "premiumWins": 2,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": 5.36,
+          "medianPremiumReturnPct": 4.34,
+          "premiumProfitFactor": 1.72
+        },
+        "15": {
+          "events": 4,
+          "premiumWins": 3,
+          "premiumWinRate": 75,
+          "averagePremiumReturnPct": 14.76,
+          "medianPremiumReturnPct": 8.18,
+          "premiumProfitFactor": 8.02
+        },
+        "20": {
+          "events": 4,
+          "premiumWins": 4,
+          "premiumWinRate": 100,
+          "averagePremiumReturnPct": 25.23,
+          "medianPremiumReturnPct": 15.82,
+          "premiumProfitFactor": 999
+        },
+        "30": {
+          "events": 4,
+          "premiumWins": 3,
+          "premiumWinRate": 75,
+          "averagePremiumReturnPct": 7.34,
+          "medianPremiumReturnPct": 13.37,
+          "premiumProfitFactor": 1.74
+        }
+      }
+    },
+    {
+      "rule": "5m_rejection_before_break",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -28.77,
+          "medianPremiumReturnPct": -30.24,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -36.66,
+          "medianPremiumReturnPct": -35.26,
+          "premiumProfitFactor": 0
+        },
+        "20": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -46.07,
+          "medianPremiumReturnPct": -39.34,
+          "premiumProfitFactor": 0
+        },
+        "30": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -49.67,
+          "medianPremiumReturnPct": -46.66,
+          "premiumProfitFactor": 0
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 21,
+          "premiumWins": 9,
+          "premiumWinRate": 42.9,
+          "averagePremiumReturnPct": -0.77,
+          "medianPremiumReturnPct": -5.83,
+          "premiumProfitFactor": 0.91
+        },
+        "15": {
+          "events": 21,
+          "premiumWins": 10,
+          "premiumWinRate": 47.6,
+          "averagePremiumReturnPct": 0.09,
+          "medianPremiumReturnPct": -5.32,
+          "premiumProfitFactor": 1.01
+        },
+        "20": {
+          "events": 21,
+          "premiumWins": 11,
+          "premiumWinRate": 52.4,
+          "averagePremiumReturnPct": -4.49,
+          "medianPremiumReturnPct": 0.31,
+          "premiumProfitFactor": 0.73
+        },
+        "30": {
+          "events": 21,
+          "premiumWins": 6,
+          "premiumWinRate": 28.6,
+          "averagePremiumReturnPct": -16.19,
+          "medianPremiumReturnPct": -36.16,
+          "premiumProfitFactor": 0.39
+        }
+      }
+    },
+    {
+      "rule": "5m_doji_before_break",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 0,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": 0,
+          "medianPremiumReturnPct": 0,
+          "premiumProfitFactor": 0
+        },
+        "15": {
+          "events": 0,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": 0,
+          "medianPremiumReturnPct": 0,
+          "premiumProfitFactor": 0
+        },
+        "20": {
+          "events": 0,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": 0,
+          "medianPremiumReturnPct": 0,
+          "premiumProfitFactor": 0
+        },
+        "30": {
+          "events": 0,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": 0,
+          "medianPremiumReturnPct": 0,
+          "premiumProfitFactor": 0
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 8,
+          "premiumWins": 5,
+          "premiumWinRate": 62.5,
+          "averagePremiumReturnPct": 4.36,
+          "medianPremiumReturnPct": 3.75,
+          "premiumProfitFactor": 1.6
+        },
+        "15": {
+          "events": 8,
+          "premiumWins": 5,
+          "premiumWinRate": 62.5,
+          "averagePremiumReturnPct": 10.64,
+          "medianPremiumReturnPct": 11.51,
+          "premiumProfitFactor": 2.58
+        },
+        "20": {
+          "events": 8,
+          "premiumWins": 6,
+          "premiumWinRate": 75,
+          "averagePremiumReturnPct": 16.32,
+          "medianPremiumReturnPct": 19.55,
+          "premiumProfitFactor": 3.35
+        },
+        "30": {
+          "events": 8,
+          "premiumWins": 3,
+          "premiumWinRate": 37.5,
+          "averagePremiumReturnPct": -3.29,
+          "medianPremiumReturnPct": -13.45,
+          "premiumProfitFactor": 0.83
+        }
+      }
+    },
+    {
+      "rule": "5m_accepted_close",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 17,
+          "premiumWins": 4,
+          "premiumWinRate": 23.5,
+          "averagePremiumReturnPct": -6.48,
+          "medianPremiumReturnPct": -21.02,
+          "premiumProfitFactor": 0.73
+        },
+        "15": {
+          "events": 17,
+          "premiumWins": 5,
+          "premiumWinRate": 29.4,
+          "averagePremiumReturnPct": -10.65,
+          "medianPremiumReturnPct": -28.7,
+          "premiumProfitFactor": 0.59
+        },
+        "20": {
+          "events": 17,
+          "premiumWins": 4,
+          "premiumWinRate": 23.5,
+          "averagePremiumReturnPct": -19.39,
+          "medianPremiumReturnPct": -33.27,
+          "premiumProfitFactor": 0.39
+        },
+        "30": {
+          "events": 17,
+          "premiumWins": 3,
+          "premiumWinRate": 17.6,
+          "averagePremiumReturnPct": -25,
+          "medianPremiumReturnPct": -41.32,
+          "premiumProfitFactor": 0.4
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 20,
+          "premiumWins": 7,
+          "premiumWinRate": 35,
+          "averagePremiumReturnPct": -5.29,
+          "medianPremiumReturnPct": -5.94,
+          "premiumProfitFactor": 0.44
+        },
+        "15": {
+          "events": 20,
+          "premiumWins": 8,
+          "premiumWinRate": 40,
+          "averagePremiumReturnPct": -2.14,
+          "medianPremiumReturnPct": -5.58,
+          "premiumProfitFactor": 0.85
+        },
+        "20": {
+          "events": 20,
+          "premiumWins": 10,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -6.75,
+          "medianPremiumReturnPct": -1.88,
+          "premiumProfitFactor": 0.6
+        },
+        "30": {
+          "events": 20,
+          "premiumWins": 5,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -20.5,
+          "medianPremiumReturnPct": -32.11,
+          "premiumProfitFactor": 0.25
+        }
+      }
+    },
+    {
+      "rule": "5m_not_overextended",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 18,
+          "premiumWins": 5,
+          "premiumWinRate": 27.8,
+          "averagePremiumReturnPct": -2.53,
+          "medianPremiumReturnPct": -20.05,
+          "premiumProfitFactor": 0.89
+        },
+        "15": {
+          "events": 18,
+          "premiumWins": 6,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -4.61,
+          "medianPremiumReturnPct": -16.05,
+          "premiumProfitFactor": 0.77
+        },
+        "20": {
+          "events": 18,
+          "premiumWins": 5,
+          "premiumWinRate": 27.8,
+          "averagePremiumReturnPct": -12.23,
+          "medianPremiumReturnPct": -26.46,
+          "premiumProfitFactor": 0.55
+        },
+        "30": {
+          "events": 18,
+          "premiumWins": 4,
+          "premiumWinRate": 22.2,
+          "averagePremiumReturnPct": -18.89,
+          "medianPremiumReturnPct": -35.3,
+          "premiumProfitFactor": 0.49
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 30,
+          "premiumWins": 11,
+          "premiumWinRate": 36.7,
+          "averagePremiumReturnPct": -6.72,
+          "medianPremiumReturnPct": -7.5,
+          "premiumProfitFactor": 0.46
+        },
+        "15": {
+          "events": 30,
+          "premiumWins": 12,
+          "premiumWinRate": 40,
+          "averagePremiumReturnPct": -2.94,
+          "medianPremiumReturnPct": -5.78,
+          "premiumProfitFactor": 0.81
+        },
+        "20": {
+          "events": 30,
+          "premiumWins": 14,
+          "premiumWinRate": 46.7,
+          "averagePremiumReturnPct": -7.42,
+          "medianPremiumReturnPct": -10.82,
+          "premiumProfitFactor": 0.59
+        },
+        "30": {
+          "events": 30,
+          "premiumWins": 12,
+          "premiumWinRate": 40,
+          "averagePremiumReturnPct": -12.94,
+          "medianPremiumReturnPct": -25.92,
+          "premiumProfitFactor": 0.46
+        }
+      }
+    },
+    {
+      "rule": "ignition_plus_acceptance",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 7,
+          "premiumWins": 2,
+          "premiumWinRate": 28.6,
+          "averagePremiumReturnPct": 2.45,
+          "medianPremiumReturnPct": -33.36,
+          "premiumProfitFactor": 1.09
+        },
+        "15": {
+          "events": 7,
+          "premiumWins": 2,
+          "premiumWinRate": 28.6,
+          "averagePremiumReturnPct": -19.06,
+          "medianPremiumReturnPct": -29.09,
+          "premiumProfitFactor": 0.36
+        },
+        "20": {
+          "events": 7,
+          "premiumWins": 1,
+          "premiumWinRate": 14.3,
+          "averagePremiumReturnPct": -30.24,
+          "medianPremiumReturnPct": -38.56,
+          "premiumProfitFactor": 0.18
+        },
+        "30": {
+          "events": 7,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -62.01,
+          "medianPremiumReturnPct": -63.86,
+          "premiumProfitFactor": 0
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -4.2,
+          "medianPremiumReturnPct": -4.3,
+          "premiumProfitFactor": 0.55
+        },
+        "15": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 0.68,
+          "medianPremiumReturnPct": -8.21,
+          "premiumProfitFactor": 1.04
+        },
+        "20": {
+          "events": 12,
+          "premiumWins": 6,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -4.66,
+          "medianPremiumReturnPct": -8.85,
+          "premiumProfitFactor": 0.74
+        },
+        "30": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -11.15,
+          "medianPremiumReturnPct": -14.8,
+          "premiumProfitFactor": 0.48
+        }
+      }
+    },
+    {
+      "rule": "ignition_acceptance_not_extended",
+      "entry": "BREAKOUT",
+      "train": {
+        "10": {
+          "events": 6,
+          "premiumWins": 2,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 10.58,
+          "medianPremiumReturnPct": -27.19,
+          "premiumProfitFactor": 1.43
+        },
+        "15": {
+          "events": 6,
+          "premiumWins": 2,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -10.32,
+          "medianPremiumReturnPct": -26.32,
+          "premiumProfitFactor": 0.55
+        },
+        "20": {
+          "events": 6,
+          "premiumWins": 1,
+          "premiumWinRate": 16.7,
+          "averagePremiumReturnPct": -20.97,
+          "medianPremiumReturnPct": -32.01,
+          "premiumProfitFactor": 0.27
+        },
+        "30": {
+          "events": 6,
+          "premiumWins": 0,
+          "premiumWinRate": 0,
+          "averagePremiumReturnPct": -56.63,
+          "medianPremiumReturnPct": -63.79,
+          "premiumProfitFactor": 0
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 11,
+          "premiumWins": 4,
+          "premiumWinRate": 36.4,
+          "averagePremiumReturnPct": -4.03,
+          "medianPremiumReturnPct": -2.78,
+          "premiumProfitFactor": 0.58
+        },
+        "15": {
+          "events": 11,
+          "premiumWins": 4,
+          "premiumWinRate": 36.4,
+          "averagePremiumReturnPct": 2.14,
+          "medianPremiumReturnPct": -5.83,
+          "premiumProfitFactor": 1.14
+        },
+        "20": {
+          "events": 11,
+          "premiumWins": 5,
+          "premiumWinRate": 45.5,
+          "averagePremiumReturnPct": -5.63,
+          "medianPremiumReturnPct": -23.77,
+          "premiumProfitFactor": 0.72
+        },
+        "30": {
+          "events": 11,
+          "premiumWins": 4,
+          "premiumWinRate": 36.4,
+          "averagePremiumReturnPct": -12.07,
+          "medianPremiumReturnPct": -23.77,
+          "premiumProfitFactor": 0.49
+        }
+      }
+    },
+    {
+      "rule": "retest_held_within_3m",
+      "entry": "RETEST",
+      "train": {
+        "10": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": -3.98,
+          "medianPremiumReturnPct": -12.97,
+          "premiumProfitFactor": 0.73
+        },
+        "15": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 3.65,
+          "medianPremiumReturnPct": -12.09,
+          "premiumProfitFactor": 1.22
+        },
+        "20": {
+          "events": 12,
+          "premiumWins": 4,
+          "premiumWinRate": 33.3,
+          "averagePremiumReturnPct": 0.25,
+          "medianPremiumReturnPct": -16.78,
+          "premiumProfitFactor": 1.01
+        },
+        "30": {
+          "events": 12,
+          "premiumWins": 3,
+          "premiumWinRate": 25,
+          "averagePremiumReturnPct": -2.1,
+          "medianPremiumReturnPct": -22.8,
+          "premiumProfitFactor": 0.93
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 25,
+          "premiumWins": 13,
+          "premiumWinRate": 52,
+          "averagePremiumReturnPct": -0.3,
+          "medianPremiumReturnPct": 4.18,
+          "premiumProfitFactor": 0.97
+        },
+        "15": {
+          "events": 25,
+          "premiumWins": 14,
+          "premiumWinRate": 56,
+          "averagePremiumReturnPct": -1.43,
+          "medianPremiumReturnPct": 6.04,
+          "premiumProfitFactor": 0.89
+        },
+        "20": {
+          "events": 25,
+          "premiumWins": 13,
+          "premiumWinRate": 52,
+          "averagePremiumReturnPct": -2,
+          "medianPremiumReturnPct": 5.98,
+          "premiumProfitFactor": 0.88
+        },
+        "30": {
+          "events": 25,
+          "premiumWins": 14,
+          "premiumWinRate": 56,
+          "averagePremiumReturnPct": -5.84,
+          "medianPremiumReturnPct": 4.06,
+          "premiumProfitFactor": 0.69
+        }
+      }
+    },
+    {
+      "rule": "ignition_then_retest_held",
+      "entry": "RETEST",
+      "train": {
+        "10": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -7.86,
+          "medianPremiumReturnPct": -15.45,
+          "premiumProfitFactor": 0.54
+        },
+        "15": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -8.55,
+          "medianPremiumReturnPct": -13.44,
+          "premiumProfitFactor": 0.49
+        },
+        "20": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -12.52,
+          "medianPremiumReturnPct": -26.83,
+          "premiumProfitFactor": 0.45
+        },
+        "30": {
+          "events": 5,
+          "premiumWins": 1,
+          "premiumWinRate": 20,
+          "averagePremiumReturnPct": -26.24,
+          "medianPremiumReturnPct": -29.97,
+          "premiumProfitFactor": 0.19
+        }
+      },
+      "holdout": {
+        "10": {
+          "events": 18,
+          "premiumWins": 9,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -2.94,
+          "medianPremiumReturnPct": -0.83,
+          "premiumProfitFactor": 0.77
+        },
+        "15": {
+          "events": 18,
+          "premiumWins": 9,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -5.99,
+          "medianPremiumReturnPct": 0.23,
+          "premiumProfitFactor": 0.61
+        },
+        "20": {
+          "events": 18,
+          "premiumWins": 9,
+          "premiumWinRate": 50,
+          "averagePremiumReturnPct": -6.72,
+          "medianPremiumReturnPct": -5.46,
+          "premiumProfitFactor": 0.63
+        },
+        "30": {
+          "events": 18,
+          "premiumWins": 11,
+          "premiumWinRate": 61.1,
+          "averagePremiumReturnPct": -5.43,
+          "medianPremiumReturnPct": 5.6,
+          "premiumProfitFactor": 0.69
+        }
+      }
+    }
+  ],
+  "events": [
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788192000000,
+      "direction": "PUT",
+      "level": 765.31,
+      "atr": 0.5093,
+      "features": {
+        "ignitionVolumeRatio": 0.982,
+        "ignitionAcceleration": 0.828,
+        "ignitionPressure": 0.421,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.078,
+        "preBreakCompression": 0.948,
+        "preBreakRejection": 0.074,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.07,
+        "breakoutBodyRatio": 0.722,
+        "breakoutCloseLocation": 0.722,
+        "breakoutExtensionAtr": 0.282,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 765.14,
+          "exitSpot": 765.71,
+          "premiumReturnPct": -33.36
+        },
+        "15": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 765.14,
+          "exitSpot": 765.5801,
+          "premiumReturnPct": -29.09
+        },
+        "20": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 765.14,
+          "exitSpot": 765.47,
+          "premiumReturnPct": -25.45
+        },
+        "30": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 765.14,
+          "exitSpot": 765.805,
+          "premiumReturnPct": -41.32
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788192480000,
+          "entrySpot": 765.115,
+          "exitSpot": 765.33,
+          "premiumReturnPct": -18.11
+        },
+        "15": {
+          "entryTimeMs": 1788192480000,
+          "entrySpot": 765.115,
+          "exitSpot": 765.42,
+          "premiumReturnPct": -23.28
+        },
+        "20": {
+          "entryTimeMs": 1788192480000,
+          "entrySpot": 765.115,
+          "exitSpot": 765.82,
+          "premiumReturnPct": -40.77
+        },
+        "30": {
+          "entryTimeMs": 1788192480000,
+          "entrySpot": 765.115,
+          "exitSpot": 765.68,
+          "premiumReturnPct": -37.53
+        }
+      },
+      "retestDelayMinutes": 4,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788192000000,
+      "direction": "PUT",
+      "level": 713.85,
+      "atr": 0.7337,
+      "features": {
+        "ignitionVolumeRatio": 0.754,
+        "ignitionAcceleration": 1.109,
+        "ignitionPressure": 0.267,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.253,
+        "preBreakCompression": 0.821,
+        "preBreakRejection": 0.124,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.391,
+        "breakoutBodyRatio": 0.839,
+        "breakoutCloseLocation": 0.839,
+        "breakoutExtensionAtr": 0.455,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 713.45,
+          "exitSpot": 714.38,
+          "premiumReturnPct": -51.05
+        },
+        "15": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 713.45,
+          "exitSpot": 714.21,
+          "premiumReturnPct": -45.76
+        },
+        "20": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 713.45,
+          "exitSpot": 714.25,
+          "premiumReturnPct": -48.46
+        },
+        "30": {
+          "entryTimeMs": 1788192300000,
+          "entrySpot": 713.45,
+          "exitSpot": 714.64,
+          "premiumReturnPct": -63.86
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788195300000,
+      "direction": "CALL",
+      "level": 715.17,
+      "atr": 0.614,
+      "features": {
+        "ignitionVolumeRatio": 1.418,
+        "ignitionAcceleration": 1.23,
+        "ignitionPressure": -0.256,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.983,
+        "preBreakCompression": 1.042,
+        "preBreakRejection": 0.24,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.343,
+        "breakoutBodyRatio": 0.704,
+        "breakoutCloseLocation": 0.765,
+        "breakoutExtensionAtr": 0.065,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788195600000,
+          "entrySpot": 715.2,
+          "exitSpot": 714.7144,
+          "premiumReturnPct": -33.02
+        },
+        "15": {
+          "entryTimeMs": 1788195600000,
+          "entrySpot": 715.2,
+          "exitSpot": 714.83,
+          "premiumReturnPct": -28.7
+        },
+        "20": {
+          "entryTimeMs": 1788195600000,
+          "entrySpot": 715.2,
+          "exitSpot": 714.76,
+          "premiumReturnPct": -33.27
+        },
+        "30": {
+          "entryTimeMs": 1788195600000,
+          "entrySpot": 715.2,
+          "exitSpot": 714.21,
+          "premiumReturnPct": -58.24
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788197400000,
+      "direction": "PUT",
+      "level": 714.12,
+      "atr": 0.5387,
+      "features": {
+        "ignitionVolumeRatio": 1.317,
+        "ignitionAcceleration": 1.586,
+        "ignitionPressure": 0.135,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.179,
+        "preBreakCompression": 0.767,
+        "preBreakRejection": 0.052,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.782,
+        "breakoutBodyRatio": 0.567,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.242,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788197700000,
+          "entrySpot": 713.99,
+          "exitSpot": 715.2,
+          "premiumReturnPct": -67.31
+        },
+        "15": {
+          "entryTimeMs": 1788197700000,
+          "entrySpot": 713.99,
+          "exitSpot": 715.145,
+          "premiumReturnPct": -66.86
+        },
+        "20": {
+          "entryTimeMs": 1788197700000,
+          "entrySpot": 713.99,
+          "exitSpot": 715.5333,
+          "premiumReturnPct": -78.97
+        },
+        "30": {
+          "entryTimeMs": 1788197700000,
+          "entrySpot": 713.99,
+          "exitSpot": 715.505,
+          "premiumReturnPct": -80.6
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788198000000,
+      "direction": "CALL",
+      "level": 766.06,
+      "atr": 0.4082,
+      "features": {
+        "ignitionVolumeRatio": 0.588,
+        "ignitionAcceleration": 0.707,
+        "ignitionPressure": 0.041,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.05,
+        "preBreakCompression": 0.97,
+        "preBreakRejection": 0.028,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.956,
+        "breakoutBodyRatio": 0.87,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.444,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788198300000,
+          "entrySpot": 766.26,
+          "exitSpot": 766.7699,
+          "premiumReturnPct": 25.32
+        },
+        "15": {
+          "entryTimeMs": 1788198300000,
+          "entrySpot": 766.26,
+          "exitSpot": 766.52,
+          "premiumReturnPct": 6.53
+        },
+        "20": {
+          "entryTimeMs": 1788198300000,
+          "entrySpot": 766.26,
+          "exitSpot": 766.6,
+          "premiumReturnPct": 10.46
+        },
+        "30": {
+          "entryTimeMs": 1788198300000,
+          "entrySpot": 766.26,
+          "exitSpot": 766.72,
+          "premiumReturnPct": 15.94
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788198420000,
+          "entrySpot": 766.2399,
+          "exitSpot": 766.64,
+          "premiumReturnPct": 17.8
+        },
+        "15": {
+          "entryTimeMs": 1788198420000,
+          "entrySpot": 766.2399,
+          "exitSpot": 766.46,
+          "premiumReturnPct": 3.94
+        },
+        "20": {
+          "entryTimeMs": 1788198420000,
+          "entrySpot": 766.2399,
+          "exitSpot": 766.68,
+          "premiumReturnPct": 17.69
+        },
+        "30": {
+          "entryTimeMs": 1788198420000,
+          "entrySpot": 766.2399,
+          "exitSpot": 766.71,
+          "premiumReturnPct": 16.83
+        }
+      },
+      "retestDelayMinutes": 3,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-08-31",
+      "breakoutTimeMs": 1788198600000,
+      "direction": "CALL",
+      "level": 715.31,
+      "atr": 0.4924,
+      "features": {
+        "ignitionVolumeRatio": 0.272,
+        "ignitionAcceleration": 0.383,
+        "ignitionPressure": -0.253,
+        "ignitionConsistency": 1,
+        "volumeTrend": 0.119,
+        "preBreakCompression": 0.923,
+        "preBreakRejection": 0.431,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.714,
+        "breakoutBodyRatio": 0.81,
+        "breakoutCloseLocation": 0.83,
+        "breakoutExtensionAtr": 0.431,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788198900000,
+          "entrySpot": 715.535,
+          "exitSpot": 715.505,
+          "premiumReturnPct": -13.03
+        },
+        "15": {
+          "entryTimeMs": 1788198900000,
+          "entrySpot": 715.535,
+          "exitSpot": 715.595,
+          "premiumReturnPct": -8.54
+        },
+        "20": {
+          "entryTimeMs": 1788198900000,
+          "entrySpot": 715.535,
+          "exitSpot": 715.385,
+          "premiumReturnPct": -27.48
+        },
+        "30": {
+          "entryTimeMs": 1788198900000,
+          "entrySpot": 715.535,
+          "exitSpot": 715.535,
+          "premiumReturnPct": -22.02
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788198960000,
+          "entrySpot": 715.44,
+          "exitSpot": 715.32,
+          "premiumReturnPct": -15.74
+        },
+        "15": {
+          "entryTimeMs": 1788198960000,
+          "entrySpot": 715.44,
+          "exitSpot": 715.525,
+          "premiumReturnPct": -4.14
+        },
+        "20": {
+          "entryTimeMs": 1788198960000,
+          "entrySpot": 715.44,
+          "exitSpot": 715.52,
+          "premiumReturnPct": -5.88
+        },
+        "30": {
+          "entryTimeMs": 1788198960000,
+          "entrySpot": 715.44,
+          "exitSpot": 715.3701,
+          "premiumReturnPct": -18.52
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788277200000,
+      "direction": "CALL",
+      "level": 711.15,
+      "atr": 0.7726,
+      "features": {
+        "ignitionVolumeRatio": 1.014,
+        "ignitionAcceleration": 2.222,
+        "ignitionPressure": 0.679,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.095,
+        "preBreakCompression": 0.865,
+        "preBreakRejection": 0.073,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.818,
+        "breakoutBodyRatio": 0.895,
+        "breakoutCloseLocation": 0.912,
+        "breakoutExtensionAtr": 0.568,
+        "tvAdx": 11.8,
+        "tvRecommendationAligned": -0.133,
+        "tvAgeMinutes": 8.9
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788277500000,
+          "entrySpot": 711.59,
+          "exitSpot": 712.135,
+          "premiumReturnPct": 24.27
+        },
+        "15": {
+          "entryTimeMs": 1788277500000,
+          "entrySpot": 711.59,
+          "exitSpot": 711.8,
+          "premiumReturnPct": 2.58
+        },
+        "20": {
+          "entryTimeMs": 1788277500000,
+          "entrySpot": 711.59,
+          "exitSpot": 711.4048,
+          "premiumReturnPct": -19.71
+        },
+        "30": {
+          "entryTimeMs": 1788277500000,
+          "entrySpot": 711.59,
+          "exitSpot": 710.31,
+          "premiumReturnPct": -63.72
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788277500000,
+      "direction": "CALL",
+      "level": 764.36,
+      "atr": 0.4875,
+      "features": {
+        "ignitionVolumeRatio": 0.972,
+        "ignitionAcceleration": 0.85,
+        "ignitionPressure": 0.384,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.256,
+        "preBreakCompression": 0.813,
+        "preBreakRejection": 0.357,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.19,
+        "breakoutBodyRatio": 0.724,
+        "breakoutCloseLocation": 0.915,
+        "breakoutExtensionAtr": 0.398,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788277800000,
+          "entrySpot": 764.56,
+          "exitSpot": 764.29,
+          "premiumReturnPct": -21.02
+        },
+        "15": {
+          "entryTimeMs": 1788277800000,
+          "entrySpot": 764.56,
+          "exitSpot": 764.26,
+          "premiumReturnPct": -23.55
+        },
+        "20": {
+          "entryTimeMs": 1788277800000,
+          "entrySpot": 764.56,
+          "exitSpot": 763.89,
+          "premiumReturnPct": -40.13
+        },
+        "30": {
+          "entryTimeMs": 1788277800000,
+          "entrySpot": 764.56,
+          "exitSpot": 763.02,
+          "premiumReturnPct": -68.92
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788277860000,
+          "entrySpot": 764.395,
+          "exitSpot": 764.32,
+          "premiumReturnPct": -10.5
+        },
+        "15": {
+          "entryTimeMs": 1788277860000,
+          "entrySpot": 764.395,
+          "exitSpot": 764.27,
+          "premiumReturnPct": -13.44
+        },
+        "20": {
+          "entryTimeMs": 1788277860000,
+          "entrySpot": 764.395,
+          "exitSpot": 763.96,
+          "premiumReturnPct": -26.83
+        },
+        "30": {
+          "entryTimeMs": 1788277860000,
+          "entrySpot": 764.395,
+          "exitSpot": 762.6399,
+          "premiumReturnPct": -68.14
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788279600000,
+      "direction": "PUT",
+      "level": 762.96,
+      "atr": 0.4555,
+      "features": {
+        "ignitionVolumeRatio": 1.086,
+        "ignitionAcceleration": 0.952,
+        "ignitionPressure": 0.555,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.485,
+        "preBreakCompression": 1.098,
+        "preBreakRejection": 0.129,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 2.191,
+        "breakoutBodyRatio": 0.206,
+        "breakoutCloseLocation": 0.282,
+        "breakoutExtensionAtr": 0.198,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788279900000,
+          "entrySpot": 762.85,
+          "exitSpot": 761.6992,
+          "premiumReturnPct": 59.92
+        },
+        "15": {
+          "entryTimeMs": 1788279900000,
+          "entrySpot": 762.85,
+          "exitSpot": 762.21,
+          "premiumReturnPct": 26.39
+        },
+        "20": {
+          "entryTimeMs": 1788279900000,
+          "entrySpot": 762.85,
+          "exitSpot": 761.71,
+          "premiumReturnPct": 57.42
+        },
+        "30": {
+          "entryTimeMs": 1788279900000,
+          "entrySpot": 762.85,
+          "exitSpot": 761.88,
+          "premiumReturnPct": 44.23
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788279960000,
+          "entrySpot": 762.89,
+          "exitSpot": 761.96,
+          "premiumReturnPct": 45.99
+        },
+        "15": {
+          "entryTimeMs": 1788279960000,
+          "entrySpot": 762.89,
+          "exitSpot": 762.015,
+          "premiumReturnPct": 41.46
+        },
+        "20": {
+          "entryTimeMs": 1788279960000,
+          "entrySpot": 762.89,
+          "exitSpot": 761.84,
+          "premiumReturnPct": 52.05
+        },
+        "30": {
+          "entryTimeMs": 1788279960000,
+          "entrySpot": 762.89,
+          "exitSpot": 762.13,
+          "premiumReturnPct": 31.11
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788280200000,
+      "direction": "PUT",
+      "level": 708.61,
+      "atr": 0.6741,
+      "features": {
+        "ignitionVolumeRatio": 0.978,
+        "ignitionAcceleration": 0.729,
+        "ignitionPressure": -0.061,
+        "ignitionConsistency": 2,
+        "volumeTrend": -1.951,
+        "preBreakCompression": 1.249,
+        "preBreakRejection": 0.174,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.36,
+        "breakoutBodyRatio": 0.823,
+        "breakoutCloseLocation": 0.956,
+        "breakoutExtensionAtr": 0.987,
+        "tvAdx": 11.8,
+        "tvRecommendationAligned": 0,
+        "tvAgeMinutes": 10.4
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788280500000,
+          "entrySpot": 707.935,
+          "exitSpot": 707.98,
+          "premiumReturnPct": -10.31
+        },
+        "15": {
+          "entryTimeMs": 1788280500000,
+          "entrySpot": 707.935,
+          "exitSpot": 708.55,
+          "premiumReturnPct": -39.07
+        },
+        "20": {
+          "entryTimeMs": 1788280500000,
+          "entrySpot": 707.935,
+          "exitSpot": 708.61,
+          "premiumReturnPct": -42.69
+        },
+        "30": {
+          "entryTimeMs": 1788280500000,
+          "entrySpot": 707.935,
+          "exitSpot": 708.3,
+          "premiumReturnPct": -31.27
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788286200000,
+      "direction": "PUT",
+      "level": 707.3219,
+      "atr": 0.598,
+      "features": {
+        "ignitionVolumeRatio": 1.162,
+        "ignitionAcceleration": 0.982,
+        "ignitionPressure": -0.405,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.925,
+        "preBreakCompression": 0.795,
+        "preBreakRejection": 0,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.222,
+        "breakoutBodyRatio": 0.698,
+        "breakoutCloseLocation": 0.932,
+        "breakoutExtensionAtr": 0.352,
+        "tvAdx": 11.8,
+        "tvRecommendationAligned": 0.2,
+        "tvAgeMinutes": 4
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788286500000,
+          "entrySpot": 707.1,
+          "exitSpot": 707.41,
+          "premiumReturnPct": -33.11
+        },
+        "15": {
+          "entryTimeMs": 1788286500000,
+          "entrySpot": 707.1,
+          "exitSpot": 706.88,
+          "premiumReturnPct": 6.06
+        },
+        "20": {
+          "entryTimeMs": 1788286500000,
+          "entrySpot": 707.1,
+          "exitSpot": 706.39,
+          "premiumReturnPct": 54.24
+        },
+        "30": {
+          "entryTimeMs": 1788286500000,
+          "entrySpot": 707.1,
+          "exitSpot": 705,
+          "premiumReturnPct": 248.29
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788286680000,
+          "entrySpot": 707.31,
+          "exitSpot": 706.91,
+          "premiumReturnPct": 28.16
+        },
+        "15": {
+          "entryTimeMs": 1788286680000,
+          "entrySpot": 707.31,
+          "exitSpot": 706.84,
+          "premiumReturnPct": 32.83
+        },
+        "20": {
+          "entryTimeMs": 1788286680000,
+          "entrySpot": 707.31,
+          "exitSpot": 706.15,
+          "premiumReturnPct": 123.32
+        },
+        "30": {
+          "entryTimeMs": 1788286680000,
+          "entrySpot": 707.31,
+          "exitSpot": 705.295,
+          "premiumReturnPct": 269.25
+        }
+      },
+      "retestDelayMinutes": 4,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788287100000,
+      "direction": "PUT",
+      "level": 761.24,
+      "atr": 0.4294,
+      "features": {
+        "ignitionVolumeRatio": 0.747,
+        "ignitionAcceleration": 1.252,
+        "ignitionPressure": -0.055,
+        "ignitionConsistency": 1,
+        "volumeTrend": 0.475,
+        "preBreakCompression": 0.905,
+        "preBreakRejection": 0.212,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.989,
+        "breakoutBodyRatio": 0.754,
+        "breakoutCloseLocation": 0.754,
+        "breakoutExtensionAtr": 0.07,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788287400000,
+          "entrySpot": 761.2199,
+          "exitSpot": 760.54,
+          "premiumReturnPct": 57.7
+        },
+        "15": {
+          "entryTimeMs": 1788287400000,
+          "entrySpot": 761.2199,
+          "exitSpot": 759.74,
+          "premiumReturnPct": 166.39
+        },
+        "20": {
+          "entryTimeMs": 1788287400000,
+          "entrySpot": 761.2199,
+          "exitSpot": 760.19,
+          "premiumReturnPct": 96.91
+        },
+        "30": {
+          "entryTimeMs": 1788287400000,
+          "entrySpot": 761.2199,
+          "exitSpot": 760.7295,
+          "premiumReturnPct": 21.92
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788287460000,
+          "entrySpot": 761.06,
+          "exitSpot": 760.56,
+          "premiumReturnPct": 35.28
+        },
+        "15": {
+          "entryTimeMs": 1788287460000,
+          "entrySpot": 761.06,
+          "exitSpot": 759.5,
+          "premiumReturnPct": 166.46
+        },
+        "20": {
+          "entryTimeMs": 1788287460000,
+          "entrySpot": 761.06,
+          "exitSpot": 760.135,
+          "premiumReturnPct": 78.48
+        },
+        "30": {
+          "entryTimeMs": 1788287460000,
+          "entrySpot": 761.06,
+          "exitSpot": 760.89,
+          "premiumReturnPct": -9.1
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788287400000,
+      "direction": "PUT",
+      "level": 706.69,
+      "atr": 0.5788,
+      "features": {
+        "ignitionVolumeRatio": 1.111,
+        "ignitionAcceleration": 1.564,
+        "ignitionPressure": 0.309,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.023,
+        "preBreakCompression": 0.962,
+        "preBreakRejection": 0.014,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.902,
+        "breakoutBodyRatio": 0.7,
+        "breakoutCloseLocation": 0.814,
+        "breakoutExtensionAtr": 0.53,
+        "tvAdx": 11.8,
+        "tvRecommendationAligned": 0.2,
+        "tvAgeMinutes": 12
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788287700000,
+          "entrySpot": 706.355,
+          "exitSpot": 705,
+          "premiumReturnPct": 187.86
+        },
+        "15": {
+          "entryTimeMs": 1788287700000,
+          "entrySpot": 706.355,
+          "exitSpot": 705.63,
+          "premiumReturnPct": 73.67
+        },
+        "20": {
+          "entryTimeMs": 1788287700000,
+          "entrySpot": 706.355,
+          "exitSpot": 705.785,
+          "premiumReturnPct": 46.47
+        },
+        "30": {
+          "entryTimeMs": 1788287700000,
+          "entrySpot": 706.355,
+          "exitSpot": 706.985,
+          "premiumReturnPct": -72.69
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-01",
+      "breakoutTimeMs": 1788288000000,
+      "direction": "PUT",
+      "level": 760.5,
+      "atr": 0.4368,
+      "features": {
+        "ignitionVolumeRatio": 0.729,
+        "ignitionAcceleration": 0.241,
+        "ignitionPressure": 0.571,
+        "ignitionConsistency": 3,
+        "volumeTrend": -0.056,
+        "preBreakCompression": 1.059,
+        "preBreakRejection": 0.39,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.852,
+        "breakoutBodyRatio": 0.879,
+        "breakoutCloseLocation": 0.967,
+        "breakoutExtensionAtr": 1.708,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788288300000,
+          "entrySpot": 759.725,
+          "exitSpot": 760.25,
+          "premiumReturnPct": -46.3
+        },
+        "15": {
+          "entryTimeMs": 1788288300000,
+          "entrySpot": 759.725,
+          "exitSpot": 760.7295,
+          "premiumReturnPct": -71.49
+        },
+        "20": {
+          "entryTimeMs": 1788288300000,
+          "entrySpot": 759.725,
+          "exitSpot": 761.14,
+          "premiumReturnPct": -85.81
+        },
+        "30": {
+          "entryTimeMs": 1788288300000,
+          "entrySpot": 759.725,
+          "exitSpot": 761.46,
+          "premiumReturnPct": -94.28
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788363900000,
+      "direction": "PUT",
+      "level": 765.14,
+      "atr": 0.519,
+      "features": {
+        "ignitionVolumeRatio": 0.977,
+        "ignitionAcceleration": 1.064,
+        "ignitionPressure": 0.437,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.587,
+        "preBreakCompression": 0.774,
+        "preBreakRejection": 0.328,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.008,
+        "breakoutBodyRatio": 0.939,
+        "breakoutCloseLocation": 0.939,
+        "breakoutExtensionAtr": 0.193,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788364200000,
+          "entrySpot": 765.05,
+          "exitSpot": 765.925,
+          "premiumReturnPct": -43.23
+        },
+        "15": {
+          "entryTimeMs": 1788364200000,
+          "entrySpot": 765.05,
+          "exitSpot": 765.8,
+          "premiumReturnPct": -39.78
+        },
+        "20": {
+          "entryTimeMs": 1788364200000,
+          "entrySpot": 765.05,
+          "exitSpot": 765.74,
+          "premiumReturnPct": -38.56
+        },
+        "30": {
+          "entryTimeMs": 1788364200000,
+          "entrySpot": 765.05,
+          "exitSpot": 765.4499,
+          "premiumReturnPct": -29.28
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788364260000,
+          "entrySpot": 765.09,
+          "exitSpot": 765.9,
+          "premiumReturnPct": -41.25
+        },
+        "15": {
+          "entryTimeMs": 1788364260000,
+          "entrySpot": 765.09,
+          "exitSpot": 765.75,
+          "premiumReturnPct": -36.76
+        },
+        "20": {
+          "entryTimeMs": 1788364260000,
+          "entrySpot": 765.09,
+          "exitSpot": 765.82,
+          "premiumReturnPct": -40.31
+        },
+        "30": {
+          "entryTimeMs": 1788364260000,
+          "entrySpot": 765.09,
+          "exitSpot": 765.5,
+          "premiumReturnPct": -29.97
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788366300000,
+      "direction": "PUT",
+      "level": 764.97,
+      "atr": 0.4684,
+      "features": {
+        "ignitionVolumeRatio": 1.485,
+        "ignitionAcceleration": 2.091,
+        "ignitionPressure": 0.53,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.347,
+        "preBreakCompression": 0.752,
+        "preBreakRejection": 0.186,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.908,
+        "breakoutBodyRatio": 0.297,
+        "breakoutCloseLocation": 0.648,
+        "breakoutExtensionAtr": 0.251,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788366600000,
+          "entrySpot": 764.85,
+          "exitSpot": 765.0873,
+          "premiumReturnPct": -19.08
+        },
+        "15": {
+          "entryTimeMs": 1788366600000,
+          "entrySpot": 764.85,
+          "exitSpot": 764.7,
+          "premiumReturnPct": -1.08
+        },
+        "20": {
+          "entryTimeMs": 1788366600000,
+          "entrySpot": 764.85,
+          "exitSpot": 764.85,
+          "premiumReturnPct": -9.84
+        },
+        "30": {
+          "entryTimeMs": 1788366600000,
+          "entrySpot": 764.85,
+          "exitSpot": 764.92,
+          "premiumReturnPct": -15.49
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788366660000,
+          "entrySpot": 764.83,
+          "exitSpot": 764.99,
+          "premiumReturnPct": -15.45
+        },
+        "15": {
+          "entryTimeMs": 1788366660000,
+          "entrySpot": 764.83,
+          "exitSpot": 764.87,
+          "premiumReturnPct": -10.73
+        },
+        "20": {
+          "entryTimeMs": 1788366660000,
+          "entrySpot": 764.83,
+          "exitSpot": 764.769,
+          "premiumReturnPct": -6.73
+        },
+        "30": {
+          "entryTimeMs": 1788366660000,
+          "entrySpot": 764.83,
+          "exitSpot": 765.14,
+          "premiumReturnPct": -26.65
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788368700000,
+      "direction": "PUT",
+      "level": 764.69,
+      "atr": 0.4374,
+      "features": {
+        "ignitionVolumeRatio": 1.278,
+        "ignitionAcceleration": 1.302,
+        "ignitionPressure": -0.521,
+        "ignitionConsistency": 0,
+        "volumeTrend": 0.084,
+        "preBreakCompression": 0.956,
+        "preBreakRejection": 0.02,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.508,
+        "breakoutBodyRatio": 0.887,
+        "breakoutCloseLocation": 0.919,
+        "breakoutExtensionAtr": 0.023,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 764.6615,
+          "exitSpot": 764.6,
+          "premiumReturnPct": -4.56
+        },
+        "15": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 764.6615,
+          "exitSpot": 764.62,
+          "premiumReturnPct": -6.8
+        },
+        "20": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 764.6615,
+          "exitSpot": 764.71,
+          "premiumReturnPct": -12.77
+        },
+        "30": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 764.6615,
+          "exitSpot": 764.46,
+          "premiumReturnPct": -1.43
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788368700000,
+      "direction": "PUT",
+      "level": 707.98,
+      "atr": 0.5653,
+      "features": {
+        "ignitionVolumeRatio": 1.02,
+        "ignitionAcceleration": 1.269,
+        "ignitionPressure": 0.059,
+        "ignitionConsistency": 1,
+        "volumeTrend": 0.213,
+        "preBreakCompression": 0.916,
+        "preBreakRejection": 0.302,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.531,
+        "breakoutBodyRatio": 0.842,
+        "breakoutCloseLocation": 0.915,
+        "breakoutExtensionAtr": 0.236,
+        "tvAdx": 11.9,
+        "tvRecommendationAligned": 0.109,
+        "tvAgeMinutes": 9.7
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 707.835,
+          "exitSpot": 707.86,
+          "premiumReturnPct": -9.57
+        },
+        "15": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 707.835,
+          "exitSpot": 708.225,
+          "premiumReturnPct": -30.74
+        },
+        "20": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 707.835,
+          "exitSpot": 708.32,
+          "premiumReturnPct": -36.68
+        },
+        "30": {
+          "entryTimeMs": 1788369000000,
+          "entrySpot": 707.835,
+          "exitSpot": 707.94,
+          "premiumReturnPct": -19.49
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788369060000,
+          "entrySpot": 707.97,
+          "exitSpot": 707.905,
+          "premiumReturnPct": -4.27
+        },
+        "15": {
+          "entryTimeMs": 1788369060000,
+          "entrySpot": 707.97,
+          "exitSpot": 708.265,
+          "premiumReturnPct": -26.72
+        },
+        "20": {
+          "entryTimeMs": 1788369060000,
+          "entrySpot": 707.97,
+          "exitSpot": 708.39,
+          "premiumReturnPct": -34.64
+        },
+        "30": {
+          "entryTimeMs": 1788369060000,
+          "entrySpot": 707.97,
+          "exitSpot": 708.05,
+          "premiumReturnPct": -18.96
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788370200000,
+      "direction": "PUT",
+      "level": 764.46,
+      "atr": 0.4315,
+      "features": {
+        "ignitionVolumeRatio": 0.872,
+        "ignitionAcceleration": 1.112,
+        "ignitionPressure": -0.017,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.269,
+        "preBreakCompression": 0.803,
+        "preBreakRejection": 0.585,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.914,
+        "breakoutBodyRatio": 0.9,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.159,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788370500000,
+          "entrySpot": 764.395,
+          "exitSpot": 764.9,
+          "premiumReturnPct": -39.47
+        },
+        "15": {
+          "entryTimeMs": 1788370500000,
+          "entrySpot": 764.395,
+          "exitSpot": 764.99,
+          "premiumReturnPct": -45.84
+        },
+        "20": {
+          "entryTimeMs": 1788370500000,
+          "entrySpot": 764.395,
+          "exitSpot": 764.99,
+          "premiumReturnPct": -47.78
+        },
+        "30": {
+          "entryTimeMs": 1788370500000,
+          "entrySpot": 764.395,
+          "exitSpot": 765.29,
+          "premiumReturnPct": -64.05
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788370560000,
+          "entrySpot": 764.45,
+          "exitSpot": 765.16,
+          "premiumReturnPct": -49.84
+        },
+        "15": {
+          "entryTimeMs": 1788370560000,
+          "entrySpot": 764.45,
+          "exitSpot": 765.01,
+          "premiumReturnPct": -44.76
+        },
+        "20": {
+          "entryTimeMs": 1788370560000,
+          "entrySpot": 764.45,
+          "exitSpot": 765.01,
+          "premiumReturnPct": -46.79
+        },
+        "30": {
+          "entryTimeMs": 1788370560000,
+          "entrySpot": 764.45,
+          "exitSpot": 765.33,
+          "premiumReturnPct": -64.28
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-02",
+      "breakoutTimeMs": 1788372900000,
+      "direction": "CALL",
+      "level": 765.41,
+      "atr": 0.4102,
+      "features": {
+        "ignitionVolumeRatio": 0.725,
+        "ignitionAcceleration": 0.691,
+        "ignitionPressure": -0.002,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.594,
+        "preBreakCompression": 1.004,
+        "preBreakRejection": 0.087,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 2.867,
+        "breakoutBodyRatio": 0.607,
+        "breakoutCloseLocation": 0.667,
+        "breakoutExtensionAtr": 0.471,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788373200000,
+          "entrySpot": 765.6,
+          "exitSpot": 765.32,
+          "premiumReturnPct": -32.74
+        },
+        "15": {
+          "entryTimeMs": 1788373200000,
+          "entrySpot": 765.6,
+          "exitSpot": 765.29,
+          "premiumReturnPct": -37.89
+        },
+        "20": {
+          "entryTimeMs": 1788373200000,
+          "entrySpot": 765.6,
+          "exitSpot": 764.81,
+          "premiumReturnPct": -66.46
+        },
+        "30": {
+          "entryTimeMs": 1788373200000,
+          "entrySpot": 765.6,
+          "exitSpot": 764.87,
+          "premiumReturnPct": -69.26
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788373260000,
+          "entrySpot": 765.6,
+          "exitSpot": 765.5,
+          "premiumReturnPct": -19.78
+        },
+        "15": {
+          "entryTimeMs": 1788373260000,
+          "entrySpot": 765.6,
+          "exitSpot": 765.245,
+          "premiumReturnPct": -41.01
+        },
+        "20": {
+          "entryTimeMs": 1788373260000,
+          "entrySpot": 765.6,
+          "exitSpot": 764.815,
+          "premiumReturnPct": -66.54
+        },
+        "30": {
+          "entryTimeMs": 1788373260000,
+          "entrySpot": 765.6,
+          "exitSpot": 764.88,
+          "premiumReturnPct": -69.18
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-03",
+      "breakoutTimeMs": 1788450900000,
+      "direction": "CALL",
+      "level": 773.26,
+      "atr": 0.6766,
+      "features": {
+        "ignitionVolumeRatio": 1.034,
+        "ignitionAcceleration": 1.246,
+        "ignitionPressure": 0.157,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.262,
+        "preBreakCompression": 0.7,
+        "preBreakRejection": 0.059,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.525,
+        "breakoutBodyRatio": 0.473,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.089,
+        "tvAdx": 13.2,
+        "tvRecommendationAligned": 0.467,
+        "tvAgeMinutes": 11.3
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788451200000,
+          "entrySpot": 773.31,
+          "exitSpot": 772.53,
+          "premiumReturnPct": -38.45
+        },
+        "15": {
+          "entryTimeMs": 1788451200000,
+          "entrySpot": 773.31,
+          "exitSpot": 772.68,
+          "premiumReturnPct": -33.95
+        },
+        "20": {
+          "entryTimeMs": 1788451200000,
+          "entrySpot": 773.31,
+          "exitSpot": 772.73,
+          "premiumReturnPct": -32.97
+        },
+        "30": {
+          "entryTimeMs": 1788451200000,
+          "entrySpot": 773.31,
+          "exitSpot": 772.435,
+          "premiumReturnPct": -45.1
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-03",
+      "breakoutTimeMs": 1788457800000,
+      "direction": "CALL",
+      "level": 773.19,
+      "atr": 0.3172,
+      "features": {
+        "ignitionVolumeRatio": 0.745,
+        "ignitionAcceleration": 0.745,
+        "ignitionPressure": -0.301,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.451,
+        "preBreakCompression": 0.827,
+        "preBreakRejection": 0.222,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.271,
+        "breakoutBodyRatio": 0.923,
+        "breakoutCloseLocation": 0.967,
+        "breakoutExtensionAtr": 0.786,
+        "tvAdx": 13.4,
+        "tvRecommendationAligned": 0.467,
+        "tvAgeMinutes": 2.5
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 773.4031,
+          "exitSpot": 773.77,
+          "premiumReturnPct": 15.06
+        },
+        "15": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 773.4031,
+          "exitSpot": 773.795,
+          "premiumReturnPct": 15.41
+        },
+        "20": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 773.4031,
+          "exitSpot": 773.815,
+          "premiumReturnPct": 15.41
+        },
+        "30": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 773.4031,
+          "exitSpot": 773.75,
+          "premiumReturnPct": 8.06
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788458280000,
+          "entrySpot": 773.26,
+          "exitSpot": 773.72,
+          "premiumReturnPct": 22.79
+        },
+        "15": {
+          "entryTimeMs": 1788458280000,
+          "entrySpot": 773.26,
+          "exitSpot": 773.74,
+          "premiumReturnPct": 22.74
+        },
+        "20": {
+          "entryTimeMs": 1788458280000,
+          "entrySpot": 773.26,
+          "exitSpot": 773.955,
+          "premiumReturnPct": 37.98
+        },
+        "30": {
+          "entryTimeMs": 1788458280000,
+          "entrySpot": 773.26,
+          "exitSpot": 773.69,
+          "premiumReturnPct": 14.14
+        }
+      },
+      "retestDelayMinutes": 4,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-03",
+      "breakoutTimeMs": 1788457800000,
+      "direction": "CALL",
+      "level": 717.93,
+      "atr": 0.4454,
+      "features": {
+        "ignitionVolumeRatio": 2.947,
+        "ignitionAcceleration": 2.182,
+        "ignitionPressure": 0.261,
+        "ignitionConsistency": 2,
+        "volumeTrend": -3.512,
+        "preBreakCompression": 0.759,
+        "preBreakRejection": 0.524,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 3.122,
+        "breakoutBodyRatio": 0.582,
+        "breakoutCloseLocation": 0.761,
+        "breakoutExtensionAtr": 0.135,
+        "tvAdx": 11.1,
+        "tvRecommendationAligned": 0.379,
+        "tvAgeMinutes": 10.5
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 717.98,
+          "exitSpot": 718.58,
+          "premiumReturnPct": 39.98
+        },
+        "15": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 717.98,
+          "exitSpot": 718.72,
+          "premiumReturnPct": 51.09
+        },
+        "20": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 717.98,
+          "exitSpot": 718.875,
+          "premiumReturnPct": 64.9
+        },
+        "30": {
+          "entryTimeMs": 1788458100000,
+          "entrySpot": 717.98,
+          "exitSpot": 718.69,
+          "premiumReturnPct": 42.46
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788458160000,
+          "entrySpot": 718.05,
+          "exitSpot": 718.66,
+          "premiumReturnPct": 40.12
+        },
+        "15": {
+          "entryTimeMs": 1788458160000,
+          "entrySpot": 718.05,
+          "exitSpot": 718.705,
+          "premiumReturnPct": 42.15
+        },
+        "20": {
+          "entryTimeMs": 1788458160000,
+          "entrySpot": 718.05,
+          "exitSpot": 718.835,
+          "premiumReturnPct": 52.79
+        },
+        "30": {
+          "entryTimeMs": 1788458160000,
+          "entrySpot": 718.05,
+          "exitSpot": 718.56,
+          "premiumReturnPct": 23.37
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-03",
+      "breakoutTimeMs": 1788462300000,
+      "direction": "PUT",
+      "level": 718.155,
+      "atr": 0.3698,
+      "features": {
+        "ignitionVolumeRatio": 0.659,
+        "ignitionAcceleration": 0.873,
+        "ignitionPressure": 0.2,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.75,
+        "preBreakCompression": 0.946,
+        "preBreakRejection": 0.086,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.508,
+        "breakoutBodyRatio": 0.564,
+        "breakoutCloseLocation": 0.855,
+        "breakoutExtensionAtr": 0.21,
+        "tvAdx": 11.2,
+        "tvRecommendationAligned": -0.512,
+        "tvAgeMinutes": 11.5
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788462600000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.955,
+          "premiumReturnPct": -2.78
+        },
+        "15": {
+          "entryTimeMs": 1788462600000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.65,
+          "premiumReturnPct": 34.72
+        },
+        "20": {
+          "entryTimeMs": 1788462600000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.73,
+          "premiumReturnPct": 16.54
+        },
+        "30": {
+          "entryTimeMs": 1788462600000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.6969,
+          "premiumReturnPct": 8.62
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788462660000,
+          "entrySpot": 718.1,
+          "exitSpot": 717.82,
+          "premiumReturnPct": 21.09
+        },
+        "15": {
+          "entryTimeMs": 1788462660000,
+          "entrySpot": 718.1,
+          "exitSpot": 717.69,
+          "premiumReturnPct": 35.34
+        },
+        "20": {
+          "entryTimeMs": 1788462660000,
+          "entrySpot": 718.1,
+          "exitSpot": 717.71,
+          "premiumReturnPct": 25.79
+        },
+        "30": {
+          "entryTimeMs": 1788462660000,
+          "entrySpot": 718.1,
+          "exitSpot": 717.755,
+          "premiumReturnPct": 4.06
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-03",
+      "breakoutTimeMs": 1788462600000,
+      "direction": "PUT",
+      "level": 773.4,
+      "atr": 0.2896,
+      "features": {
+        "ignitionVolumeRatio": 0.535,
+        "ignitionAcceleration": 0.421,
+        "ignitionPressure": 0.188,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.055,
+        "preBreakCompression": 0.903,
+        "preBreakRejection": 0.474,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 0.871,
+        "breakoutBodyRatio": 0.626,
+        "breakoutCloseLocation": 0.782,
+        "breakoutExtensionAtr": 0.069,
+        "tvAdx": 13.4,
+        "tvRecommendationAligned": -0.467,
+        "tvAgeMinutes": 8.3
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788462900000,
+          "entrySpot": 773.375,
+          "exitSpot": 773.18,
+          "premiumReturnPct": 5.87
+        },
+        "15": {
+          "entryTimeMs": 1788462900000,
+          "entrySpot": 773.375,
+          "exitSpot": 773.41,
+          "premiumReturnPct": -33.79
+        },
+        "20": {
+          "entryTimeMs": 1788462900000,
+          "entrySpot": 773.375,
+          "exitSpot": 773.31,
+          "premiumReturnPct": -31.57
+        },
+        "30": {
+          "entryTimeMs": 1788462900000,
+          "entrySpot": 773.375,
+          "exitSpot": 773.23,
+          "premiumReturnPct": -44.67
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "MSFT",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788536100000,
+      "direction": "PUT",
+      "level": 500.1201,
+      "atr": 0.9347,
+      "features": {
+        "ignitionVolumeRatio": 1.281,
+        "ignitionAcceleration": 1.04,
+        "ignitionPressure": 0.15,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.567,
+        "preBreakCompression": 0.788,
+        "preBreakRejection": 0,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 2.255,
+        "breakoutBodyRatio": 0.231,
+        "breakoutCloseLocation": 0.632,
+        "breakoutExtensionAtr": 0.027,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788536400000,
+          "entrySpot": 500.13,
+          "exitSpot": 500.31,
+          "premiumReturnPct": -14.79
+        },
+        "15": {
+          "entryTimeMs": 1788536400000,
+          "entrySpot": 500.13,
+          "exitSpot": 500.71,
+          "premiumReturnPct": -30.43
+        },
+        "20": {
+          "entryTimeMs": 1788536400000,
+          "entrySpot": 500.13,
+          "exitSpot": 501.01,
+          "premiumReturnPct": -41.13
+        },
+        "30": {
+          "entryTimeMs": 1788536400000,
+          "entrySpot": 500.13,
+          "exitSpot": 500.854,
+          "premiumReturnPct": -38.12
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788537000000,
+      "direction": "CALL",
+      "level": 320.59,
+      "atr": 0.626,
+      "features": {
+        "ignitionVolumeRatio": 0.636,
+        "ignitionAcceleration": 0.76,
+        "ignitionPressure": 0.06,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.16,
+        "preBreakCompression": 0.774,
+        "preBreakRejection": 0.532,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.98,
+        "breakoutBodyRatio": 0.683,
+        "breakoutCloseLocation": 0.707,
+        "breakoutExtensionAtr": 0.613,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788537300000,
+          "entrySpot": 321.01,
+          "exitSpot": 321,
+          "premiumReturnPct": -7.15
+        },
+        "15": {
+          "entryTimeMs": 1788537300000,
+          "entrySpot": 321.01,
+          "exitSpot": 321.0299,
+          "premiumReturnPct": -6.16
+        },
+        "20": {
+          "entryTimeMs": 1788537300000,
+          "entrySpot": 321.01,
+          "exitSpot": 321.0499,
+          "premiumReturnPct": -5.64
+        },
+        "30": {
+          "entryTimeMs": 1788537300000,
+          "entrySpot": 321.01,
+          "exitSpot": 320.97,
+          "premiumReturnPct": -10.52
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788537300000,
+      "direction": "CALL",
+      "level": 338.15,
+      "atr": 0.635,
+      "features": {
+        "ignitionVolumeRatio": 1.434,
+        "ignitionAcceleration": 1.295,
+        "ignitionPressure": 0.238,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.659,
+        "preBreakCompression": 0.645,
+        "preBreakRejection": 0.073,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.01,
+        "breakoutBodyRatio": 0.375,
+        "breakoutCloseLocation": 0.675,
+        "breakoutExtensionAtr": 0.06,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": -0.448,
+        "tvAgeMinutes": 7.6
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788537600000,
+          "entrySpot": 338.21,
+          "exitSpot": 338.01,
+          "premiumReturnPct": -27.23
+        },
+        "15": {
+          "entryTimeMs": 1788537600000,
+          "entrySpot": 338.21,
+          "exitSpot": 338.265,
+          "premiumReturnPct": -8.41
+        },
+        "20": {
+          "entryTimeMs": 1788537600000,
+          "entrySpot": 338.21,
+          "exitSpot": 338.6,
+          "premiumReturnPct": 23.62
+        },
+        "30": {
+          "entryTimeMs": 1788537600000,
+          "entrySpot": 338.21,
+          "exitSpot": 338.63,
+          "premiumReturnPct": 20.57
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788537660000,
+          "entrySpot": 338.155,
+          "exitSpot": 338.04,
+          "premiumReturnPct": -20.8
+        },
+        "15": {
+          "entryTimeMs": 1788537660000,
+          "entrySpot": 338.155,
+          "exitSpot": 338.125,
+          "premiumReturnPct": -16.26
+        },
+        "20": {
+          "entryTimeMs": 1788537660000,
+          "entrySpot": 338.155,
+          "exitSpot": 338.53,
+          "premiumReturnPct": 22.07
+        },
+        "30": {
+          "entryTimeMs": 1788537660000,
+          "entrySpot": 338.155,
+          "exitSpot": 338.59,
+          "premiumReturnPct": 22.41
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788537600000,
+      "direction": "CALL",
+      "level": 770.06,
+      "atr": 0.4893,
+      "features": {
+        "ignitionVolumeRatio": 0.746,
+        "ignitionAcceleration": 0.838,
+        "ignitionPressure": 0.221,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.013,
+        "preBreakCompression": 0.836,
+        "preBreakRejection": 0.644,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 0.571,
+        "breakoutBodyRatio": 0.45,
+        "breakoutCloseLocation": 0.867,
+        "breakoutExtensionAtr": 0.062,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788537900000,
+          "entrySpot": 770.095,
+          "exitSpot": 770.73,
+          "premiumReturnPct": 25.7
+        },
+        "15": {
+          "entryTimeMs": 1788537900000,
+          "entrySpot": 770.095,
+          "exitSpot": 770.85,
+          "premiumReturnPct": 31.74
+        },
+        "20": {
+          "entryTimeMs": 1788537900000,
+          "entrySpot": 770.095,
+          "exitSpot": 770.89,
+          "premiumReturnPct": 33.19
+        },
+        "30": {
+          "entryTimeMs": 1788537900000,
+          "entrySpot": 770.095,
+          "exitSpot": 770.925,
+          "premiumReturnPct": 33.43
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788537960000,
+          "entrySpot": 770.14,
+          "exitSpot": 770.63,
+          "premiumReturnPct": 17.43
+        },
+        "15": {
+          "entryTimeMs": 1788537960000,
+          "entrySpot": 770.14,
+          "exitSpot": 770.97,
+          "premiumReturnPct": 35.91
+        },
+        "20": {
+          "entryTimeMs": 1788537960000,
+          "entrySpot": 770.14,
+          "exitSpot": 770.75,
+          "premiumReturnPct": 22.23
+        },
+        "30": {
+          "entryTimeMs": 1788537960000,
+          "entrySpot": 770.14,
+          "exitSpot": 770.88,
+          "premiumReturnPct": 27.86
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788538200000,
+      "direction": "CALL",
+      "level": 718.32,
+      "atr": 0.6645,
+      "features": {
+        "ignitionVolumeRatio": 1.176,
+        "ignitionAcceleration": 0.8,
+        "ignitionPressure": 0.222,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.886,
+        "preBreakCompression": 0.632,
+        "preBreakRejection": 0.061,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.743,
+        "breakoutBodyRatio": 0.654,
+        "breakoutCloseLocation": 0.833,
+        "breakoutExtensionAtr": 0.198,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": 0.376,
+        "tvAgeMinutes": 4.5
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788538500000,
+          "entrySpot": 718.45,
+          "exitSpot": 718.615,
+          "premiumReturnPct": 0.9
+        },
+        "15": {
+          "entryTimeMs": 1788538500000,
+          "entrySpot": 718.45,
+          "exitSpot": 718.61,
+          "premiumReturnPct": -0.16
+        },
+        "20": {
+          "entryTimeMs": 1788538500000,
+          "entrySpot": 718.45,
+          "exitSpot": 719.005,
+          "premiumReturnPct": 20.3
+        },
+        "30": {
+          "entryTimeMs": 1788538500000,
+          "entrySpot": 718.45,
+          "exitSpot": 718.925,
+          "premiumReturnPct": 14.23
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788538560000,
+          "entrySpot": 718.335,
+          "exitSpot": 718.56,
+          "premiumReturnPct": 4.18
+        },
+        "15": {
+          "entryTimeMs": 1788538560000,
+          "entrySpot": 718.335,
+          "exitSpot": 718.665,
+          "premiumReturnPct": 9
+        },
+        "20": {
+          "entryTimeMs": 1788538560000,
+          "entrySpot": 718.335,
+          "exitSpot": 719.01,
+          "premiumReturnPct": 28.07
+        },
+        "30": {
+          "entryTimeMs": 1788538560000,
+          "entrySpot": 718.335,
+          "exitSpot": 718.915,
+          "premiumReturnPct": 20.71
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788538500000,
+      "direction": "CALL",
+      "level": 770.74,
+      "atr": 0.4806,
+      "features": {
+        "ignitionVolumeRatio": 0.963,
+        "ignitionAcceleration": 0.827,
+        "ignitionPressure": 0.662,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.653,
+        "preBreakCompression": 0.858,
+        "preBreakRejection": 0.13,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.146,
+        "breakoutBodyRatio": 0.391,
+        "breakoutCloseLocation": 0.906,
+        "breakoutExtensionAtr": 0.232,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 770.86,
+          "exitSpot": 770.66,
+          "premiumReturnPct": -17.8
+        },
+        "15": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 770.86,
+          "exitSpot": 770.925,
+          "premiumReturnPct": -5.73
+        },
+        "20": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 770.86,
+          "exitSpot": 770.7895,
+          "premiumReturnPct": -13.86
+        },
+        "30": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 770.86,
+          "exitSpot": 771.22,
+          "premiumReturnPct": 6.92
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788538860000,
+          "entrySpot": 770.98,
+          "exitSpot": 770.61,
+          "premiumReturnPct": -25.2
+        },
+        "15": {
+          "entryTimeMs": 1788538860000,
+          "entrySpot": 770.98,
+          "exitSpot": 770.88,
+          "premiumReturnPct": -13.85
+        },
+        "20": {
+          "entryTimeMs": 1788538860000,
+          "entrySpot": 770.98,
+          "exitSpot": 770.84,
+          "premiumReturnPct": -16.9
+        },
+        "30": {
+          "entryTimeMs": 1788538860000,
+          "entrySpot": 770.98,
+          "exitSpot": 771.25,
+          "premiumReturnPct": 1.88
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788538500000,
+      "direction": "CALL",
+      "level": 321.269,
+      "atr": 0.5983,
+      "features": {
+        "ignitionVolumeRatio": 0.887,
+        "ignitionAcceleration": 1.09,
+        "ignitionPressure": 0.041,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.005,
+        "preBreakCompression": 0.695,
+        "preBreakRejection": 0.243,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 0.736,
+        "breakoutBodyRatio": 0.397,
+        "breakoutCloseLocation": 0.914,
+        "breakoutExtensionAtr": 0.002,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 321.2506,
+          "exitSpot": 320.5,
+          "premiumReturnPct": -39.79
+        },
+        "15": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 321.2506,
+          "exitSpot": 321.1001,
+          "premiumReturnPct": -14.17
+        },
+        "20": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 321.2506,
+          "exitSpot": 320.895,
+          "premiumReturnPct": -24.08
+        },
+        "30": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 321.2506,
+          "exitSpot": 320.98,
+          "premiumReturnPct": -21.07
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788538500000,
+      "direction": "CALL",
+      "level": 338.4,
+      "atr": 0.5125,
+      "features": {
+        "ignitionVolumeRatio": 0.864,
+        "ignitionAcceleration": 0.831,
+        "ignitionPressure": 0.269,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.253,
+        "preBreakCompression": 0.801,
+        "preBreakRejection": 0.109,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.05,
+        "breakoutBodyRatio": 0.467,
+        "breakoutCloseLocation": 0.724,
+        "breakoutExtensionAtr": 0.382,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": -0.448,
+        "tvAgeMinutes": 2.2
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 338.57,
+          "exitSpot": 338.63,
+          "premiumReturnPct": -4.03
+        },
+        "15": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 338.57,
+          "exitSpot": 338.55,
+          "premiumReturnPct": -16.57
+        },
+        "20": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 338.57,
+          "exitSpot": 338.62,
+          "premiumReturnPct": -11.54
+        },
+        "30": {
+          "entryTimeMs": 1788538800000,
+          "entrySpot": 338.57,
+          "exitSpot": 338.79,
+          "premiumReturnPct": 3.57
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788539400000,
+      "direction": "CALL",
+      "level": 718.855,
+      "atr": 0.5768,
+      "features": {
+        "ignitionVolumeRatio": 1.565,
+        "ignitionAcceleration": 2.614,
+        "ignitionPressure": -0.155,
+        "ignitionConsistency": 1,
+        "volumeTrend": 2.485,
+        "preBreakCompression": 0.716,
+        "preBreakRejection": 0.515,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 1.004,
+        "breakoutBodyRatio": 0.768,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.261,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": 0.376,
+        "tvAgeMinutes": 0.3
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788539700000,
+          "entrySpot": 719.001,
+          "exitSpot": 718.925,
+          "premiumReturnPct": -12.07
+        },
+        "15": {
+          "entryTimeMs": 1788539700000,
+          "entrySpot": 719.001,
+          "exitSpot": 719.445,
+          "premiumReturnPct": 17.64
+        },
+        "20": {
+          "entryTimeMs": 1788539700000,
+          "entrySpot": 719.001,
+          "exitSpot": 719.36,
+          "premiumReturnPct": 11.02
+        },
+        "30": {
+          "entryTimeMs": 1788539700000,
+          "entrySpot": 719.001,
+          "exitSpot": 718.535,
+          "premiumReturnPct": -36.16
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788539760000,
+          "entrySpot": 718.995,
+          "exitSpot": 718.915,
+          "premiumReturnPct": -12.32
+        },
+        "15": {
+          "entryTimeMs": 1788539760000,
+          "entrySpot": 718.995,
+          "exitSpot": 719.605,
+          "premiumReturnPct": 28.84
+        },
+        "20": {
+          "entryTimeMs": 1788539760000,
+          "entrySpot": 718.995,
+          "exitSpot": 719.3899,
+          "premiumReturnPct": 13.36
+        },
+        "30": {
+          "entryTimeMs": 1788539760000,
+          "entrySpot": 718.995,
+          "exitSpot": 718.67,
+          "premiumReturnPct": -29.7
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "MSFT",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788539700000,
+      "direction": "CALL",
+      "level": 501.49,
+      "atr": 0.7554,
+      "features": {
+        "ignitionVolumeRatio": 0.68,
+        "ignitionAcceleration": 0.626,
+        "ignitionPressure": 0.514,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.097,
+        "preBreakCompression": 0.817,
+        "preBreakRejection": 0.314,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.046,
+        "breakoutBodyRatio": 0.471,
+        "breakoutCloseLocation": 0.779,
+        "breakoutExtensionAtr": 0.167,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788540000000,
+          "entrySpot": 501.6335,
+          "exitSpot": 500.92,
+          "premiumReturnPct": -32.75
+        },
+        "15": {
+          "entryTimeMs": 1788540000000,
+          "entrySpot": 501.6335,
+          "exitSpot": 500.98,
+          "premiumReturnPct": -31.17
+        },
+        "20": {
+          "entryTimeMs": 1788540000000,
+          "entrySpot": 501.6335,
+          "exitSpot": 500.3402,
+          "premiumReturnPct": -51.85
+        },
+        "30": {
+          "entryTimeMs": 1788540000000,
+          "entrySpot": 501.6335,
+          "exitSpot": 500.595,
+          "premiumReturnPct": -45.32
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788540060000,
+          "entrySpot": 501.62,
+          "exitSpot": 501.035,
+          "premiumReturnPct": -28.44
+        },
+        "15": {
+          "entryTimeMs": 1788540060000,
+          "entrySpot": 501.62,
+          "exitSpot": 500.88,
+          "premiumReturnPct": -34.25
+        },
+        "20": {
+          "entryTimeMs": 1788540060000,
+          "entrySpot": 501.62,
+          "exitSpot": 500.33,
+          "premiumReturnPct": -51.93
+        },
+        "30": {
+          "entryTimeMs": 1788540060000,
+          "entrySpot": 501.62,
+          "exitSpot": 500.705,
+          "premiumReturnPct": -41.56
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788540300000,
+      "direction": "CALL",
+      "level": 771.15,
+      "atr": 0.3947,
+      "features": {
+        "ignitionVolumeRatio": 0.939,
+        "ignitionAcceleration": 1.361,
+        "ignitionPressure": 0.374,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.944,
+        "preBreakCompression": 0.728,
+        "preBreakRejection": 0.259,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.928,
+        "breakoutBodyRatio": 0.771,
+        "breakoutCloseLocation": 0.943,
+        "breakoutExtensionAtr": 0.177,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 771.22,
+          "exitSpot": 770.89,
+          "premiumReturnPct": -23.82
+        },
+        "15": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 771.22,
+          "exitSpot": 770.46,
+          "premiumReturnPct": -42.9
+        },
+        "20": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 771.22,
+          "exitSpot": 770.35,
+          "premiumReturnPct": -48.06
+        },
+        "30": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 771.22,
+          "exitSpot": 770.28,
+          "premiumReturnPct": -52.74
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788540660000,
+          "entrySpot": 771.25,
+          "exitSpot": 770.84,
+          "premiumReturnPct": -27.32
+        },
+        "15": {
+          "entryTimeMs": 1788540660000,
+          "entrySpot": 771.25,
+          "exitSpot": 770.54,
+          "premiumReturnPct": -40.86
+        },
+        "20": {
+          "entryTimeMs": 1788540660000,
+          "entrySpot": 771.25,
+          "exitSpot": 770.42,
+          "premiumReturnPct": -46.48
+        },
+        "30": {
+          "entryTimeMs": 1788540660000,
+          "entrySpot": 771.25,
+          "exitSpot": 770.36,
+          "premiumReturnPct": -50.86
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788540300000,
+      "direction": "CALL",
+      "level": 719.08,
+      "atr": 0.5215,
+      "features": {
+        "ignitionVolumeRatio": 0.925,
+        "ignitionAcceleration": 1.434,
+        "ignitionPressure": -0.147,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.961,
+        "preBreakCompression": 0.685,
+        "preBreakRejection": 0.298,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.153,
+        "breakoutBodyRatio": 0.825,
+        "breakoutCloseLocation": 0.958,
+        "breakoutExtensionAtr": 0.69,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": 0.376,
+        "tvAgeMinutes": 3.3
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 719.46,
+          "exitSpot": 719.16,
+          "premiumReturnPct": -22.37
+        },
+        "15": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 719.46,
+          "exitSpot": 718.535,
+          "premiumReturnPct": -49.22
+        },
+        "20": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 719.46,
+          "exitSpot": 718.24,
+          "premiumReturnPct": -59.98
+        },
+        "30": {
+          "entryTimeMs": 1788540600000,
+          "entrySpot": 719.46,
+          "exitSpot": 718.05,
+          "premiumReturnPct": -67.31
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "MSFT",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788540900000,
+      "direction": "PUT",
+      "level": 500.4685,
+      "atr": 0.6864,
+      "features": {
+        "ignitionVolumeRatio": 0.57,
+        "ignitionAcceleration": 0.587,
+        "ignitionPressure": 0.091,
+        "ignitionConsistency": 1,
+        "volumeTrend": 0.024,
+        "preBreakCompression": 0.808,
+        "preBreakRejection": 0.703,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.901,
+        "breakoutBodyRatio": 0.875,
+        "breakoutCloseLocation": 0.944,
+        "breakoutExtensionAtr": 0.186,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788541200000,
+          "entrySpot": 500.36,
+          "exitSpot": 500.595,
+          "premiumReturnPct": -24.78
+        },
+        "15": {
+          "entryTimeMs": 1788541200000,
+          "entrySpot": 500.36,
+          "exitSpot": 500.96,
+          "premiumReturnPct": -46.93
+        },
+        "20": {
+          "entryTimeMs": 1788541200000,
+          "entrySpot": 500.36,
+          "exitSpot": 500.88,
+          "premiumReturnPct": -44.42
+        },
+        "30": {
+          "entryTimeMs": 1788541200000,
+          "entrySpot": 500.36,
+          "exitSpot": 500.905,
+          "premiumReturnPct": -48.86
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788541260000,
+          "entrySpot": 500.33,
+          "exitSpot": 500.705,
+          "premiumReturnPct": -33.15
+        },
+        "15": {
+          "entryTimeMs": 1788541260000,
+          "entrySpot": 500.33,
+          "exitSpot": 500.9,
+          "premiumReturnPct": -45.28
+        },
+        "20": {
+          "entryTimeMs": 1788541260000,
+          "entrySpot": 500.33,
+          "exitSpot": 501.02,
+          "premiumReturnPct": -52.58
+        },
+        "30": {
+          "entryTimeMs": 1788541260000,
+          "entrySpot": 500.33,
+          "exitSpot": 500.6904,
+          "premiumReturnPct": -38.82
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788541500000,
+      "direction": "CALL",
+      "level": 321.3292,
+      "atr": 0.4721,
+      "features": {
+        "ignitionVolumeRatio": 0.744,
+        "ignitionAcceleration": 0.962,
+        "ignitionPressure": -0.539,
+        "ignitionConsistency": 1,
+        "volumeTrend": -0.135,
+        "preBreakCompression": 0.634,
+        "preBreakRejection": 0,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.136,
+        "breakoutBodyRatio": 0.626,
+        "breakoutCloseLocation": 0.732,
+        "breakoutExtensionAtr": 0.106,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788541800000,
+          "entrySpot": 321.36,
+          "exitSpot": 321.568,
+          "premiumReturnPct": 6
+        },
+        "15": {
+          "entryTimeMs": 1788541800000,
+          "entrySpot": 321.36,
+          "exitSpot": 321.77,
+          "premiumReturnPct": 18.12
+        },
+        "20": {
+          "entryTimeMs": 1788541800000,
+          "entrySpot": 321.36,
+          "exitSpot": 321.685,
+          "premiumReturnPct": 12.74
+        },
+        "30": {
+          "entryTimeMs": 1788541800000,
+          "entrySpot": 321.36,
+          "exitSpot": 320.99,
+          "premiumReturnPct": -28.07
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788541860000,
+          "entrySpot": 321.425,
+          "exitSpot": 321.8801,
+          "premiumReturnPct": 20.31
+        },
+        "15": {
+          "entryTimeMs": 1788541860000,
+          "entrySpot": 321.425,
+          "exitSpot": 321.65,
+          "premiumReturnPct": 6.54
+        },
+        "20": {
+          "entryTimeMs": 1788541860000,
+          "entrySpot": 321.425,
+          "exitSpot": 321.449,
+          "premiumReturnPct": -5.26
+        },
+        "30": {
+          "entryTimeMs": 1788541860000,
+          "entrySpot": 321.425,
+          "exitSpot": 320.95,
+          "premiumReturnPct": -32.92
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788542100000,
+      "direction": "PUT",
+      "level": 770.31,
+      "atr": 0.355,
+      "features": {
+        "ignitionVolumeRatio": 1.029,
+        "ignitionAcceleration": 1.463,
+        "ignitionPressure": 0.069,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.336,
+        "preBreakCompression": 0.988,
+        "preBreakRejection": 0.763,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 0.839,
+        "breakoutBodyRatio": 0.346,
+        "breakoutCloseLocation": 0.769,
+        "breakoutExtensionAtr": 0.085,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 770.27,
+          "exitSpot": 769.852,
+          "premiumReturnPct": 19.36
+        },
+        "15": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 770.27,
+          "exitSpot": 769.65,
+          "premiumReturnPct": 33.05
+        },
+        "20": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 770.27,
+          "exitSpot": 769.69,
+          "premiumReturnPct": 28.07
+        },
+        "30": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 770.27,
+          "exitSpot": 769.385,
+          "premiumReturnPct": 49.79
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 770.16,
+          "exitSpot": 769.6461,
+          "premiumReturnPct": 26
+        },
+        "15": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 770.16,
+          "exitSpot": 769.57,
+          "premiumReturnPct": 30.09
+        },
+        "20": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 770.16,
+          "exitSpot": 769.44,
+          "premiumReturnPct": 38.63
+        },
+        "30": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 770.16,
+          "exitSpot": 769.35,
+          "premiumReturnPct": 42.62
+        }
+      },
+      "retestDelayMinutes": 3,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788542100000,
+      "direction": "PUT",
+      "level": 718.065,
+      "atr": 0.461,
+      "features": {
+        "ignitionVolumeRatio": 0.586,
+        "ignitionAcceleration": 0.41,
+        "ignitionPressure": -0.139,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.268,
+        "preBreakCompression": 1.083,
+        "preBreakRejection": 0.49,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.033,
+        "breakoutBodyRatio": 0.25,
+        "breakoutCloseLocation": 0.778,
+        "breakoutExtensionAtr": 0.033,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": -0.376,
+        "tvAgeMinutes": 9.2
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.505,
+          "premiumReturnPct": 31.06
+        },
+        "15": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.169,
+          "premiumReturnPct": 57.81
+        },
+        "20": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 718.06,
+          "exitSpot": 717.195,
+          "premiumReturnPct": 54.05
+        },
+        "30": {
+          "entryTimeMs": 1788542400000,
+          "entrySpot": 718.06,
+          "exitSpot": 716.93,
+          "premiumReturnPct": 75.64
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 717.83,
+          "exitSpot": 717.34,
+          "premiumReturnPct": 24.43
+        },
+        "15": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 717.83,
+          "exitSpot": 717.2299,
+          "premiumReturnPct": 31.29
+        },
+        "20": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 717.83,
+          "exitSpot": 716.86,
+          "premiumReturnPct": 59.56
+        },
+        "30": {
+          "entryTimeMs": 1788542520000,
+          "entrySpot": 717.83,
+          "exitSpot": 716.9999,
+          "premiumReturnPct": 45.59
+        }
+      },
+      "retestDelayMinutes": 3,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788542400000,
+      "direction": "CALL",
+      "level": 321.65,
+      "atr": 0.4567,
+      "features": {
+        "ignitionVolumeRatio": 0.907,
+        "ignitionAcceleration": 0.887,
+        "ignitionPressure": 0.251,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.254,
+        "preBreakCompression": 0.925,
+        "preBreakRejection": 0.023,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.5,
+        "breakoutBodyRatio": 0.553,
+        "breakoutCloseLocation": 0.658,
+        "breakoutExtensionAtr": 0.256,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788542700000,
+          "entrySpot": 321.79,
+          "exitSpot": 321.15,
+          "premiumReturnPct": -36.35
+        },
+        "15": {
+          "entryTimeMs": 1788542700000,
+          "entrySpot": 321.79,
+          "exitSpot": 320.99,
+          "premiumReturnPct": -43.6
+        },
+        "20": {
+          "entryTimeMs": 1788542700000,
+          "entrySpot": 321.79,
+          "exitSpot": 320.965,
+          "premiumReturnPct": -44.92
+        },
+        "30": {
+          "entryTimeMs": 1788542700000,
+          "entrySpot": 321.79,
+          "exitSpot": 320.965,
+          "premiumReturnPct": -45.42
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788542820000,
+          "entrySpot": 321.66,
+          "exitSpot": 321.17,
+          "premiumReturnPct": -30.83
+        },
+        "15": {
+          "entryTimeMs": 1788542820000,
+          "entrySpot": 321.66,
+          "exitSpot": 320.835,
+          "premiumReturnPct": -46.59
+        },
+        "20": {
+          "entryTimeMs": 1788542820000,
+          "entrySpot": 321.66,
+          "exitSpot": 321.23,
+          "premiumReturnPct": -28.33
+        },
+        "30": {
+          "entryTimeMs": 1788542820000,
+          "entrySpot": 321.66,
+          "exitSpot": 320.9782,
+          "premiumReturnPct": -40.93
+        }
+      },
+      "retestDelayMinutes": 3,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788543000000,
+      "direction": "PUT",
+      "level": 769.8,
+      "atr": 0.34,
+      "features": {
+        "ignitionVolumeRatio": 1.23,
+        "ignitionAcceleration": 1.148,
+        "ignitionPressure": 0.598,
+        "ignitionConsistency": 2,
+        "volumeTrend": 1.745,
+        "preBreakCompression": 0.864,
+        "preBreakRejection": 0.286,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.384,
+        "breakoutBodyRatio": 0.5,
+        "breakoutCloseLocation": 0.55,
+        "breakoutExtensionAtr": 0.447,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 769.645,
+          "exitSpot": 769.32,
+          "premiumReturnPct": 11.35
+        },
+        "15": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 769.645,
+          "exitSpot": 769.385,
+          "premiumReturnPct": 5.99
+        },
+        "20": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 769.645,
+          "exitSpot": 769.39,
+          "premiumReturnPct": 4.38
+        },
+        "30": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 769.645,
+          "exitSpot": 769.32,
+          "premiumReturnPct": 6.16
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 769.66,
+          "exitSpot": 769.185,
+          "premiumReturnPct": 21.24
+        },
+        "15": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 769.66,
+          "exitSpot": 769.4,
+          "premiumReturnPct": 6.04
+        },
+        "20": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 769.66,
+          "exitSpot": 769.38,
+          "premiumReturnPct": 5.98
+        },
+        "30": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 769.66,
+          "exitSpot": 769.32,
+          "premiumReturnPct": 7.14
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788543000000,
+      "direction": "PUT",
+      "level": 717.42,
+      "atr": 0.4358,
+      "features": {
+        "ignitionVolumeRatio": 1.054,
+        "ignitionAcceleration": 1.084,
+        "ignitionPressure": 0.458,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.222,
+        "preBreakCompression": 0.956,
+        "preBreakRejection": 0.359,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.376,
+        "breakoutBodyRatio": 0.637,
+        "breakoutCloseLocation": 0.637,
+        "breakoutExtensionAtr": 0.582,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": -0.376,
+        "tvAgeMinutes": 11.3
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 717.15,
+          "exitSpot": 716.805,
+          "premiumReturnPct": 16.5
+        },
+        "15": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 717.15,
+          "exitSpot": 716.93,
+          "premiumReturnPct": 4.87
+        },
+        "20": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 717.15,
+          "exitSpot": 716.965,
+          "premiumReturnPct": 0.31
+        },
+        "30": {
+          "entryTimeMs": 1788543300000,
+          "entrySpot": 717.15,
+          "exitSpot": 716.7497,
+          "premiumReturnPct": 13.3
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 717.25,
+          "exitSpot": 716.655,
+          "premiumReturnPct": 38.91
+        },
+        "15": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 717.25,
+          "exitSpot": 716.97,
+          "premiumReturnPct": 9.69
+        },
+        "20": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 717.25,
+          "exitSpot": 716.93,
+          "premiumReturnPct": 10.86
+        },
+        "30": {
+          "entryTimeMs": 1788543360000,
+          "entrySpot": 717.25,
+          "exitSpot": 716.82,
+          "premiumReturnPct": 15.85
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788545100000,
+      "direction": "PUT",
+      "level": 338.2001,
+      "atr": 0.2817,
+      "features": {
+        "ignitionVolumeRatio": 0.943,
+        "ignitionAcceleration": 1.065,
+        "ignitionPressure": 0.404,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.013,
+        "preBreakCompression": 0.871,
+        "preBreakRejection": 0.556,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.052,
+        "breakoutBodyRatio": 0.827,
+        "breakoutCloseLocation": 0.827,
+        "breakoutExtensionAtr": 0.35,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": 0.448,
+        "tvAgeMinutes": 1.1
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788545400000,
+          "entrySpot": 338.06,
+          "exitSpot": 338.1405,
+          "premiumReturnPct": -9.73
+        },
+        "15": {
+          "entryTimeMs": 1788545400000,
+          "entrySpot": 338.06,
+          "exitSpot": 338.5,
+          "premiumReturnPct": -27.05
+        },
+        "20": {
+          "entryTimeMs": 1788545400000,
+          "entrySpot": 338.06,
+          "exitSpot": 338.44,
+          "premiumReturnPct": -24.2
+        },
+        "30": {
+          "entryTimeMs": 1788545400000,
+          "entrySpot": 338.06,
+          "exitSpot": 338.738,
+          "premiumReturnPct": -38.51
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788545460000,
+          "entrySpot": 338.115,
+          "exitSpot": 338.45,
+          "premiumReturnPct": -22.44
+        },
+        "15": {
+          "entryTimeMs": 1788545460000,
+          "entrySpot": 338.115,
+          "exitSpot": 338.53,
+          "premiumReturnPct": -26.41
+        },
+        "20": {
+          "entryTimeMs": 1788545460000,
+          "entrySpot": 338.115,
+          "exitSpot": 338.545,
+          "premiumReturnPct": -27.18
+        },
+        "30": {
+          "entryTimeMs": 1788545460000,
+          "entrySpot": 338.115,
+          "exitSpot": 338.67,
+          "premiumReturnPct": -33.4
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788546600000,
+      "direction": "CALL",
+      "level": 769.99,
+      "atr": 0.3163,
+      "features": {
+        "ignitionVolumeRatio": 0.971,
+        "ignitionAcceleration": 1.178,
+        "ignitionPressure": 0.008,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.063,
+        "preBreakCompression": 0.771,
+        "preBreakRejection": 0.579,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 1.857,
+        "breakoutBodyRatio": 0.579,
+        "breakoutCloseLocation": 0.842,
+        "breakoutExtensionAtr": 0.032,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 770,
+          "exitSpot": 770.15,
+          "premiumReturnPct": 1.63
+        },
+        "15": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 770,
+          "exitSpot": 770.225,
+          "premiumReturnPct": 5.37
+        },
+        "20": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 770,
+          "exitSpot": 770.22,
+          "premiumReturnPct": 1.87
+        },
+        "30": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 770,
+          "exitSpot": 769.715,
+          "premiumReturnPct": -44.3
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788546600000,
+      "direction": "CALL",
+      "level": 717.67,
+      "atr": 0.4338,
+      "features": {
+        "ignitionVolumeRatio": 3.148,
+        "ignitionAcceleration": 2.28,
+        "ignitionPressure": 0.467,
+        "ignitionConsistency": 2,
+        "volumeTrend": 2.587,
+        "preBreakCompression": 0.749,
+        "preBreakRejection": 0.473,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.962,
+        "breakoutBodyRatio": 0.827,
+        "breakoutCloseLocation": 0.944,
+        "breakoutExtensionAtr": 0.141,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": 0.309,
+        "tvAgeMinutes": 10
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 717.725,
+          "exitSpot": 717.825,
+          "premiumReturnPct": -2.67
+        },
+        "15": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 717.725,
+          "exitSpot": 717.985,
+          "premiumReturnPct": 10.36
+        },
+        "20": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 717.725,
+          "exitSpot": 718,
+          "premiumReturnPct": 8.02
+        },
+        "30": {
+          "entryTimeMs": 1788546900000,
+          "entrySpot": 717.725,
+          "exitSpot": 717.59,
+          "premiumReturnPct": -39.82
+        }
+      },
+      "retestOutcomes": null,
+      "retestDelayMinutes": null,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788546900000,
+      "direction": "CALL",
+      "level": 338.685,
+      "atr": 0.3182,
+      "features": {
+        "ignitionVolumeRatio": 0.642,
+        "ignitionAcceleration": 0.974,
+        "ignitionPressure": 0.153,
+        "ignitionConsistency": 2,
+        "volumeTrend": -0.02,
+        "preBreakCompression": 1.113,
+        "preBreakRejection": 0.32,
+        "preBreakDoji": 1,
+        "breakoutVolumeRatio": 0.955,
+        "breakoutBodyRatio": 0.645,
+        "breakoutCloseLocation": 1,
+        "breakoutExtensionAtr": 0.167,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": -0.448,
+        "tvAgeMinutes": 6.1
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788547200000,
+          "entrySpot": 338.69,
+          "exitSpot": 338.7,
+          "premiumReturnPct": -5.83
+        },
+        "15": {
+          "entryTimeMs": 1788547200000,
+          "entrySpot": 338.69,
+          "exitSpot": 338.91,
+          "premiumReturnPct": -5.83
+        },
+        "20": {
+          "entryTimeMs": 1788547200000,
+          "entrySpot": 338.69,
+          "exitSpot": 339.17,
+          "premiumReturnPct": 47.19
+        },
+        "30": {
+          "entryTimeMs": 1788547200000,
+          "entrySpot": 338.69,
+          "exitSpot": 339.08,
+          "premiumReturnPct": -5.83
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788547320000,
+          "entrySpot": 338.7891,
+          "exitSpot": 338.77,
+          "premiumReturnPct": -5.83
+        },
+        "15": {
+          "entryTimeMs": 1788547320000,
+          "entrySpot": 338.7891,
+          "exitSpot": 339.04,
+          "premiumReturnPct": -5.14
+        },
+        "20": {
+          "entryTimeMs": 1788547320000,
+          "entrySpot": 338.7891,
+          "exitSpot": 339.15,
+          "premiumReturnPct": 25.25
+        },
+        "30": {
+          "entryTimeMs": 1788547320000,
+          "entrySpot": 338.7891,
+          "exitSpot": 339.27,
+          "premiumReturnPct": 40.77
+        }
+      },
+      "retestDelayMinutes": 3,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788547500000,
+      "direction": "CALL",
+      "level": 770.19,
+      "atr": 0.2962,
+      "features": {
+        "ignitionVolumeRatio": 1.066,
+        "ignitionAcceleration": 1.39,
+        "ignitionPressure": 0.432,
+        "ignitionConsistency": 3,
+        "volumeTrend": -0.698,
+        "preBreakCompression": 0.882,
+        "preBreakRejection": 0.238,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.586,
+        "breakoutBodyRatio": 0.406,
+        "breakoutCloseLocation": 0.906,
+        "breakoutExtensionAtr": 0.117,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 770.23,
+          "exitSpot": 770.25,
+          "premiumReturnPct": -9.17
+        },
+        "15": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 770.23,
+          "exitSpot": 769.715,
+          "premiumReturnPct": -50.15
+        },
+        "20": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 770.23,
+          "exitSpot": 769.685,
+          "premiumReturnPct": -54.89
+        },
+        "30": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 770.23,
+          "exitSpot": 769.65,
+          "premiumReturnPct": -63.23
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788547980000,
+          "entrySpot": 770.285,
+          "exitSpot": 770.02,
+          "premiumReturnPct": -31.08
+        },
+        "15": {
+          "entryTimeMs": 1788547980000,
+          "entrySpot": 770.285,
+          "exitSpot": 769.68,
+          "premiumReturnPct": -55.35
+        },
+        "20": {
+          "entryTimeMs": 1788547980000,
+          "entrySpot": 770.285,
+          "exitSpot": 769.72,
+          "premiumReturnPct": -56.16
+        },
+        "30": {
+          "entryTimeMs": 1788547980000,
+          "entrySpot": 770.285,
+          "exitSpot": 769.67,
+          "premiumReturnPct": -65.32
+        }
+      },
+      "retestDelayMinutes": 4,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788547500000,
+      "direction": "CALL",
+      "level": 717.875,
+      "atr": 0.3982,
+      "features": {
+        "ignitionVolumeRatio": 0.559,
+        "ignitionAcceleration": 1.08,
+        "ignitionPressure": 0.623,
+        "ignitionConsistency": 3,
+        "volumeTrend": 0.068,
+        "preBreakCompression": 0.711,
+        "preBreakRejection": 0.326,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 0.498,
+        "breakoutBodyRatio": 0.868,
+        "breakoutCloseLocation": 0.921,
+        "breakoutExtensionAtr": 0.271,
+        "tvAdx": 10.9,
+        "tvRecommendationAligned": 0.309,
+        "tvAgeMinutes": 0.4
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 717.97,
+          "exitSpot": 718.23,
+          "premiumReturnPct": 14.94
+        },
+        "15": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 717.97,
+          "exitSpot": 717.59,
+          "premiumReturnPct": -47.48
+        },
+        "20": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 717.97,
+          "exitSpot": 717.55,
+          "premiumReturnPct": -53.86
+        },
+        "30": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 717.97,
+          "exitSpot": 717.68,
+          "premiumReturnPct": -52.88
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 717.9299,
+          "exitSpot": 718.21,
+          "premiumReturnPct": 17.57
+        },
+        "15": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 717.9299,
+          "exitSpot": 717.72,
+          "premiumReturnPct": -35.53
+        },
+        "20": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 717.9299,
+          "exitSpot": 717.67,
+          "premiumReturnPct": -43.56
+        },
+        "30": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 717.9299,
+          "exitSpot": 717.78,
+          "premiumReturnPct": -43.45
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788547500000,
+      "direction": "CALL",
+      "level": 321.3953,
+      "atr": 0.3409,
+      "features": {
+        "ignitionVolumeRatio": 1.086,
+        "ignitionAcceleration": 0.867,
+        "ignitionPressure": 0.424,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.586,
+        "preBreakCompression": 0.917,
+        "preBreakRejection": 0.516,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.691,
+        "breakoutBodyRatio": 0.797,
+        "breakoutCloseLocation": 0.863,
+        "breakoutExtensionAtr": 0.741,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 321.6689,
+          "exitSpot": 321.665,
+          "premiumReturnPct": -6.05
+        },
+        "15": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 321.6689,
+          "exitSpot": 321.5,
+          "premiumReturnPct": -15.36
+        },
+        "20": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 321.6689,
+          "exitSpot": 321.88,
+          "premiumReturnPct": 6.07
+        },
+        "30": {
+          "entryTimeMs": 1788547800000,
+          "entrySpot": 321.6689,
+          "exitSpot": 321.755,
+          "premiumReturnPct": -0.98
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 321.4899,
+          "exitSpot": 321.6699,
+          "premiumReturnPct": 5.52
+        },
+        "15": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 321.4899,
+          "exitSpot": 321.69,
+          "premiumReturnPct": 6.78
+        },
+        "20": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 321.4899,
+          "exitSpot": 321.8434,
+          "premiumReturnPct": 16.48
+        },
+        "30": {
+          "entryTimeMs": 1788547860000,
+          "entrySpot": 321.4899,
+          "exitSpot": 321.915,
+          "premiumReturnPct": 21
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788548100000,
+      "direction": "CALL",
+      "level": 339.06,
+      "atr": 0.3325,
+      "features": {
+        "ignitionVolumeRatio": 0.926,
+        "ignitionAcceleration": 1.149,
+        "ignitionPressure": 0.586,
+        "ignitionConsistency": 2,
+        "volumeTrend": 0.1,
+        "preBreakCompression": 1.176,
+        "preBreakRejection": 0.2,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.194,
+        "breakoutBodyRatio": 0.703,
+        "breakoutCloseLocation": 0.811,
+        "breakoutExtensionAtr": 0.331,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": -0.448,
+        "tvAgeMinutes": 1.6
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788548400000,
+          "entrySpot": 339.17,
+          "exitSpot": 339.08,
+          "premiumReturnPct": -37.47
+        },
+        "15": {
+          "entryTimeMs": 1788548400000,
+          "entrySpot": 339.17,
+          "exitSpot": 339.29,
+          "premiumReturnPct": -10.58
+        },
+        "20": {
+          "entryTimeMs": 1788548400000,
+          "entrySpot": 339.17,
+          "exitSpot": 339.21,
+          "premiumReturnPct": -37.47
+        },
+        "30": {
+          "entryTimeMs": 1788548400000,
+          "entrySpot": 339.17,
+          "exitSpot": 339.56,
+          "premiumReturnPct": 60.09
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788548460000,
+          "entrySpot": 339.13,
+          "exitSpot": 339.25,
+          "premiumReturnPct": 10.12
+        },
+        "15": {
+          "entryTimeMs": 1788548460000,
+          "entrySpot": 339.13,
+          "exitSpot": 339.31,
+          "premiumReturnPct": 15.91
+        },
+        "20": {
+          "entryTimeMs": 1788548460000,
+          "entrySpot": 339.13,
+          "exitSpot": 339.26,
+          "premiumReturnPct": -22.73
+        },
+        "30": {
+          "entryTimeMs": 1788548460000,
+          "entrySpot": 339.13,
+          "exitSpot": 339.492,
+          "premiumReturnPct": 29.95
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "AAPL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788548700000,
+      "direction": "CALL",
+      "level": 321.83,
+      "atr": 0.3369,
+      "features": {
+        "ignitionVolumeRatio": 0.784,
+        "ignitionAcceleration": 1.048,
+        "ignitionPressure": -0.385,
+        "ignitionConsistency": 1,
+        "volumeTrend": 0.011,
+        "preBreakCompression": 1.066,
+        "preBreakRejection": 0.267,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.244,
+        "breakoutBodyRatio": 0.949,
+        "breakoutCloseLocation": 0.949,
+        "breakoutExtensionAtr": 0.15,
+        "tvAdx": null,
+        "tvRecommendationAligned": null,
+        "tvAgeMinutes": null
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788549000000,
+          "entrySpot": 321.87,
+          "exitSpot": 321.755,
+          "premiumReturnPct": -11.62
+        },
+        "15": {
+          "entryTimeMs": 1788549000000,
+          "entrySpot": 321.87,
+          "exitSpot": 321.88,
+          "premiumReturnPct": -5.32
+        },
+        "20": {
+          "entryTimeMs": 1788549000000,
+          "entrySpot": 321.87,
+          "exitSpot": 321.785,
+          "premiumReturnPct": -10.11
+        },
+        "30": {
+          "entryTimeMs": 1788549000000,
+          "entrySpot": 321.87,
+          "exitSpot": 321.01,
+          "premiumReturnPct": -49.13
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788549060000,
+          "entrySpot": 321.85,
+          "exitSpot": 321.915,
+          "premiumReturnPct": -2.52
+        },
+        "15": {
+          "entryTimeMs": 1788549060000,
+          "entrySpot": 321.85,
+          "exitSpot": 321.92,
+          "premiumReturnPct": -2.26
+        },
+        "20": {
+          "entryTimeMs": 1788549060000,
+          "entrySpot": 321.85,
+          "exitSpot": 321.555,
+          "premiumReturnPct": -20.84
+        },
+        "30": {
+          "entryTimeMs": 1788549060000,
+          "entrySpot": 321.85,
+          "exitSpot": 320.9999,
+          "premiumReturnPct": -49.1
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    },
+    {
+      "symbol": "GOOGL",
+      "sessionDate": "2026-09-04",
+      "breakoutTimeMs": 1788549000000,
+      "direction": "CALL",
+      "level": 339.24,
+      "atr": 0.3393,
+      "features": {
+        "ignitionVolumeRatio": 1.009,
+        "ignitionAcceleration": 1.273,
+        "ignitionPressure": 0.316,
+        "ignitionConsistency": 3,
+        "volumeTrend": -0.45,
+        "preBreakCompression": 0.878,
+        "preBreakRejection": 0.261,
+        "preBreakDoji": 0,
+        "breakoutVolumeRatio": 1.182,
+        "breakoutBodyRatio": 0.724,
+        "breakoutCloseLocation": 0.793,
+        "breakoutExtensionAtr": 0.149,
+        "tvAdx": 6.9,
+        "tvRecommendationAligned": -0.448,
+        "tvAgeMinutes": 9.8
+      },
+      "outcomes": {
+        "10": {
+          "entryTimeMs": 1788549300000,
+          "entrySpot": 339.27,
+          "exitSpot": 339.26,
+          "premiumReturnPct": -23.77
+        },
+        "15": {
+          "entryTimeMs": 1788549300000,
+          "entrySpot": 339.27,
+          "exitSpot": 339.56,
+          "premiumReturnPct": 95.17
+        },
+        "20": {
+          "entryTimeMs": 1788549300000,
+          "entrySpot": 339.27,
+          "exitSpot": 339.01,
+          "premiumReturnPct": -23.77
+        },
+        "30": {
+          "entryTimeMs": 1788549300000,
+          "entrySpot": 339.27,
+          "exitSpot": 338.8,
+          "premiumReturnPct": -23.77
+        }
+      },
+      "retestOutcomes": {
+        "10": {
+          "entryTimeMs": 1788549360000,
+          "entrySpot": 339.32,
+          "exitSpot": 339.32,
+          "premiumReturnPct": -37.22
+        },
+        "15": {
+          "entryTimeMs": 1788549360000,
+          "entrySpot": 339.32,
+          "exitSpot": 339.492,
+          "premiumReturnPct": 5.59
+        },
+        "20": {
+          "entryTimeMs": 1788549360000,
+          "entrySpot": 339.32,
+          "exitSpot": 338.97,
+          "premiumReturnPct": -37.22
+        },
+        "30": {
+          "entryTimeMs": 1788549360000,
+          "entrySpot": 339.32,
+          "exitSpot": 338.6043,
+          "premiumReturnPct": -37.22
+        }
+      },
+      "retestDelayMinutes": 2,
+      "breakoutOffset": 18
+    }
+  ]
+}

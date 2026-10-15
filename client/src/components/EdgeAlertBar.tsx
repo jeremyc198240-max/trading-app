@@ -38,10 +38,17 @@ interface EdgeEngineSnapshot {
   indicators: EdgeIndicatorSnapshot;
 }
 
-interface ScannerResult {
+export interface ScannerResult {
   symbol: string;
+  lastPrice?: number;
   scanTime?: number;
   isDegraded?: boolean;
+  hasMonsterPlay?: boolean;
+  healthGrade?: string;
+  volumeSpike?: number;
+  momentumStrength?: number;
+  rsiValue?: number;
+  squeezeCandles?: number;
   edgeEngine?: EdgeEngineSnapshot;
   breakoutSignal?: string | null;
   breakoutScore?: number;
@@ -62,6 +69,13 @@ interface ScannerResult {
     score?: number;
     etaMinutes?: number;
     traits?: string[];
+  };
+  repeatedSetupPattern?: {
+    matched?: boolean;
+    sampleSize: number;
+    hitRate: number;
+    avgSimilarity: number;
+    scoreBoost: number;
   };
   timeframeStack?: {
     bias?: EdgeDirection | "mixed";
@@ -189,7 +203,7 @@ function getEdgeStatusLabel(row: ScannerResult, mode: "PREPARE" | "EXECUTE"): st
   return "BUILDING PRESSURE";
 }
 
-function isActionableEdgeCard(row: ScannerResult): boolean {
+export function isActionableEdgeCard(row: ScannerResult): boolean {
   const edge = row.edgeEngine;
   if (!edge) return false;
   if (row.isDegraded) return false;
@@ -241,7 +255,7 @@ function isActionableEdgeCard(row: ScannerResult): boolean {
   );
 }
 
-function isHighConvictionArmingEdgeCard(row: ScannerResult): boolean {
+export function isHighConvictionArmingEdgeCard(row: ScannerResult): boolean {
   const edge = row.edgeEngine;
   if (!edge || edge.state !== "ARMING") return false;
   if (row.isDegraded) return false;
@@ -295,7 +309,7 @@ function isHighConvictionArmingEdgeCard(row: ScannerResult): boolean {
   );
 }
 
-function isEarlyDirectionalStandbyEdgeCard(row: ScannerResult): boolean {
+export function isEarlyDirectionalStandbyEdgeCard(row: ScannerResult): boolean {
   const edge = row.edgeEngine;
   if (!edge || edge.state !== "STANDBY") return false;
   if (row.isDegraded) return false;

@@ -1,6 +1,6 @@
 import { analyzeSymbol } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
-import { detectAllPatterns, type PatternResult } from "./patterns";
+import { detectAllPatterns, detectFormingCandlestickPatterns, type PatternResult } from "./patterns";
 import { runMonsterOTMEngine, type MonsterOTMEngineOutput } from "./monsterOtmEngine";
 import {
 	getBreakoutAlertLog,
@@ -170,6 +170,8 @@ interface SetupSignature {
 	momentum3: number;
 	rangeCompression: number;
 	volumeRatio: number;
+	directionalSteps: number;
+	rejectionPressure: number;
 }
 
 interface RepeatedSetupPatternSignal {
@@ -180,6 +182,26 @@ interface RepeatedSetupPatternSignal {
 	scoreBoost: number;
 	leadBars: number;
 	traits: string[];
+}
+
+interface RepeatedPatternPolicyRule {
+	symbol: string;
+	timeframe: string;
+	direction: DirectionalBias;
+	session: string;
+	phase?: CompressionPhase;
+	minVolumeRatio?: number;
+	maxVolumeRatio?: number;
+	minMomentumAbs?: number;
+	maxMomentumAbs?: number;
+	minAdx?: number;
+	maxAdx?: number;
+	minBbWidth?: number;
+	maxBbWidth?: number;
+	requiredTraits?: string[];
+	scoreDelta: number;
+	warningTag: string;
+	reason: string;
 }
 
 interface ScannerResult {
@@ -219,6 +241,7 @@ interface ScannerResult {
 	optionsReadiness?: BreakoutOptionsReadinessSnapshot;
 	timeframeStack?: ScannerTimeframeStack;
 	preBreakoutSetup?: ScannerPreBreakoutSetup;
+	repeatedSetupPattern?: RepeatedSetupPatternSignal;
 	tradePlan?: ScannerTradePlan;
 	setupReasoning?: string[];
 	edgeEngine?: EdgeEngineSnapshot;
@@ -228,9 +251,13 @@ interface ScannerResult {
 
 interface ScannerStatus {
 	isScanning: boolean;
+	cycleInProgress: boolean;
 	lastScanTime: number;
+	lastCycleStartedAt: number;
+	symbolsScanned: number;
 	watchlistCount: number;
 	resultCount: number;
+	scanErrors: string[];
 }
 
 interface ScannerStabilityRow {
@@ -328,8 +355,20 @@ const DEFAULT_WATCHLIST = [
 	"NVDA",
 ];
 
-const DEFAULT_TIMEFRAME = "15m";
+const DEFAULT_TIMEFRAME = "5m";
 const SCAN_INTERVAL_MS = 60_000;
+const SCAN_CONCURRENCY = 2;
+const SCANNER_TIMEFRAME_BY_SYMBOL: Record<string, string> = {
+	SPY: "5m",
+	QQQ: "5m",
+	GLD: "5m",
+	AAPL: "5m",
+	MSFT: "5m",
+	GOOGL: "5m",
+	AMZN: "5m",
+	TSLA: "5m",
+	NVDA: "5m",
+};
 const SCANNER_LIVE_SPOT_MAX_AGE_MS = 2 * 60 * 1000;
 const SCANNER_STALE_OHLC_SPOT_DIVERGENCE_PCT = 0.015;
 const DEGRADED_RESULT_HOLD_MS = 5 * 60 * 1000;
@@ -402,6 +441,9 @@ const state = {
 	results: new Map<string, ScannerResult>(),
 	stabilityHistory: [] as ScannerStabilitySnapshot[],
 	lastScanTime: 0,
+	lastCycleStartedAt: 0,
+	symbolsScanned: 0,
+	scanErrors: [] as string[],
 	scanTimer: null as ReturnType<typeof setInterval> | null,
 	scanInFlight: false,
 	symbolState: new Map<string, SymbolScanState>(),
@@ -1040,6 +1082,10 @@ function computeParabolicSarBias(candles: OHLC[]): SarBias {
 	return "neutral";
 }
 
+export function qualifiesForStructuralPrimed(traits: readonly string[]): boolean {
+	return traits.includes("PRE_RANGE_COMPRESSION") || traits.includes("PRE_HIGH_CLOSE_LOCATION");
+}
+
 function computeEdgeEngineSnapshot(params: {
 	breakoutSignal: BreakoutSignal;
 	breakoutScore?: number;
@@ -1081,7 +1127,9 @@ function computeEdgeEngineSnapshot(params: {
 	const dayMovePct = toNumber(params.priceChangePercent ?? 0);
 	const dayMoveAbsPct = Math.abs(dayMovePct);
 	const setupScore = clamp(toNumber(params.preBreakoutSetup?.score ?? 0), 0, 100);
-	const setupTraits = Array.isArray(params.preBreakoutSetup?.traits) ? params.preBreakoutSetup.traits.length : 0;
+	const setupTraitList = Array.isArray(params.preBreakoutSetup?.traits) ? params.preBreakoutSetup.traits : [];
+	const setupTraits = setupTraitList.length;
+	const structuralExpansionSetup = qualifiesForStructuralPrimed(setupTraitList);
 	const setupEtaRaw = Number(params.preBreakoutSetup?.etaMinutes);
 	const setupEta = Number.isFinite(setupEtaRaw) ? setupEtaRaw : null;
 	const stackBias = params.timeframeStack?.bias ?? "neutral";
@@ -1342,15 +1390,17 @@ function computeEdgeEngineSnapshot(params: {
 		direction !== "neutral" &&
 		edgeScore >= (alignedCompressionPressure ? 66 : 72) &&
 		(
-			strongSetupEligible ||
-			(alignedCompressionPressure && spark >= 42 && setupScore >= 44) ||
 			breakoutReleased ||
-			phase === "PREPARE" ||
-			phase === "READY" ||
-			phase === "NOW" ||
-			momentumAbs >= 34 ||
-			dayMoveAbsPct >= 0.8 ||
-			stackAgreement >= 58
+			(structuralExpansionSetup && (
+				strongSetupEligible ||
+				(alignedCompressionPressure && spark >= 42 && setupScore >= 44) ||
+				phase === "PREPARE" ||
+				phase === "READY" ||
+				phase === "NOW" ||
+				momentumAbs >= 34 ||
+				dayMoveAbsPct >= 0.8 ||
+				stackAgreement >= 58
+			))
 		);
 
 	let state: EdgeState = "STANDBY";
@@ -1401,6 +1451,7 @@ function computeEdgeEngineSnapshot(params: {
 	);
 
 	const reasons: string[] = [];
+	if (structuralExpansionSetup) reasons.push("0DTE structure confirmed by compression or directional close location.");
 	if (setupScore >= 70) reasons.push(`Setup score ${Math.round(setupScore)}${setupEta != null ? `, ETA ${Math.round(setupEta)}m.` : "."}`);
 	if (phase === "READY" || phase === "NOW") reasons.push(`Compression phase ${phase} with spark ${Math.round(spark)}.`);
 	if (bbSqueeze || bbWidth <= 0.8) reasons.push(`Bollinger squeeze active (width ${roundTo(bbWidth, 2)}).`);
@@ -1868,6 +1919,19 @@ function buildSetupSignature(
 	const recentVolume = avg(recent.map((candle) => Math.max(0, candle.volume || 0)));
 	const baseVolume = avg(base.map((candle) => Math.max(0, candle.volume || 0)));
 	const volumeRatio = baseVolume > 0 ? recentVolume / baseVolume : 1;
+	let upSteps = 0;
+	let downSteps = 0;
+	for (let recentIndex = 1; recentIndex < recent.length; recentIndex++) {
+		if (recent[recentIndex].close > recent[recentIndex - 1].close) upSteps += 1;
+		if (recent[recentIndex].close < recent[recentIndex - 1].close) downSteps += 1;
+	}
+	const directionalSteps = direction === "bearish" ? downSteps - upSteps : upSteps - downSteps;
+	const rejectionPressure = avg(recent.map((candle) => {
+		const candleRange = Math.max(0.0001, candle.high - candle.low);
+		return direction === "bearish"
+			? (candle.high - Math.max(candle.open, candle.close)) / candleRange
+			: (Math.min(candle.open, candle.close) - candle.low) / candleRange;
+	}));
 
 	return {
 		closeLocation: clamp(closeLocation, 0, 100),
@@ -1875,6 +1939,8 @@ function buildSetupSignature(
 		momentum3,
 		rangeCompression: clamp(rangeCompression, 0, 3),
 		volumeRatio: clamp(volumeRatio, 0, 4),
+		directionalSteps: clamp(directionalSteps, -5, 5),
+		rejectionPressure: clamp(rejectionPressure, 0, 1),
 	};
 }
 
@@ -1887,6 +1953,8 @@ function computeSetupSignatureSimilarity(
 	const rsiScore = clamp(1 - Math.abs(current.rsi - candidate.rsi) / 22, 0, 1);
 	const rangeScore = clamp(1 - Math.abs(current.rangeCompression - candidate.rangeCompression) / 0.45, 0, 1);
 	const volumeScore = clamp(1 - Math.abs(current.volumeRatio - candidate.volumeRatio) / 0.9, 0, 1);
+	const stepScore = clamp(1 - Math.abs(current.directionalSteps - candidate.directionalSteps) / 3, 0, 1);
+	const rejectionScore = clamp(1 - Math.abs(current.rejectionPressure - candidate.rejectionPressure) / 0.35, 0, 1);
 
 	const directionalCurrentMomentum = direction === "bearish" ? -current.momentum3 : current.momentum3;
 	const directionalCandidateMomentum = direction === "bearish" ? -candidate.momentum3 : candidate.momentum3;
@@ -1898,11 +1966,13 @@ function computeSetupSignatureSimilarity(
 		: 0;
 
 	const blended =
-		closeLocationScore * 0.28 +
-		rsiScore * 0.22 +
-		rangeScore * 0.22 +
-		volumeScore * 0.16 +
-		momentumScore * 0.12;
+		closeLocationScore * 0.23 +
+		rsiScore * 0.18 +
+		rangeScore * 0.18 +
+		volumeScore * 0.13 +
+		momentumScore * 0.12 +
+		stepScore * 0.09 +
+		rejectionScore * 0.07;
 
 	return clamp(blended, 0, 1);
 }
@@ -1971,7 +2041,7 @@ function detectRepeatedSetupPattern(params: {
 	const avgSimilarity = similarityTotal / sampleSize;
 	const tvAligned = tvSignalContext.trendAlignment === "aligned";
 	const tvAdx = Number.isFinite(tvSnapshot?.adx as number) ? (tvSnapshot?.adx as number) : 0;
-	const adjustedHitRate = clamp(hitRate + (tvAligned ? 0.04 : 0) + (tvAdx >= 20 ? 0.02 : 0), 0, 1);
+	const adjustedHitRate = clamp(hitRate + (tvAligned ? 0.04 : 0) + (tvAdx >= 25 ? 0.02 : 0), 0, 1);
 	const sampleStrength = clamp(sampleSize / 8, 0, 1);
 	const repeatStrength = clamp(
 		adjustedHitRate * 100 * 0.62 + avgSimilarity * 100 * 0.24 + sampleStrength * 100 * 0.14,
@@ -2007,6 +2077,8 @@ function detectRepeatedSetupPattern(params: {
 	if (matched) traits.push("REPEAT_PATTERN_MATCH");
 	if (adjustedHitRate >= 0.62) traits.push("REPEAT_PATTERN_HIGH_HIT");
 	if (tvAligned) traits.push("TV_REPEAT_ALIGNED");
+	if (currentSignature.directionalSteps >= 2) traits.push("REPEAT_DIRECTIONAL_STEPS");
+	if (currentSignature.rejectionPressure >= 0.28) traits.push("REPEAT_REJECTION_PRESSURE");
 
 	return {
 		matched,
@@ -2016,6 +2088,195 @@ function detectRepeatedSetupPattern(params: {
 		scoreBoost,
 		leadBars: lookaheadBars,
 		traits,
+	};
+}
+
+function getSessionBucket(timestampMs: number): string {
+	if (!Number.isFinite(timestampMs)) return "unknown";
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone: "America/New_York",
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+	}).formatToParts(new Date(timestampMs));
+	const hour = Number(parts.find((part) => part.type === "hour")?.value);
+	const minute = Number(parts.find((part) => part.type === "minute")?.value);
+	if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "unknown";
+	const totalMinutes = hour * 60 + minute;
+	if (totalMinutes < 600) return "open_0930_0959";
+	if (totalMinutes < 660) return "morning_1000_1059";
+	if (totalMinutes < 750) return "midday_1100_1229";
+	if (totalMinutes < 840) return "afternoon_1230_1359";
+	if (totalMinutes < 960) return "late_1400_1559";
+	return "offhours";
+}
+
+const REPEATED_PATTERN_POLICY_RULES: RepeatedPatternPolicyRule[] = [
+	{
+		symbol: "QQQ",
+		timeframe: "5m",
+		direction: "bullish",
+		session: "midday_1100_1229",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		maxMomentumAbs: 25,
+		minAdx: 35,
+		minBbWidth: 0.5,
+		maxBbWidth: 0.8,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_RANGE_COMPRESSION", "REPEAT_PATTERN_3W"],
+		scoreDelta: -14,
+		warningTag: "REPEAT_PATTERN_FAIL_QQQ_BULL_MIDDAY",
+		reason: "QQQ bullish repeat setup underperformed in midday prepare regime.",
+	},
+	{
+		symbol: "QQQ",
+		timeframe: "5m",
+		direction: "bullish",
+		session: "afternoon_1230_1359",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		maxMomentumAbs: 25,
+		minAdx: 35,
+		minBbWidth: 0.5,
+		maxBbWidth: 0.8,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_RANGE_COMPRESSION", "REPEAT_PATTERN_3W"],
+		scoreDelta: -14,
+		warningTag: "REPEAT_PATTERN_FAIL_QQQ_BULL_AFTERNOON",
+		reason: "QQQ bullish repeat setup underperformed in afternoon prepare regime.",
+	},
+	{
+		symbol: "QQQ",
+		timeframe: "5m",
+		direction: "bullish",
+		session: "late_1400_1559",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		maxMomentumAbs: 25,
+		minAdx: 35,
+		minBbWidth: 0.5,
+		maxBbWidth: 0.8,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_RANGE_COMPRESSION", "REPEAT_PATTERN_3W"],
+		scoreDelta: -14,
+		warningTag: "REPEAT_PATTERN_FAIL_QQQ_BULL_LATE",
+		reason: "QQQ bullish repeat setup underperformed in late-session prepare regime.",
+	},
+	{
+		symbol: "SPY",
+		timeframe: "5m",
+		direction: "bullish",
+		session: "late_1400_1559",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		minMomentumAbs: 25,
+		maxMomentumAbs: 35,
+		minAdx: 35,
+		maxBbWidth: 0.5,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_ABOVE_VWAP", "REPEAT_PATTERN_3W"],
+		scoreDelta: -12,
+		warningTag: "REPEAT_PATTERN_FAIL_SPY_BULL_LATE",
+		reason: "SPY bullish repeat setup failed in late-session low-width regime.",
+	},
+	{
+		symbol: "AMZN",
+		timeframe: "5m",
+		direction: "bullish",
+		session: "midday_1100_1229",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		minMomentumAbs: 35,
+		maxMomentumAbs: 50,
+		minAdx: 25,
+		maxAdx: 30,
+		minBbWidth: 0.5,
+		maxBbWidth: 0.8,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_RSI_ALIGN", "REPEAT_PATTERN_3W"],
+		scoreDelta: -12,
+		warningTag: "REPEAT_PATTERN_FAIL_AMZN_BULL_MIDDAY",
+		reason: "AMZN bullish repeat setup failed in midday directional churn.",
+	},
+	{
+		symbol: "QQQ",
+		timeframe: "15m",
+		direction: "bearish",
+		session: "open_0930_0959",
+		phase: "PREPARE",
+		minVolumeRatio: 1.0,
+		maxVolumeRatio: 1.1,
+		minMomentumAbs: 35,
+		maxMomentumAbs: 50,
+		minAdx: 35,
+		minBbWidth: 1.2,
+		requiredTraits: ["MTF_ALIGNMENT", "PRE_BELOW_VWAP", "PRE_RANGE_COMPRESSION", "REPEAT_PATTERN_3W"],
+		scoreDelta: 8,
+		warningTag: "REPEAT_PATTERN_EDGE_QQQ_BEAR_OPEN",
+		reason: "QQQ bearish opening repeat pattern showed strong historical follow-through.",
+	},
+];
+
+function evaluateRepeatedPatternPolicy(params: {
+	symbol: string;
+	timeframe: string;
+	direction: DirectionalBias | "neutral";
+	timestampMs: number;
+	compression: CompressionSnapshot;
+	volumeSpike: number;
+	momentumStrength: number;
+	adx: number;
+	preBreakoutSetup?: ScannerPreBreakoutSetup;
+}): { scoreDelta: number; warningTags: string[]; reasons: string[] } {
+	const {
+		symbol,
+		timeframe,
+		direction,
+		timestampMs,
+		compression,
+		volumeSpike,
+		momentumStrength,
+		adx,
+		preBreakoutSetup,
+	} = params;
+
+	if (direction === "neutral") {
+		return { scoreDelta: 0, warningTags: [], reasons: [] };
+	}
+
+	const session = getSessionBucket(timestampMs);
+	const phase = compression.phase;
+	const bbWidth = clamp(Number.parseFloat(String(compression.bbWidth ?? "0")), 0, 10);
+	const momentumAbs = Math.abs(momentumStrength);
+	const traits = new Set(Array.isArray(preBreakoutSetup?.traits) ? preBreakoutSetup?.traits : []);
+
+	const matchedRules = REPEATED_PATTERN_POLICY_RULES.filter((rule) => {
+		if (rule.symbol !== symbol) return false;
+		if (rule.timeframe !== timeframe.toLowerCase()) return false;
+		if (rule.direction !== direction) return false;
+		if (rule.session !== session) return false;
+		if (rule.phase != null && rule.phase !== phase) return false;
+		if (rule.minVolumeRatio != null && volumeSpike < rule.minVolumeRatio) return false;
+		if (rule.maxVolumeRatio != null && volumeSpike > rule.maxVolumeRatio) return false;
+		if (rule.minMomentumAbs != null && momentumAbs < rule.minMomentumAbs) return false;
+		if (rule.maxMomentumAbs != null && momentumAbs > rule.maxMomentumAbs) return false;
+		if (rule.minAdx != null && adx < rule.minAdx) return false;
+		if (rule.maxAdx != null && adx > rule.maxAdx) return false;
+		if (rule.minBbWidth != null && bbWidth < rule.minBbWidth) return false;
+		if (rule.maxBbWidth != null && bbWidth > rule.maxBbWidth) return false;
+		if (rule.requiredTraits && !rule.requiredTraits.every((trait) => traits.has(trait))) return false;
+		return true;
+	});
+
+	if (matchedRules.length === 0) {
+		return { scoreDelta: 0, warningTags: [], reasons: [] };
+	}
+
+	return {
+		scoreDelta: matchedRules.reduce((sum, rule) => sum + rule.scoreDelta, 0),
+		warningTags: matchedRules.map((rule) => rule.warningTag),
+		reasons: matchedRules.map((rule) => rule.reason),
 	};
 }
 
@@ -3399,6 +3660,7 @@ async function scanSymbol(
 				tvTrendStrength: tvSignalContext.trendStrength,
 				timeframeStack: fallbackTimeframeStack,
 				preBreakoutSetup: fallbackPreBreakoutSetup,
+				repeatedSetupPattern: undefined,
 				optionPlays: fallbackOptionPlays,
 				optionsReadiness: fallbackOptionsReadiness,
 				tradePlan: fallbackTradePlan,
@@ -3427,10 +3689,19 @@ async function scanSymbol(
 			freshSpot?.spot
 		);
 
-		const sortedPatterns = detectAllPatterns(ohlc, timeframe)
-			.sort((a, b) => b.confidence - a.confidence)
-			.slice(0, 8);
 		const closedCandles = getStableClosedCandles(ohlc, timeframe);
+		const formingPatterns = closedCandles.length < ohlc.length
+			? detectFormingCandlestickPatterns(ohlc).slice(0, 1)
+			: [];
+		const confirmedPatterns = detectAllPatterns(ohlc, timeframe)
+			.filter((pattern) => !formingPatterns.some((forming) =>
+				forming.name === pattern.name && forming.endIndex === pattern.endIndex,
+			))
+			.sort((a, b) => b.confidence - a.confidence)
+			.slice(0, formingPatterns.length > 0 ? 7 : 8);
+		const sortedPatterns = confirmedPatterns.length > 0
+			? [confirmedPatterns[0], ...formingPatterns, ...confirmedPatterns.slice(1)]
+			: formingPatterns;
 		const failedUpsideBreakout = closedCandles.length >= 25
 			? detectAllPatterns(closedCandles, timeframe).find((pattern) =>
 				pattern.name === "Bearish Breakout Failure Reversal" && pattern.type === "bearish",
@@ -3502,7 +3773,10 @@ async function scanSymbol(
 			momentumStrength,
 		);
 		const nyHour = getNyHour(scanTime);
-		const timeWindowBias = adaptiveTuning.hourlyScoreBias[nyHour] ?? 0;
+		// Do not let a sparse opening-hour sample suppress the first read of the day's flow.
+		const timeWindowBias = nyHour === 9
+			? Math.max(0, adaptiveTuning.hourlyScoreBias[nyHour] ?? 0)
+			: adaptiveTuning.hourlyScoreBias[nyHour] ?? 0;
 		const timeWindowWarnings: string[] = [];
 		if (timeWindowBias <= -3) timeWindowWarnings.push("WEAK_TIME_WINDOW");
 		else if (timeWindowBias >= 2) timeWindowWarnings.push("FAVORABLE_TIME_WINDOW");
@@ -3689,6 +3963,39 @@ async function scanSymbol(
 			warnings.push("REPEAT_SETUP_PATTERN");
 		}
 
+		const directionalBiasForPolicy = resolveDirectionalBias(
+			breakoutSignalForResult,
+			breakoutState.expansionDirection,
+			momentumStrength,
+		);
+		const policyAdx = clamp(
+			Number.isFinite(tvSnapshot?.adx as number)
+				? Number(tvSnapshot?.adx)
+				: Number(analysis.marketHealth?.adx?.value ?? 0),
+			0,
+			100,
+		);
+		const repeatedPolicy = evaluateRepeatedPatternPolicy({
+			symbol: upperSymbol,
+			timeframe,
+			direction: directionalBiasForPolicy,
+			timestampMs: scanTime,
+			compression,
+			volumeSpike,
+			momentumStrength,
+			adx: policyAdx,
+			preBreakoutSetup,
+		});
+		if (repeatedPolicy.scoreDelta !== 0) {
+			breakoutScoreForResult = Math.round(clamp(breakoutScoreForResult + repeatedPolicy.scoreDelta, 0, 100));
+			if (repeatedPolicy.scoreDelta <= -10 && breakoutSignalForResult !== "CONSOLIDATING") {
+				breakoutSignalForResult = "CONSOLIDATING";
+			}
+			for (const tag of repeatedPolicy.warningTags) {
+				if (!warnings.includes(tag)) warnings.push(tag);
+			}
+		}
+
 		if (
 			preBreakoutSetup?.etaMinutes != null &&
 			preBreakoutSetup.etaMinutes <= 5 &&
@@ -3791,7 +4098,7 @@ async function scanSymbol(
 				`3W repeat setup ${Math.round(repeatedPatternSignal.hitRate * 100)}% (${repeatedPatternSignal.sampleSize} analogs, ${repeatedPatternSignal.leadBars}-bar lead${tvSignalContext.trendAlignment === "aligned" ? ", TV aligned" : ""}).`,
 			]
 			: [];
-		const setupReasoning = [...repeatReasoning, ...baseSetupReasoning].slice(0, 4);
+		const setupReasoning = [...repeatReasoning, ...repeatedPolicy.reasons, ...baseSetupReasoning].slice(0, 4);
 		const dailyVolume = computeSessionVolume(ohlc);
 
 		const result: ScannerResult = {
@@ -3829,6 +4136,7 @@ async function scanSymbol(
 			tvTrendStrength: tvSignalContext.trendStrength,
 			timeframeStack,
 			preBreakoutSetup,
+			repeatedSetupPattern: repeatedPatternSignal ?? undefined,
 			optionPlays,
 			optionsReadiness,
 			edgeEngine: safeEdgeEngine,
@@ -3935,6 +4243,8 @@ async function scanSymbol(
 
 		return result;
 	} catch (error) {
+		state.scanErrors.push(`${symbol}: ${error instanceof Error ? error.message : String(error)}`);
+		state.scanErrors = state.scanErrors.slice(-5);
 		console.error(`[Scanner] Failed scan for ${symbol}:`, error);
 		return null;
 	}
@@ -3943,9 +4253,13 @@ async function scanSymbol(
 async function runScanCycle(): Promise<void> {
 	if (state.scanInFlight) return;
 	state.scanInFlight = true;
+	state.lastCycleStartedAt = Date.now();
+	state.symbolsScanned = 0;
+	state.scanErrors = [];
 
 	try {
 		const symbols = Array.from(state.watchlist);
+		console.log(`[Scanner] Cycle started: ${symbols.length} symbols, adaptive timeframes, concurrency=${SCAN_CONCURRENCY}`);
 		let tvBySymbol = new Map<string, TradingViewSnapshot>();
 		try {
 			tvBySymbol = await getTradingViewIndicatorMap(symbols);
@@ -3955,9 +4269,10 @@ async function runScanCycle(): Promise<void> {
 		const now = Date.now();
 		for (const symbol of symbols) {
 			const upperSymbol = normalizeSymbol(symbol);
+			const symbolTimeframe = upperSymbol ? (SCANNER_TIMEFRAME_BY_SYMBOL[upperSymbol] ?? DEFAULT_TIMEFRAME) : DEFAULT_TIMEFRAME;
 			const result = await scanSymbol(
 				symbol,
-				DEFAULT_TIMEFRAME,
+				symbolTimeframe,
 				upperSymbol ? tvBySymbol.get(upperSymbol) : undefined,
 			);
 			if (result) {
@@ -3967,16 +4282,40 @@ async function runScanCycle(): Promise<void> {
 				if (!keepExisting) {
 					state.results.set(result.symbol, result);
 				}
+			} else if (upperSymbol && !state.results.has(upperSymbol)) {
+				state.results.set(upperSymbol, createUnavailableScannerResult(upperSymbol, now));
 			}
+			state.symbolsScanned += 1;
+			await new Promise<void>((resolve) => setImmediate(resolve));
 		}
 
 		state.lastScanTime = Date.now();
 		pushScannerStabilitySnapshot(state.lastScanTime);
 	} catch (error) {
+		state.scanErrors.push(`Scan cycle: ${error instanceof Error ? error.message : String(error)}`);
 		console.error("[Scanner] Scan cycle failed:", error);
 	} finally {
 		state.scanInFlight = false;
 	}
+}
+
+function createUnavailableScannerResult(symbol: string, scanTime: number): ScannerResult {
+	return {
+		symbol,
+		patterns: [],
+		lastPrice: 0,
+		priceChange: 0,
+		priceChangePercent: 0,
+		volume: 0,
+		scanTime,
+		healthScore: 0,
+		healthGrade: "UNAVAILABLE",
+		hasMonsterPlay: false,
+		warnings: ["MARKET_DATA_UNAVAILABLE"],
+		signalQuality: "UNRELIABLE",
+		isDegraded: true,
+		degradedReason: "Market data providers are temporarily unavailable",
+	};
 }
 
 export function startScanner(): void {
@@ -3994,9 +4333,13 @@ export function getScannerStatus(): ScannerStatus {
 
 	return {
 		isScanning: state.scanTimer !== null,
+		cycleInProgress: state.scanInFlight,
 		lastScanTime: state.lastScanTime,
+		lastCycleStartedAt: state.lastCycleStartedAt,
+		symbolsScanned: state.symbolsScanned,
 		watchlistCount: state.watchlist.size,
 		resultCount: state.results.size,
+		scanErrors: [...state.scanErrors],
 	};
 }
 
@@ -4109,6 +4452,13 @@ export function getScannerStability(
 export function getScannerResults(): ScannerResult[] {
 	if (!state.scanTimer) {
 		startScanner();
+	}
+
+	const now = Date.now();
+	for (const symbol of state.watchlist) {
+		if (!state.results.has(symbol)) {
+			state.results.set(symbol, createUnavailableScannerResult(symbol, now));
+		}
 	}
 
 	const watchlistOrder = new Map<string, number>();

@@ -11,11 +11,10 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "ignoreDeprecations": "5.0",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["client/src/*"],
-      "@shared/*": ["shared/*"],
-      "@assets/*": ["attached_assets/*"]
+      "@/*": ["./client/src/*"],
+      "@shared/*": ["./shared/*"],
+      "@assets/*": ["./attached_assets/*"]
     }
   },
   "include": ["client/src", "server", "shared"],

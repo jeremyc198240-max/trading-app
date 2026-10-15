@@ -395,7 +395,7 @@ function computeExpansionScore(
   }
 
   const last = ohlc[n - 1];
-  const compSlice = ohlc.slice(-20);
+  const compSlice = ohlc.slice(-21, -1);
   const compHigh = Math.max(...compSlice.map(c => c.high));
   const compLow = Math.min(...compSlice.map(c => c.low));
 

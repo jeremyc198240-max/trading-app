@@ -272,6 +272,8 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
     },
   };
 
+  const finiteOr = (value: unknown, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
   const rawIndicators = tactical.indicators as any;
   const ind = rawIndicators
     ? {
@@ -280,7 +282,12 @@ export function TacticalAdvicePanel({ tactical, directionScore }: TacticalAdvice
         rsi: { ...fallbackIndicators.rsi, ...(rawIndicators.rsi ?? {}) },
         macd: { ...fallbackIndicators.macd, ...(rawIndicators.macd ?? {}) },
         bb: { ...fallbackIndicators.bb, ...(rawIndicators.bb ?? {}) },
-        atr: { ...fallbackIndicators.atr, ...(rawIndicators.atr ?? {}) },
+        atr: {
+          ...fallbackIndicators.atr,
+          ...(rawIndicators.atr ?? {}),
+          value: finiteOr(rawIndicators.atr?.value, fallbackIndicators.atr.value),
+          percent: finiteOr(rawIndicators.atr?.percent, fallbackIndicators.atr.percent),
+        },
         adx: { ...fallbackIndicators.adx, ...(rawIndicators.adx ?? {}) },
         momentum: { ...fallbackIndicators.momentum, ...(rawIndicators.momentum ?? {}) },
       }

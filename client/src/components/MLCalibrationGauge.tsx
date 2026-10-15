@@ -3,6 +3,7 @@ import { Target, AlertTriangle, CheckCircle, Sparkles, Activity, Zap, TrendingUp
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { queryClient } from "@/lib/queryClient";
 import type { SmartSignal, UnifiedOptionsPlay } from "@shared/schema";
 import { useState, useEffect } from "react";
 
@@ -52,19 +53,27 @@ interface MLCalibrationData {
 export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; timeframe?: string }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["ml-calibration", symbol, timeframe],
-    queryFn: async (): Promise<MLCalibrationData> => {
+    queryFn: async ({ signal }): Promise<MLCalibrationData> => {
       const fusionPromise = symbol
-        ? fetch(`/api/fusion/${encodeURIComponent(symbol)}`)
-        : Promise.resolve({ ok: false } as Response);
+        ? queryClient.fetchQuery<any>({
+            queryKey: ["/api/fusion", symbol],
+            staleTime: 10000,
+          })
+        : Promise.resolve(null);
       const panelPromise = symbol
-        ? fetch(`/api/monster-panel/${encodeURIComponent(symbol)}`)
-        : Promise.resolve({ ok: false } as Response);
+        ? queryClient.fetchQuery<any>({
+            queryKey: ["/api/monster-panel", symbol, timeframe || "15m"],
+            staleTime: 10000,
+          })
+        : Promise.resolve(null);
+      const volatilityPromise = queryClient.fetchQuery<any>({
+        queryKey: ["/api/volatility", symbol || "SPY", timeframe || "15m"],
+        staleTime: 10000,
+      });
 
-      const [calibrationResponse, volatilityResponse, fusionResponse, panelResponse] = await Promise.all([
-        fetch("/api/ml/calibration"),
-        fetch(
-          `/api/volatility/${encodeURIComponent(symbol || "SPY")}/${encodeURIComponent(timeframe || "15m")}`
-        ),
+      const [calibrationResponse, volatilityData, fusionData, panelData] = await Promise.all([
+        fetch("/api/ml/calibration", { signal }),
+        volatilityPromise,
         fusionPromise,
         panelPromise,
       ]);
@@ -82,14 +91,10 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
       let panelDirection: 'bullish' | 'bearish' | 'neutral' = 'neutral';
       let smartSignal: SmartSignal | null = null;
 
-      if (volatilityResponse.ok) {
-        const volData = await volatilityResponse.json();
-        volatilityPrediction = Number(volData.predictedVolatility) || 0.015;
-      }
+      volatilityPrediction = Number(volatilityData?.predictedVolatility) || 0.015;
 
-      if (fusionResponse.ok) {
+      if (fusionData) {
         try {
-          const fusionData = await fusionResponse.json();
           unifiedSignal = {
             unifiedDirection: String(fusionData?.unifiedSignal?.unifiedDirection ?? "WAIT") as 'CALL' | 'PUT' | 'WAIT',
             unifiedConfidence: Number(fusionData?.unifiedSignal?.unifiedConfidence ?? calibrationData?.calibration?.confidence ?? 0),
@@ -102,9 +107,8 @@ export function MLCalibrationGauge({ symbol, timeframe }: { symbol?: string; tim
         }
       }
 
-      if (panelResponse.ok) {
+      if (panelData) {
         try {
-          const panelData = await panelResponse.json();
           unifiedOptionsPlay = panelData.unifiedOptionsPlay ?? null;
           panelTopPlay = panelData.topPlay ?? null;
           panelSummary = String(panelData.summary ?? "");

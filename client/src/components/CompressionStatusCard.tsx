@@ -12,6 +12,7 @@ interface CompressionStatusCardProps {
   timeframe: Timeframe;
   marketHealth: AnalysisPayload["marketHealth"] | null | undefined;
   trendExhaustion: AnalysisPayload["trendExhaustion"] | null | undefined;
+  preMovePressure: AnalysisPayload["preMovePressure"] | undefined;
   tactical: AnalysisPayload["tactical"] | null | undefined;
   directionalBias: AnalysisPayload["directionalBias"];
 }
@@ -141,7 +142,7 @@ function GaugeDial({
 
   return (
     <div
-      className="rounded-3xl border p-3 bg-slate-950/80"
+      className="ncx-gauge rounded-3xl border p-3 bg-slate-950/80"
       style={{
         borderColor: hexToRgba(color, 0.3),
         boxShadow: `0 0 18px ${hexToRgba(color, 0.08)}`,
@@ -282,6 +283,7 @@ export function CompressionStatusCard({
   timeframe,
   marketHealth,
   trendExhaustion,
+  preMovePressure,
   tactical,
   directionalBias,
 }: CompressionStatusCardProps) {
@@ -292,9 +294,10 @@ export function CompressionStatusCard({
       bbSqueeze: marketHealth?.bollingerBands?.squeeze,
       rangeCompression: trendExhaustion?.rangeCompression,
       atrPercent: marketHealth?.atr?.percent,
+      preMovePressure: preMovePressure?.score,
       previousState: previousStateRef.current,
     });
-  }, [marketHealth?.atr?.percent, marketHealth?.bollingerBands?.squeeze, trendExhaustion?.rangeCompression]);
+  }, [marketHealth?.atr?.percent, marketHealth?.bollingerBands?.squeeze, preMovePressure?.score, trendExhaustion?.rangeCompression]);
 
   useEffect(() => {
     previousStateRef.current = signal.state;
@@ -305,9 +308,10 @@ export function CompressionStatusCard({
 
   const { data: aiData } = useQuery<CompressionAiResponse>({
     queryKey: ["/api/compression-ai", symbol, timeframe],
-    enabled: Boolean(symbol),
+    enabled: Boolean(symbol && timeframe),
     staleTime: 15000,
     refetchInterval: 30000,
+    refetchOnWindowFocus: false,
     retry: false,
   });
 
@@ -391,18 +395,20 @@ export function CompressionStatusCard({
   const mlFreshnessPct = Math.max(0, Math.min(100, aiData?.mlFreshness ?? 0));
   const mlPatternScorePct = Math.max(0, Math.min(100, aiData?.mlPatternScore ?? 0));
   const regimeProbs = aiData?.mlRegimeProbabilities ?? { low: 34, high: 33, chop: 33 };
-  const railValues = [compressionPct, neuralPct, rangePct, atrNormalized, positiveRatePct];
+  const validationAccuracyPct = Math.max(0, Math.min(100, (aiData?.training.validation?.accuracy ?? 0) * 100));
+  const regimeBias = (regimeProbs.high - regimeProbs.chop) * 0.22;
+  const railValues = [compressionPct, neuralPct, rangePct, validationAccuracyPct || positiveRatePct, atrNormalized];
   const decisionLabel = aiData?.decision ?? "CALCULATING";
   const directionLabel = aiData?.direction ?? optionSide;
   const threatLevel = neuralPct >= 76 ? "LOW" : neuralPct >= 58 ? "MODERATE" : "ELEVATED";
   const threatTone = threatLevel === "LOW" ? "text-emerald-300" : threatLevel === "MODERATE" ? "text-amber-300" : "text-rose-300";
   const streamValues = useMemo(() => {
-    const seed = Math.max(20, neuralPct);
+    const seed = Math.max(20, neuralPct + validationAccuracyPct * 0.18);
     return Array.from({ length: 24 }, (_, idx) => {
-      const wave = Math.sin((idx + seed / 8) * 0.78) * 18 + Math.cos((idx + compressionPct / 10) * 0.45) * 10;
-      return Math.max(8, Math.min(100, 42 + wave));
+      const wave = Math.sin((idx + seed / 8) * 0.78) * 15 + Math.cos((idx + compressionPct / 10) * 0.45) * 8;
+      return Math.max(8, Math.min(100, 42 + wave + regimeBias));
     });
-  }, [compressionPct, neuralPct]);
+  }, [compressionPct, neuralPct, regimeBias, validationAccuracyPct]);
   const wf = aiData?.training.validation?.walkForward;
   const thresholdDiag = aiData?.training.config?.thresholdDiagnostics;
   const decisionToneClass =
@@ -426,7 +432,7 @@ export function CompressionStatusCard({
   } as CSSProperties;
 
   return (
-    <Card className={cn("ncx-core group relative overflow-hidden border-cyan-300/40", decisionToneClass, confidenceToneClass)} style={reactiveStyle}>
+    <Card className={cn("ncx-core ncx-core--compact group relative overflow-hidden border-cyan-300/40", decisionToneClass, confidenceToneClass)} style={reactiveStyle}>
       <div className="ncx-core__noise" />
       <div className="ncx-core__beam" />
       <div className={cn("relative h-0.5 bg-gradient-to-r", tone.bar)} />
@@ -520,7 +526,7 @@ export function CompressionStatusCard({
               <Activity className="h-3.5 w-3.5 text-cyan-300" />
               <span>Signal Waveform</span>
             </div>
-            <span className="text-[10px] text-cyan-200/70">latency-safe synthetic rail</span>
+            <span className="text-[10px] text-cyan-200/70">live + historical model rail</span>
           </div>
           <div className="ncx-stream__bars">
             {streamValues.map((value, index) => (
@@ -529,7 +535,7 @@ export function CompressionStatusCard({
           </div>
         </section>
 
-        <section className="grid gap-2 md:grid-cols-4">
+        <section className="grid gap-2 md:grid-cols-5">
           <GaugeDial
             label="Regime Score"
             value={mlPredictionPct}
@@ -553,6 +559,12 @@ export function CompressionStatusCard({
             value={mlPatternScorePct}
             display={`${mlPatternScorePct.toFixed(0)}%`}
             tone="violet"
+          />
+          <GaugeDial
+            label="History Fit"
+            value={validationAccuracyPct || positiveRatePct}
+            display={`${(validationAccuracyPct || positiveRatePct).toFixed(0)}%`}
+            tone="slate"
           />
         </section>
 

@@ -135,6 +135,7 @@ interface MonsterOTMPanelData {
 
 interface MonsterOTMPanelProps {
   symbol: string;
+  timeframe?: string;
   currentPriceOverride?: number;
 }
 
@@ -146,9 +147,14 @@ function pct(n?: number): string {
   return typeof n === "number" && Number.isFinite(n) ? `${Math.round(n)}%` : "--";
 }
 
-export function MonsterOTMPanel({ symbol, currentPriceOverride }: MonsterOTMPanelProps) {
+export function MonsterOTMPanel({ symbol, timeframe = "15m", currentPriceOverride }: MonsterOTMPanelProps) {
   const { data, isLoading, error } = useQuery<MonsterOTMPanelData>({
-    queryKey: ["/api/monster-panel", symbol],
+    queryKey: ["/api/monster-panel", symbol, timeframe],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/monster-panel/${encodeURIComponent(symbol)}/${encodeURIComponent(timeframe)}`, { signal });
+      if (!response.ok) throw new Error("Unable to load Monster OTM panel");
+      return response.json();
+    },
     enabled: Boolean(symbol),
     refetchInterval: 30000,
     staleTime: 10000,

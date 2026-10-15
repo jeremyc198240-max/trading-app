@@ -11,7 +11,7 @@ import {
   Activity
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 interface MetaSignal {
   active: boolean;
@@ -30,6 +30,19 @@ interface MetaSignalPanelProps {
   currentPrice?: number;
   symbol?: string;
   timeframe?: string;
+}
+
+interface FusionPressureFrame {
+  timeframe: string;
+  trendBias?: 'bullish' | 'bearish' | 'neutral';
+  primary?: {
+    type?: 'bullish' | 'bearish' | 'neutral';
+    confidence?: number;
+  } | null;
+}
+
+interface FusionPressurePayload {
+  timeframes?: FusionPressureFrame[];
 }
 
 const biasConfig = {
@@ -149,6 +162,21 @@ function derivePressureScore(data: any): number | null {
     else if (voteSum < 0) score -= Math.abs(impulse);
     else score += impulse * 0.2;
   }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function deriveFusionPressureScore(frame: FusionPressureFrame | undefined): number | null {
+  if (!frame) return null;
+
+  let score = 50;
+  if (frame.trendBias === 'bullish') score += 18;
+  if (frame.trendBias === 'bearish') score -= 18;
+
+  const confidence = Math.max(0, Math.min(100, Number(frame.primary?.confidence ?? 0)));
+  const patternShift = confidence * 0.12;
+  if (frame.primary?.type === 'bullish') score += patternShift;
+  if (frame.primary?.type === 'bearish') score -= patternShift;
 
   return Math.max(0, Math.min(100, score));
 }
@@ -457,20 +485,18 @@ function CandlePressureArch({ tf, score }: { tf: string; score: number | null })
 
 export function MetaSignalPanel({ metaSignal, currentPrice, symbol, timeframe }: MetaSignalPanelProps) {
   const pressureTfs = ['5m', '15m', '30m', '1h', '4h', '1d'];
-  const pressureQueries = useQueries({
-    queries: symbol
-      ? pressureTfs.map((tf) => ({
-          queryKey: ["/api/analyze", symbol, tf],
-          enabled: !!symbol,
-          staleTime: 10000,
-          refetchInterval: 30000,
-        }))
-      : [],
+  const { data: fusionPressure } = useQuery<FusionPressurePayload>({
+    queryKey: ["/api/fusion", symbol],
+    enabled: Boolean(symbol),
+    staleTime: 10000,
+    retry: false,
   });
 
-  const pressureByTf = pressureTfs.map((tf, idx) => {
-    const data: any = pressureQueries[idx]?.data;
-    const score = derivePressureScore(data);
+  const pressureByTf = pressureTfs.map((tf) => {
+    const frame = fusionPressure?.timeframes?.find(
+      (candidate) => candidate.timeframe.toLowerCase() === tf,
+    );
+    const score = deriveFusionPressureScore(frame);
     return { tf, score, state: getPressureState(score) };
   });
 

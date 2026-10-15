@@ -1,0 +1,744 @@
+{
+  "generatedAt": "2026-09-05T13:34:37.348Z",
+  "lookbackDays": 30,
+  "symbols": [
+    "SPY",
+    "QQQ",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "TSLA",
+    "NVDA",
+    "GLD"
+  ],
+  "minTradesForSelection": 20,
+  "profiles": [
+    "baseline_v1.04",
+    "volume_v1.08",
+    "volume_v1.10",
+    "volume_v1.14",
+    "volume_v1.20",
+    "volume_v1.10_strong_bar"
+  ],
+  "aggregateByProfile": [
+    {
+      "profile": "baseline_v1.04",
+      "totalTrades": 1337,
+      "weightedWinRate": 56.8,
+      "weightedExpectancy": -0.74,
+      "profitableTickers": 2,
+      "expectancyBalance": 0.32
+    },
+    {
+      "profile": "volume_v1.08",
+      "totalTrades": 1264,
+      "weightedWinRate": 57,
+      "weightedExpectancy": -0.66,
+      "profitableTickers": 2,
+      "expectancyBalance": 0.38
+    },
+    {
+      "profile": "volume_v1.10",
+      "totalTrades": 1221,
+      "weightedWinRate": 57.2,
+      "weightedExpectancy": -0.71,
+      "profitableTickers": 2,
+      "expectancyBalance": 0.35
+    },
+    {
+      "profile": "volume_v1.14",
+      "totalTrades": 1180,
+      "weightedWinRate": 57,
+      "weightedExpectancy": -0.77,
+      "profitableTickers": 2,
+      "expectancyBalance": 0.39
+    },
+    {
+      "profile": "volume_v1.20",
+      "totalTrades": 1104,
+      "weightedWinRate": 57.1,
+      "weightedExpectancy": -0.73,
+      "profitableTickers": 2,
+      "expectancyBalance": 0.4
+    },
+    {
+      "profile": "volume_v1.10_strong_bar",
+      "totalTrades": 480,
+      "weightedWinRate": 55.2,
+      "weightedExpectancy": -2.06,
+      "profitableTickers": 3,
+      "expectancyBalance": 0.23
+    }
+  ],
+  "bestPerSymbol": [
+    {
+      "symbol": "SPY",
+      "bestProfile": "volume_v1.10_strong_bar",
+      "bestPF": 1.28,
+      "bestWR": 59.1,
+      "bestTrades": 22,
+      "baselinePF": 0.88,
+      "baselineWR": 52.7,
+      "baselineTrades": 55,
+      "deltaPF": 0.4,
+      "deltaWR": 6.4,
+      "callWinRateBest": 61.5,
+      "putWinRateBest": 55.6
+    },
+    {
+      "symbol": "QQQ",
+      "bestProfile": "baseline_v1.04",
+      "bestPF": 0.8,
+      "bestWR": 50.8,
+      "bestTrades": 118,
+      "baselinePF": 0.8,
+      "baselineWR": 50.8,
+      "baselineTrades": 118,
+      "deltaPF": 0,
+      "deltaWR": 0,
+      "callWinRateBest": 43.8,
+      "putWinRateBest": 55.7
+    },
+    {
+      "symbol": "AAPL",
+      "bestProfile": "volume_v1.10_strong_bar",
+      "bestPF": 1.8,
+      "bestWR": 68.2,
+      "bestTrades": 66,
+      "baselinePF": 1.15,
+      "baselineWR": 59.2,
+      "baselineTrades": 179,
+      "deltaPF": 0.65,
+      "deltaWR": 9,
+      "callWinRateBest": 64.1,
+      "putWinRateBest": 74.1
+    },
+    {
+      "symbol": "MSFT",
+      "bestProfile": "volume_v1.10_strong_bar",
+      "bestPF": 1.07,
+      "bestWR": 68.9,
+      "bestTrades": 45,
+      "baselinePF": 0.89,
+      "baselineWR": 57.4,
+      "baselineTrades": 155,
+      "deltaPF": 0.18,
+      "deltaWR": 11.5,
+      "callWinRateBest": 71,
+      "putWinRateBest": 64.3
+    },
+    {
+      "symbol": "GOOGL",
+      "bestProfile": "volume_v1.08",
+      "bestPF": 0.58,
+      "bestWR": 46.6,
+      "bestTrades": 148,
+      "baselinePF": 0.55,
+      "baselineWR": 45,
+      "baselineTrades": 160,
+      "deltaPF": 0.03,
+      "deltaWR": 1.6,
+      "callWinRateBest": 44.3,
+      "putWinRateBest": 48.7
+    },
+    {
+      "symbol": "AMZN",
+      "bestProfile": "volume_v1.20",
+      "bestPF": 1.04,
+      "bestWR": 63.7,
+      "bestTrades": 124,
+      "baselinePF": 0.84,
+      "baselineWR": 57.2,
+      "baselineTrades": 159,
+      "deltaPF": 0.2,
+      "deltaWR": 6.5,
+      "callWinRateBest": 64.7,
+      "putWinRateBest": 63
+    },
+    {
+      "symbol": "TSLA",
+      "bestProfile": "volume_v1.20",
+      "bestPF": 1.33,
+      "bestWR": 70.1,
+      "bestTrades": 144,
+      "baselinePF": 1.25,
+      "baselineWR": 69.2,
+      "baselineTrades": 182,
+      "deltaPF": 0.08,
+      "deltaWR": 0.9,
+      "callWinRateBest": 69.8,
+      "putWinRateBest": 70.8
+    },
+    {
+      "symbol": "NVDA",
+      "bestProfile": "baseline_v1.04",
+      "bestPF": 0.83,
+      "bestWR": 59.1,
+      "bestTrades": 171,
+      "baselinePF": 0.83,
+      "baselineWR": 59.1,
+      "baselineTrades": 171,
+      "deltaPF": 0,
+      "deltaWR": 0,
+      "callWinRateBest": 62,
+      "putWinRateBest": 56.5
+    },
+    {
+      "symbol": "GLD",
+      "bestProfile": "volume_v1.10",
+      "bestPF": 0.98,
+      "bestWR": 55,
+      "bestTrades": 151,
+      "baselinePF": 0.95,
+      "baselineWR": 53.8,
+      "baselineTrades": 158,
+      "deltaPF": 0.03,
+      "deltaWR": 1.2,
+      "callWinRateBest": 53.2,
+      "putWinRateBest": 56.8
+    }
+  ],
+  "allRows": [
+    {
+      "symbol": "SPY",
+      "profile": "baseline_v1.04",
+      "trades": 55,
+      "winRate": 52.7,
+      "profitFactor": 0.88,
+      "expectancy": -0.52,
+      "callsWinRate": 54.5,
+      "putsWinRate": 51.5
+    },
+    {
+      "symbol": "SPY",
+      "profile": "volume_v1.08",
+      "trades": 51,
+      "winRate": 52.9,
+      "profitFactor": 0.95,
+      "expectancy": -0.22,
+      "callsWinRate": 57.1,
+      "putsWinRate": 50
+    },
+    {
+      "symbol": "SPY",
+      "profile": "volume_v1.10",
+      "trades": 51,
+      "winRate": 52.9,
+      "profitFactor": 0.95,
+      "expectancy": -0.22,
+      "callsWinRate": 57.1,
+      "putsWinRate": 50
+    },
+    {
+      "symbol": "SPY",
+      "profile": "volume_v1.14",
+      "trades": 47,
+      "winRate": 48.9,
+      "profitFactor": 0.81,
+      "expectancy": -0.89,
+      "callsWinRate": 52.6,
+      "putsWinRate": 46.4
+    },
+    {
+      "symbol": "SPY",
+      "profile": "volume_v1.20",
+      "trades": 45,
+      "winRate": 51.1,
+      "profitFactor": 0.85,
+      "expectancy": -0.74,
+      "callsWinRate": 55.6,
+      "putsWinRate": 48.1
+    },
+    {
+      "symbol": "SPY",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 22,
+      "winRate": 59.1,
+      "profitFactor": 1.28,
+      "expectancy": 1.01,
+      "callsWinRate": 61.5,
+      "putsWinRate": 55.6
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "baseline_v1.04",
+      "trades": 118,
+      "winRate": 50.8,
+      "profitFactor": 0.8,
+      "expectancy": -1.08,
+      "callsWinRate": 43.8,
+      "putsWinRate": 55.7
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "volume_v1.08",
+      "trades": 113,
+      "winRate": 48.7,
+      "profitFactor": 0.72,
+      "expectancy": -1.58,
+      "callsWinRate": 40.4,
+      "putsWinRate": 54.5
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "volume_v1.10",
+      "trades": 111,
+      "winRate": 48.6,
+      "profitFactor": 0.72,
+      "expectancy": -1.64,
+      "callsWinRate": 39.1,
+      "putsWinRate": 55.4
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "volume_v1.14",
+      "trades": 108,
+      "winRate": 49.1,
+      "profitFactor": 0.73,
+      "expectancy": -1.58,
+      "callsWinRate": 37.8,
+      "putsWinRate": 57.1
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "volume_v1.20",
+      "trades": 103,
+      "winRate": 47.6,
+      "profitFactor": 0.68,
+      "expectancy": -1.97,
+      "callsWinRate": 35.7,
+      "putsWinRate": 55.7
+    },
+    {
+      "symbol": "QQQ",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 45,
+      "winRate": 48.9,
+      "profitFactor": 0.69,
+      "expectancy": -2.12,
+      "callsWinRate": 36.4,
+      "putsWinRate": 60.9
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "baseline_v1.04",
+      "trades": 179,
+      "winRate": 59.2,
+      "profitFactor": 1.15,
+      "expectancy": 0.91,
+      "callsWinRate": 59,
+      "putsWinRate": 59.5
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "volume_v1.08",
+      "trades": 170,
+      "winRate": 60.6,
+      "profitFactor": 1.21,
+      "expectancy": 1.25,
+      "callsWinRate": 59.4,
+      "putsWinRate": 62.2
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "volume_v1.10",
+      "trades": 161,
+      "winRate": 60.9,
+      "profitFactor": 1.19,
+      "expectancy": 1.14,
+      "callsWinRate": 60.2,
+      "putsWinRate": 61.8
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "volume_v1.14",
+      "trades": 158,
+      "winRate": 62,
+      "profitFactor": 1.26,
+      "expectancy": 1.53,
+      "callsWinRate": 60.9,
+      "putsWinRate": 63.6
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "volume_v1.20",
+      "trades": 149,
+      "winRate": 61.7,
+      "profitFactor": 1.19,
+      "expectancy": 1.19,
+      "callsWinRate": 58.4,
+      "putsWinRate": 66.7
+    },
+    {
+      "symbol": "AAPL",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 66,
+      "winRate": 68.2,
+      "profitFactor": 1.8,
+      "expectancy": 3.81,
+      "callsWinRate": 64.1,
+      "putsWinRate": 74.1
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "baseline_v1.04",
+      "trades": 155,
+      "winRate": 57.4,
+      "profitFactor": 0.89,
+      "expectancy": -0.85,
+      "callsWinRate": 56.7,
+      "putsWinRate": 58.6
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "volume_v1.08",
+      "trades": 145,
+      "winRate": 57.2,
+      "profitFactor": 0.91,
+      "expectancy": -0.65,
+      "callsWinRate": 57.1,
+      "putsWinRate": 57.4
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "volume_v1.10",
+      "trades": 140,
+      "winRate": 57.9,
+      "profitFactor": 0.93,
+      "expectancy": -0.52,
+      "callsWinRate": 58,
+      "putsWinRate": 57.7
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "volume_v1.14",
+      "trades": 140,
+      "winRate": 57.9,
+      "profitFactor": 0.91,
+      "expectancy": -0.69,
+      "callsWinRate": 58,
+      "putsWinRate": 57.7
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "volume_v1.20",
+      "trades": 131,
+      "winRate": 58,
+      "profitFactor": 0.91,
+      "expectancy": -0.62,
+      "callsWinRate": 59.5,
+      "putsWinRate": 55.3
+    },
+    {
+      "symbol": "MSFT",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 45,
+      "winRate": 68.9,
+      "profitFactor": 1.07,
+      "expectancy": 0.45,
+      "callsWinRate": 71,
+      "putsWinRate": 64.3
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "baseline_v1.04",
+      "trades": 160,
+      "winRate": 45,
+      "profitFactor": 0.55,
+      "expectancy": -4.26,
+      "callsWinRate": 43.8,
+      "putsWinRate": 46
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "volume_v1.08",
+      "trades": 148,
+      "winRate": 46.6,
+      "profitFactor": 0.58,
+      "expectancy": -3.93,
+      "callsWinRate": 44.3,
+      "putsWinRate": 48.7
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "volume_v1.10",
+      "trades": 139,
+      "winRate": 46.8,
+      "profitFactor": 0.55,
+      "expectancy": -4.3,
+      "callsWinRate": 43.9,
+      "putsWinRate": 49.3
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "volume_v1.14",
+      "trades": 134,
+      "winRate": 46.3,
+      "profitFactor": 0.53,
+      "expectancy": -4.58,
+      "callsWinRate": 42.9,
+      "putsWinRate": 49.3
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "volume_v1.20",
+      "trades": 122,
+      "winRate": 47.5,
+      "profitFactor": 0.56,
+      "expectancy": -4.15,
+      "callsWinRate": 41.1,
+      "putsWinRate": 53
+    },
+    {
+      "symbol": "GOOGL",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 61,
+      "winRate": 42.6,
+      "profitFactor": 0.44,
+      "expectancy": -6.56,
+      "callsWinRate": 30,
+      "putsWinRate": 54.8
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "baseline_v1.04",
+      "trades": 159,
+      "winRate": 57.2,
+      "profitFactor": 0.84,
+      "expectancy": -1.26,
+      "callsWinRate": 52.9,
+      "putsWinRate": 60.4
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "volume_v1.08",
+      "trades": 153,
+      "winRate": 58.8,
+      "profitFactor": 0.87,
+      "expectancy": -0.98,
+      "callsWinRate": 53.8,
+      "putsWinRate": 62.5
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "volume_v1.10",
+      "trades": 147,
+      "winRate": 59.2,
+      "profitFactor": 0.89,
+      "expectancy": -0.88,
+      "callsWinRate": 54.7,
+      "putsWinRate": 62.7
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "volume_v1.14",
+      "trades": 141,
+      "winRate": 59.6,
+      "profitFactor": 0.89,
+      "expectancy": -0.87,
+      "callsWinRate": 56.5,
+      "putsWinRate": 62
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "volume_v1.20",
+      "trades": 124,
+      "winRate": 63.7,
+      "profitFactor": 1.04,
+      "expectancy": 0.28,
+      "callsWinRate": 64.7,
+      "putsWinRate": 63
+    },
+    {
+      "symbol": "AMZN",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 54,
+      "winRate": 53.7,
+      "profitFactor": 0.7,
+      "expectancy": -2.69,
+      "callsWinRate": 55.6,
+      "putsWinRate": 51.9
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "baseline_v1.04",
+      "trades": 182,
+      "winRate": 69.2,
+      "profitFactor": 1.25,
+      "expectancy": 1.66,
+      "callsWinRate": 69.4,
+      "putsWinRate": 69
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "volume_v1.08",
+      "trades": 169,
+      "winRate": 69.2,
+      "profitFactor": 1.27,
+      "expectancy": 1.77,
+      "callsWinRate": 69.4,
+      "putsWinRate": 68.9
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "volume_v1.10",
+      "trades": 164,
+      "winRate": 68.9,
+      "profitFactor": 1.27,
+      "expectancy": 1.76,
+      "callsWinRate": 68.6,
+      "putsWinRate": 69.5
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "volume_v1.14",
+      "trades": 153,
+      "winRate": 70.6,
+      "profitFactor": 1.33,
+      "expectancy": 2.16,
+      "callsWinRate": 70,
+      "putsWinRate": 71.7
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "volume_v1.20",
+      "trades": 144,
+      "winRate": 70.1,
+      "profitFactor": 1.33,
+      "expectancy": 2.18,
+      "callsWinRate": 69.8,
+      "putsWinRate": 70.8
+    },
+    {
+      "symbol": "TSLA",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 67,
+      "winRate": 58.2,
+      "profitFactor": 0.68,
+      "expectancy": -3.27,
+      "callsWinRate": 57.1,
+      "putsWinRate": 60
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "baseline_v1.04",
+      "trades": 171,
+      "winRate": 59.1,
+      "profitFactor": 0.83,
+      "expectancy": -1.45,
+      "callsWinRate": 62,
+      "putsWinRate": 56.5
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "volume_v1.08",
+      "trades": 163,
+      "winRate": 57.7,
+      "profitFactor": 0.79,
+      "expectancy": -1.89,
+      "callsWinRate": 60.3,
+      "putsWinRate": 55.3
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "volume_v1.10",
+      "trades": 157,
+      "winRate": 57.3,
+      "profitFactor": 0.77,
+      "expectancy": -2.06,
+      "callsWinRate": 59.5,
+      "putsWinRate": 55.4
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "volume_v1.14",
+      "trades": 154,
+      "winRate": 57.1,
+      "profitFactor": 0.77,
+      "expectancy": -2.07,
+      "callsWinRate": 58.3,
+      "putsWinRate": 56.1
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "volume_v1.20",
+      "trades": 144,
+      "winRate": 54.9,
+      "profitFactor": 0.72,
+      "expectancy": -2.65,
+      "callsWinRate": 55.9,
+      "putsWinRate": 53.9
+    },
+    {
+      "symbol": "NVDA",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 56,
+      "winRate": 53.6,
+      "profitFactor": 0.59,
+      "expectancy": -4.69,
+      "callsWinRate": 42.9,
+      "putsWinRate": 64.3
+    },
+    {
+      "symbol": "GLD",
+      "profile": "baseline_v1.04",
+      "trades": 158,
+      "winRate": 53.8,
+      "profitFactor": 0.95,
+      "expectancy": -0.27,
+      "callsWinRate": 53.1,
+      "putsWinRate": 54.5
+    },
+    {
+      "symbol": "GLD",
+      "profile": "volume_v1.08",
+      "trades": 152,
+      "winRate": 54.6,
+      "profitFactor": 0.97,
+      "expectancy": -0.16,
+      "callsWinRate": 52.6,
+      "putsWinRate": 56.8
+    },
+    {
+      "symbol": "GLD",
+      "profile": "volume_v1.10",
+      "trades": 151,
+      "winRate": 55,
+      "profitFactor": 0.98,
+      "expectancy": -0.11,
+      "callsWinRate": 53.2,
+      "putsWinRate": 56.8
+    },
+    {
+      "symbol": "GLD",
+      "profile": "volume_v1.14",
+      "trades": 145,
+      "winRate": 51.7,
+      "profitFactor": 0.86,
+      "expectancy": -0.8,
+      "callsWinRate": 50.7,
+      "putsWinRate": 52.9
+    },
+    {
+      "symbol": "GLD",
+      "profile": "volume_v1.20",
+      "trades": 142,
+      "winRate": 51.4,
+      "profitFactor": 0.85,
+      "expectancy": -0.86,
+      "callsWinRate": 51.4,
+      "putsWinRate": 51.4
+    },
+    {
+      "symbol": "GLD",
+      "profile": "volume_v1.10_strong_bar",
+      "trades": 64,
+      "winRate": 46.9,
+      "profitFactor": 0.65,
+      "expectancy": -2.53,
+      "callsWinRate": 51.4,
+      "putsWinRate": 41.4
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import { db } from "./db";
 import { termsAcceptanceLogs } from "@shared/schema";
 import { analyzeSymbol, generateSampleOHLC } from "./finance";
 import { fetchLiveOHLC, fetchLiveSpot, getCachedSpot, getLastKnownSpotFromCandles } from "./marketData";
-import { detectAllPatterns, analyzeMarket, analyzeGaps } from "./patterns";
+import { detectAllPatterns, detectFormingCandlestickPatterns, analyzeMarket, analyzeGaps } from "./patterns";
 import { analyzeMarketDNA } from "./engines/marketDnaEngine";
 import { convertToDrawablePatterns } from "./patternDrawingAdapter";
 import { normalizePatterns, computePatternFusionSignal } from "./patternFusion";
@@ -79,8 +79,31 @@ import { inferLivePrediction } from "../ml/inference/infer";
 import { calculateCalibrationDial } from "./mlCalibrationDial";
 import { predictVolatility } from "./volatilityPredictor";
 import { getScalpConfluenceState } from "./scalpConfluenceScanner";
-import { collectEngineSnapshots, getBlackBoxStatus } from "./engineSnapshotCollector";
+import {
+  appendPositionManagerAlertEvent,
+  collectEngineSnapshots,
+  getBlackBoxStatus,
+  type PositionManagerAlertEvent,
+} from "./engineSnapshotCollector";
+import {
+  appendWarRoomGaugeCapture,
+  getWarRoomGaugeCalibration,
+  isValidWarRoomGaugeCapture,
+} from "./warRoomCalibration";
 import { buildSmartSignal } from "./smartSignal";
+import { fetchRealMacroInputs } from "./macroSignalsData";
+const isRegularMarketHoursNow = (): boolean => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  const minutes = Number(values.hour) * 60 + Number(values.minute);
+  return values.weekday !== "Sat" && values.weekday !== "Sun" && minutes >= 570 && minutes < 960;
+};
 
 export async function registerRoutes(
   httpServer: Server,
@@ -100,6 +123,7 @@ export async function registerRoutes(
   const BEST_PLAY_FAST_CACHE_TTL_MS = 15_000;
   const BEST_PLAY_STALE_FALLBACK_MS = 10 * 60 * 1000;
   const BEST_PLAY_YAHOO_COOLDOWN_MS = 60 * 1000;
+  const OFF_HOURS_SPOT_FALLBACK_MS = 4 * 24 * 60 * 60 * 1000;
   const SIMULATED_ANALYZE_CACHE_TTL_MS = 45_000;
   const SIMULATED_ANALYZE_STALE_FALLBACK_MS = 15 * 60 * 1000;
   const VIX_CACHE_MS = 60_000;
@@ -108,7 +132,11 @@ export async function registerRoutes(
   let bestPlayYahooCooldownUntil = 0;
   let bestPlayCooldownLogAt = 0;
   let vixCache: { level: number; timestamp: number; quoteTimestamp: number; source: string } | null = null;
+  let activePatternScan: { key: string; promise: Promise<Awaited<ReturnType<typeof scanSingleSymbol>>> } | null = null;
   const bestPlayCache = new Map<string, { payload: any; timestamp: number }>();
+  const FUSION_RESPONSE_CACHE_MS = 10_000;
+  const fusionResponseCache = new Map<string, { payload: any; timestamp: number }>();
+  const fusionRequestsInFlight = new Map<string, Promise<void>>();
   const analyzePayloadCache = new Map<string, {
     payload: any;
     timestamp: number;
@@ -146,6 +174,192 @@ export async function registerRoutes(
     // Keep pattern geometry stable by excluding the in-flight candle until it closes.
     const isClosed = Date.now() >= (lastMs + tfMs - 2_000);
     return isClosed ? candles : candles.slice(0, -1);
+  };
+
+  const buildMicroBreakoutRead = (
+    oneMinuteCandles: any[],
+    fiveMinuteCandles: any[],
+    zones: { upper?: number; lower?: number },
+  ) => {
+    const stableOneMinute = getStablePatternCandles(oneMinuteCandles, '1m').slice(-21);
+    const stableFiveMinute = getStablePatternCandles(fiveMinuteCandles, '5m').slice(-100);
+    const recentFiveMinute = stableFiveMinute.slice(-3);
+    const latestOneMinute = stableOneMinute.at(-1);
+    const volumeBaseline = stableOneMinute.slice(0, -1).filter((candle) => Number(candle?.volume) > 0);
+    const averageVolume = volumeBaseline.length
+      ? volumeBaseline.reduce((total, candle) => total + Number(candle.volume), 0) / volumeBaseline.length
+      : 0;
+    const volumeRatio = averageVolume > 0 ? Number(latestOneMinute?.volume ?? 0) / averageVolume : 0;
+    const pressureCandles = stableOneMinute.slice(-3);
+    const previousPressureCandles = stableOneMinute.slice(-6, -3);
+    const recentAverageVolume = pressureCandles.length
+      ? pressureCandles.reduce((total, candle) => total + Math.max(0, Number(candle?.volume) || 0), 0) / pressureCandles.length
+      : 0;
+    const previousAverageVolume = previousPressureCandles.length
+      ? previousPressureCandles.reduce((total, candle) => total + Math.max(0, Number(candle?.volume) || 0), 0) / previousPressureCandles.length
+      : 0;
+    const volumeAcceleration = previousAverageVolume > 0 ? recentAverageVolume / previousAverageVolume : 0;
+    const totalPressureVolume = pressureCandles.reduce((total, candle) => total + Math.max(0, Number(candle?.volume) || 0), 0);
+    const signedPressure = totalPressureVolume > 0
+      ? pressureCandles.reduce((total, candle) => {
+          const range = Math.max(Number(candle?.high) - Number(candle?.low), 0.0001);
+          const bodyPressure = Math.max(-1, Math.min(1, (Number(candle?.close) - Number(candle?.open)) / range));
+          return total + bodyPressure * Math.max(0, Number(candle?.volume) || 0);
+        }, 0) / totalPressureVolume
+      : 0;
+    const ignitionDirection = volumeRatio >= 1.25 && Math.abs(signedPressure) >= 0.18
+      ? signedPressure > 0 ? 'CALL' : 'PUT'
+      : 'WAIT';
+    const pressureDirection = signedPressure > 0 ? 'CALL' : signedPressure < 0 ? 'PUT' : 'WAIT';
+    const alignedPressureBars = pressureDirection === 'WAIT'
+      ? 0
+      : pressureCandles.filter((candle) => {
+          const candlePressure = (Number(candle?.close) - Number(candle?.open)) / Math.max(Number(candle?.high) - Number(candle?.low), 0.0001);
+          return pressureDirection === 'CALL' ? candlePressure > 0 : candlePressure < 0;
+        }).length;
+    const ignitionStrength = Math.round(Math.max(0, Math.min(100,
+      (Math.min(volumeRatio, 2.5) / 2.5) * 58 + Math.min(1, Math.abs(signedPressure)) * 42,
+    )));
+
+    const calculateEma = (values: number[], period: number): number => {
+      if (!values.length) return 0;
+      const multiplier = 2 / (period + 1);
+      let current = values.slice(0, Math.min(period, values.length)).reduce((sum, value) => sum + value, 0)
+        / Math.min(period, values.length);
+      for (let index = period; index < values.length; index += 1) {
+        current = (values[index] - current) * multiplier + current;
+      }
+      return current;
+    };
+
+    const calculateRsi = (values: number[], period = 14): number => {
+      const window = values.slice(-period - 1);
+      if (window.length < period + 1) return 50;
+      let gains = 0;
+      let losses = 0;
+      for (let index = 1; index < window.length; index += 1) {
+        const change = window[index] - window[index - 1];
+        gains += Math.max(0, change);
+        losses += Math.max(0, -change);
+      }
+      if (losses === 0) return gains > 0 ? 100 : 50;
+      return 100 - 100 / (1 + gains / losses);
+    };
+
+    const candleTimeMs = (candle: any): number => Number(candle?.timeMs)
+      || (Number.isFinite(Number(candle?.time)) ? Number(candle.time) * 1000 : Number.NaN);
+    const closedAgeMinutes = (candle: any, timeframeMinutes: number): number | null => {
+      const openedAt = candleTimeMs(candle);
+      return Number.isFinite(openedAt)
+        ? Number(Math.max(0, (Date.now() - openedAt - timeframeMinutes * 60_000) / 60_000).toFixed(1))
+        : null;
+    };
+    const nySessionKey = (candle: any): string => {
+      const timeMs = candleTimeMs(candle);
+      return Number.isFinite(timeMs)
+        ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(timeMs))
+        : '';
+    };
+    const latestFiveMinute = stableFiveMinute.at(-1);
+    const latestSessionKey = nySessionKey(latestFiveMinute);
+    const sessionFiveMinute = stableFiveMinute.filter((candle) => nySessionKey(candle) === latestSessionKey && Number(candle?.volume) > 0);
+    const sessionVolume = sessionFiveMinute.reduce((sum, candle) => sum + Number(candle.volume), 0);
+    const sessionVwap = sessionVolume > 0
+      ? sessionFiveMinute.reduce((sum, candle) => sum + ((Number(candle.high) + Number(candle.low) + Number(candle.close)) / 3) * Number(candle.volume), 0) / sessionVolume
+      : Number.NaN;
+    const fiveMinuteCloses = stableFiveMinute.map((candle) => Number(candle?.close)).filter(Number.isFinite);
+    const fiveMinuteRsi = calculateRsi(fiveMinuteCloses);
+    const fiveMinuteEma9 = calculateEma(fiveMinuteCloses, 9);
+    const fiveMinuteEma21 = calculateEma(fiveMinuteCloses, 21);
+    const latestFiveMinuteClose = Number(latestFiveMinute?.close);
+
+    const readFiveMinuteExtension = (side: 'CALL' | 'PUT') => {
+      const available = fiveMinuteCloses.length >= 22 && Number.isFinite(latestFiveMinuteClose) && latestFiveMinuteClose > 0 && Number.isFinite(sessionVwap);
+      if (!available) {
+        return { available: false, state: 'NO READ', score: 50, rsiAligned: null, emaSpreadPct: null, vwapDistancePct: null };
+      }
+      const sign = side === 'CALL' ? 1 : -1;
+      const rsiAligned = side === 'CALL' ? fiveMinuteRsi : 100 - fiveMinuteRsi;
+      const emaSpreadPct = ((fiveMinuteEma9 - fiveMinuteEma21) / latestFiveMinuteClose) * sign;
+      const vwapDistancePct = ((latestFiveMinuteClose - sessionVwap) / latestFiveMinuteClose) * sign;
+      const extended = rsiAligned >= 60 && (emaSpreadPct >= 0.0003 || vwapDistancePct >= 0.0006);
+      const fresh = rsiAligned >= 45 && rsiAligned <= 56 && emaSpreadPct <= 0.0004 && vwapDistancePct <= 0.0006;
+      return {
+        available: true,
+        state: extended ? 'EXTENDED' : fresh ? 'FRESH' : 'BALANCED',
+        score: extended ? 28 : fresh ? 55 : 50,
+        rsiAligned: Number(rsiAligned.toFixed(1)),
+        emaSpreadPct: Number((emaSpreadPct * 100).toFixed(3)),
+        vwapDistancePct: Number((vwapDistancePct * 100).toFixed(3)),
+      };
+    };
+
+    const readFiveMinuteLevel = (side: 'CALL' | 'PUT', level: number | undefined) => {
+      const latest = recentFiveMinute.at(-1);
+      const previous = recentFiveMinute.at(-2);
+      if (!latest || !Number.isFinite(level)) return { state: 'NO LEVEL', level: null, doji: false, ageMinutes: null, breakoutAgeMinutes: null };
+
+      const numericLevel = Number(level);
+      const range = Math.max(Number(latest.high) - Number(latest.low), numericLevel * 0.0001, 0.0001);
+      const tolerance = Math.max(range * 0.12, numericLevel * 0.00025);
+      const bodyRatio = Math.abs(Number(latest.close) - Number(latest.open)) / range;
+      const doji = bodyRatio <= 0.15 && Number(latest.low) <= numericLevel + tolerance && Number(latest.high) >= numericLevel - tolerance;
+      const accepted = side === 'CALL'
+        ? Number(latest.close) > numericLevel + tolerance
+        : Number(latest.close) < numericLevel - tolerance;
+      const rejected = side === 'CALL'
+        ? Number(latest.high) >= numericLevel - tolerance && Number(latest.close) < numericLevel - tolerance
+        : Number(latest.low) <= numericLevel + tolerance && Number(latest.close) > numericLevel + tolerance;
+      const retestHeld = accepted && Boolean(previous) && (side === 'CALL'
+        ? Number(previous.close) > numericLevel && Number(latest.low) <= numericLevel + tolerance
+        : Number(previous.close) < numericLevel && Number(latest.high) >= numericLevel - tolerance);
+      const testing = Number(latest.low) <= numericLevel + tolerance && Number(latest.high) >= numericLevel - tolerance;
+      const state = retestHeld ? 'RETEST HELD' : accepted ? 'ACCEPTED' : rejected ? 'REJECTED' : testing ? 'TESTING' : 'WAITING';
+      const crossed = (candle: any) => side === 'CALL'
+        ? Number(candle?.close) > numericLevel + tolerance
+        : Number(candle?.close) < numericLevel - tolerance;
+      let breakoutCandle: any = null;
+      for (let index = stableFiveMinute.length - 1; index > 0; index -= 1) {
+        if (crossed(stableFiveMinute[index]) && !crossed(stableFiveMinute[index - 1])) {
+          breakoutCandle = stableFiveMinute[index];
+          break;
+        }
+      }
+      return {
+        state,
+        level: numericLevel,
+        doji,
+        ageMinutes: closedAgeMinutes(latest, 5),
+        breakoutAgeMinutes: breakoutCandle ? closedAgeMinutes(breakoutCandle, 5) : null,
+      };
+    };
+
+    const oneMinuteAgeMinutes = latestOneMinute ? closedAgeMinutes(latestOneMinute, 1) : null;
+    const oneMinuteFresh = oneMinuteAgeMinutes != null && oneMinuteAgeMinutes <= 3;
+
+    return {
+      ignition1m: {
+        available: Boolean(latestOneMinute) && volumeBaseline.length >= 5 && averageVolume > 0,
+        fresh: oneMinuteFresh,
+        direction: ignitionDirection,
+        volumeRatio: Number(volumeRatio.toFixed(2)),
+        volumeAcceleration: Number(volumeAcceleration.toFixed(2)),
+        pressure: Number(signedPressure.toFixed(3)),
+        alignedPressureBars,
+        ageMinutes: oneMinuteAgeMinutes,
+        studyCandidate: oneMinuteFresh && volumeAcceleration >= 1.15,
+        strength: ignitionStrength,
+        state: !oneMinuteFresh ? 'STALE' : ignitionDirection === 'WAIT' ? 'QUIET' : volumeRatio >= 1.8 ? 'SURGE' : 'BUILDING',
+      },
+      structure5m: {
+        call: readFiveMinuteLevel('CALL', zones.upper),
+        put: readFiveMinuteLevel('PUT', zones.lower),
+      },
+      extension5m: {
+        call: readFiveMinuteExtension('CALL'),
+        put: readFiveMinuteExtension('PUT'),
+      },
+    };
   };
 
   const getFormingPatternFallback = (candles: any[]): any[] => {
@@ -261,6 +475,42 @@ export async function registerRoutes(
     );
   };
 
+  const detectLiveAwarePatterns = (candles: any[], timeframe: string): any[] => {
+    if (!Array.isArray(candles) || candles.length < 5) return [];
+
+    const stableCandles = getStablePatternCandles(candles, timeframe);
+    const confirmed = stableCandles.length >= 5
+      ? detectAllPatterns(stableCandles, timeframe)
+      : [];
+    if (stableCandles.length === candles.length) {
+      return confirmed.length > 0 ? confirmed : getFormingPatternFallback(stableCandles);
+    }
+
+    const activeIndex = candles.length - 1;
+    const liveDetections = detectAllPatterns(candles, timeframe)
+      .filter((pattern) => pattern.endIndex === activeIndex)
+      .map((pattern) => ({
+        ...pattern,
+        confidence: Math.max(35, Math.round(pattern.confidence * 0.82)),
+        description: `${pattern.description} Forming on the active candle; wait for the close to confirm.`,
+        strengthWeight: pattern.strengthWeight == null
+          ? undefined
+          : pattern.strengthWeight * 0.82,
+      }));
+    const forming = [
+      ...liveDetections,
+      ...detectFormingCandlestickPatterns(candles),
+      ...getFormingPatternFallback(candles),
+    ].filter((pattern) => pattern.endIndex === activeIndex);
+
+    const unique = new Map<string, any>();
+    for (const pattern of [...confirmed, ...forming]) {
+      const key = `${pattern.name}|${pattern.type}|${pattern.startIndex}|${pattern.endIndex}`;
+      unique.set(key, pattern);
+    }
+    return Array.from(unique.values());
+  };
+
   const getEasternMinuteOfDay = (timestampMs: number): number | undefined => {
     if (!Number.isFinite(timestampMs)) return undefined;
     const date = new Date(timestampMs);
@@ -281,11 +531,14 @@ export async function registerRoutes(
     symbol: string,
     timeframe: string = "15m",
   ): Promise<number | undefined> => {
+    const maxAgeMs = isRegularMarketHoursNow()
+      ? 15 * 60 * 1000
+      : OFF_HOURS_SPOT_FALLBACK_MS;
     const cachedSpot = getCachedSpot(symbol);
-    if (cachedSpot && cachedSpot.quoteAgeMs <= 15 * 60 * 1000) return cachedSpot.data.spot;
+    if (cachedSpot && cachedSpot.quoteAgeMs <= maxAgeMs) return cachedSpot.data.spot;
 
     const candleSpot = getLastKnownSpotFromCandles(symbol);
-    if (candleSpot && candleSpot.ageMs <= 15 * 60 * 1000) return candleSpot.data.spot;
+    if (candleSpot && candleSpot.ageMs <= maxAgeMs) return candleSpot.data.spot;
 
     return undefined;
   };
@@ -510,9 +763,12 @@ export async function registerRoutes(
     }
   };
 
-  const fetchEngineSpot = async (symbol: string): Promise<number | undefined> => {
+  const fetchEngineSpot = async (
+    symbol: string,
+    mode: 'default' | 'bulk' = 'bulk',
+  ): Promise<number | undefined> => {
     try {
-      const spotData = await withTimeout(fetchLiveSpot(symbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
+      const spotData = await withTimeout(fetchLiveSpot(symbol, { mode }), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
       return Number.isFinite(spotData.spot) ? spotData.spot : undefined;
     } catch {
       return undefined;
@@ -535,7 +791,7 @@ export async function registerRoutes(
     isDegraded: boolean;
   } | null> => {
     try {
-      const spotData = await withTimeout(fetchLiveSpot(symbol, { mode: 'bulk' }), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
+      const spotData = await withTimeout(fetchLiveSpot(symbol), ENGINE_SPOT_TIMEOUT_MS, `spot ${symbol}`);
       if (Number.isFinite(spotData.spot) && spotData.spot > 0) {
         return { data: spotData, isDegraded: false };
       }
@@ -544,7 +800,7 @@ export async function registerRoutes(
     }
 
     const cachedSpot = getCachedSpot(symbol);
-    if (cachedSpot && cachedSpot.quoteAgeMs <= 2 * 60 * 1000) {
+    if (cachedSpot && cachedSpot.quoteAgeMs <= 30 * 1000) {
       return {
         data: {
           ...cachedSpot.data,
@@ -638,19 +894,17 @@ export async function registerRoutes(
 
       const upperSymbol = symbol.toUpperCase();
       const tf = timeframe || "15m";
+      const isMarketOpen = isRegularMarketHoursNow();
       const analyzeCacheKey = `${upperSymbol}-${tf}`;
-      const vixSnapshot = await fetchVixSnapshot();
-      
-      // Fetch live spot price first - this is always needed
-      let spotPrice = await fetchEngineSpot(upperSymbol);
-
-      if (spotPrice == null) {
-        spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
-      }
+      // These feeds are independent; running them serially compounds provider timeouts.
+      const vixSnapshotPromise: Promise<Awaited<ReturnType<typeof fetchVixSnapshot>>> = withTimeout(fetchVixSnapshot(), ENGINE_SPOT_TIMEOUT_MS, `VIX snapshot`)
+        .catch(() => ({ level: undefined, regime: "unknown" as const, source: "timeout" }));
+      const spotPricePromise = fetchEngineSpot(upperSymbol, 'default');
+      const liveOhlcPromise = withTimeout(fetchLiveOHLC(upperSymbol, tf, "FULL"), ENGINE_OHLC_TIMEOUT_MS, `analyze ${upperSymbol} ${tf}`);
 
       let liveResult: Awaited<ReturnType<typeof fetchLiveOHLC>>;
       try {
-        liveResult = await withTimeout(fetchLiveOHLC(upperSymbol, tf, "FULL"), ENGINE_OHLC_TIMEOUT_MS, `analyze ${upperSymbol} ${tf}`);
+        liveResult = await liveOhlcPromise;
       } catch (error) {
         liveResult = {
           data: [],
@@ -661,6 +915,18 @@ export async function registerRoutes(
           prevDayRth: [],
         };
       }
+
+      // Fetch live spot price first - this is always needed
+      let spotPrice = await spotPricePromise;
+
+      if (spotPrice == null) {
+        spotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
+      }
+
+      const vixSnapshot = await vixSnapshotPromise;
+      const vixLevel = ("level" in vixSnapshot && Number.isFinite(vixSnapshot.level))
+        ? Number(vixSnapshot.level)
+        : 0;
       
       let ohlc: any[];
       let isLive = false;
@@ -734,7 +1000,7 @@ export async function registerRoutes(
                 nowMinutes,
                 cachedSessionSplit,
                 spotPrice ?? refreshedAnalysis.lastPrice,
-                vixSnapshot.level,
+                vixLevel,
               );
 
               const refreshedMarketDNA = analyzeMarketDNA(
@@ -755,6 +1021,7 @@ export async function registerRoutes(
             return res.json({
               ...refreshedPayload,
               lastPrice: spotPrice ?? refreshedPayload.lastPrice,
+              isMarketOpen,
               isLive: false,
               dataSource: liveResult.error
                 ? `${cacheSourceLabel} (${liveResult.error})`
@@ -814,7 +1081,6 @@ export async function registerRoutes(
       });
 
       const isSimulatedData = String(dataSource).toLowerCase().startsWith("simulated");
-      
       // Use live spot price if available, otherwise fall back to analysis lastPrice
       const finalPrice = spotPrice ?? analysis.lastPrice;
       
@@ -835,27 +1101,30 @@ export async function registerRoutes(
         nowMinutes,
         sessionSplit,
         finalPrice,
-        vixSnapshot.level,
+        vixLevel,
       );
       
-      const patternCandles = getStablePatternCandles(ohlc, tf);
-      const detectedPatterns = patternCandles.length >= 5
-        ? detectAllPatterns(patternCandles, tf)
-        : [];
-      const fallbackPatterns = detectedPatterns.length === 0
-        ? getFormingPatternFallback(patternCandles)
-        : [];
-      const basePatterns = detectedPatterns.length > 0 ? detectedPatterns : fallbackPatterns;
+      const patternCandles = ohlc;
+      const basePatterns = detectLiveAwarePatterns(patternCandles, tf);
+      const dedupedPatterns = Array.from(new Map(
+        basePatterns.map((pattern) => [
+          `${pattern.name}|${pattern.type}|${pattern.startIndex}|${pattern.endIndex}`,
+          pattern,
+        ])
+      ).values());
       const allPatterns = isSimulatedData
-        ? basePatterns.map((pattern) => ({
+        ? dedupedPatterns.map((pattern) => ({
             ...pattern,
             confidence: Math.max(36, Math.round((pattern.confidence ?? 0) * 0.65)),
           }))
-        : basePatterns;
+        : dedupedPatterns;
       const drawablePatterns = convertToDrawablePatterns(allPatterns, patternCandles, tf);
-      const drawableNames = new Set(drawablePatterns.map(d => d.name));
-      const normalizedPats = normalizePatterns(allPatterns, patternCandles)
-        .filter(p => drawableNames.has(p.name));
+      const drawableDetections = new Set(drawablePatterns.map((pattern) =>
+        `${pattern.name}|${pattern.type}|${pattern.startIndex}|${pattern.endIndex}`));
+      const normalizedPats = normalizePatterns(allPatterns, patternCandles, drawablePatterns)
+        .filter((pattern) => drawableDetections.has(
+          `${pattern.name}|${pattern.direction}|${pattern.startIndex}|${pattern.endIndex}`,
+        ));
       let patternSignal = computePatternFusionSignal(normalizedPats);
       if (isSimulatedData) {
         if (normalizedPats.length > 0) {
@@ -882,7 +1151,7 @@ export async function registerRoutes(
       );
 
       if (marketDNA?.fingerprint) {
-        (marketDNA.fingerprint as any).vixLevel = vixSnapshot.level ?? null;
+        (marketDNA.fingerprint as any).vixLevel = vixLevel;
         (marketDNA.fingerprint as any).vixRegime = vixSnapshot.regime;
         (marketDNA.fingerprint as any).vixSource = vixSnapshot.source;
       }
@@ -942,7 +1211,7 @@ export async function registerRoutes(
       const sessionMinuteEt = getEasternMinuteOfDay(latestCandleTs);
       const spy0dteSessionQualified = !spy0dteStrictMode || Boolean(
         Number.isFinite(sessionMinuteEt as number) &&
-        (((sessionMinuteEt as number) >= 575 && (sessionMinuteEt as number) <= 660) ||
+        (((sessionMinuteEt as number) >= 590 && (sessionMinuteEt as number) <= 660) ||
           ((sessionMinuteEt as number) >= 840 && (sessionMinuteEt as number) <= 955))
       );
       const laneHasDepth = topSystem.sampleSize >= 20;
@@ -952,8 +1221,11 @@ export async function registerRoutes(
 
       const adxValue = Number(analysisAny?.marketHealth?.adx?.value ?? analysis.marketHealth?.adx?.value ?? 0);
       const rsiValue = Number(analysisAny?.marketHealth?.rsi?.value ?? analysis.marketHealth?.rsi?.value ?? 50);
+      const compressionBbWidth = Number(analysisAny?.compression?.bbWidth ?? Number.NaN);
       const momentumAbs = Math.abs(Number(momentumStrength ?? 0));
       const weakChop = adxValue > 0 && adxValue < 20 && rsiValue >= 45 && rsiValue <= 55;
+      const lowAdxNoise = adxValue > 0 && adxValue < 20;
+      const earlyCompressionNoise = Number.isFinite(compressionBbWidth) && compressionBbWidth > 0 && compressionBbWidth < 0.5;
       const trendStrong = adxValue >= 25;
       const spyTrendQualified = spy0dteStrictMode ? adxValue >= 22 : trendStrong;
 
@@ -964,14 +1236,14 @@ export async function registerRoutes(
       const chopPenalty = weakChop ? 4 : 0;
 
       const minTradeProbBase = spy0dteStrictMode
-        ? 66
+        ? (lowAdxNoise || earlyCompressionNoise ? 72 : 68)
         : selectedProfile === 'strict_live'
           ? 62
           : selectedProfile === 'balanced_accuracy'
             ? 60
             : 58;
       const minHitProbBase = spy0dteStrictMode
-        ? 62
+        ? (lowAdxNoise || earlyCompressionNoise ? 68 : 64)
         : selectedProfile === 'strict_live'
           ? 58
           : selectedProfile === 'balanced_accuracy'
@@ -986,7 +1258,7 @@ export async function registerRoutes(
 
       const momentumQualified = spy0dteStrictMode
         ? (spyTrendQualified && (
-          momentumAbs >= 8 ||
+          momentumAbs >= 10 ||
           (breakoutTriggered && tradeProbPct >= minTradeProb + 2 && hitProbPct >= minHitProb + 2) ||
           (tradeProbPct >= 72 && hitProbPct >= 66)
         ))
@@ -1031,6 +1303,8 @@ export async function registerRoutes(
           logRuleAligned &&
           tradeProbPct >= minTradeProb &&
           hitProbPct >= minHitProb &&
+          (!spy0dteStrictMode || !lowAdxNoise || breakoutTriggered) &&
+          (!spy0dteStrictMode || !earlyCompressionNoise || breakoutTriggered) &&
           (!weakChop || breakoutTriggered) &&
           (!requiresBreakout || breakoutTriggered)) ||
           (fallbackQualified && !symbolRiskLocked)
@@ -1045,6 +1319,8 @@ export async function registerRoutes(
           symbolRisk.lockReason,
           `p=${tradeProbPct.toFixed(1)}<${minTradeProb}`,
           `hit=${hitProbPct.toFixed(1)}<${minHitProb}`,
+          spy0dteStrictMode && lowAdxNoise && !breakoutTriggered ? 'adx<20_without_breakout' : null,
+          spy0dteStrictMode && earlyCompressionNoise && !breakoutTriggered ? 'bb_too_early_without_breakout' : null,
           requiresBreakout ? `breakout=${breakoutTriggered ? 'yes' : 'no'}` : null,
         ].filter(Boolean).join(' | ');
 
@@ -1134,6 +1410,7 @@ export async function registerRoutes(
       const payload = {
         ...analysis,
         lastPrice: finalPrice,
+        isMarketOpen,
         isLive,
         dataSource,
         metaSignal: engineOutput.metaSignal,
@@ -1178,7 +1455,8 @@ export async function registerRoutes(
       }
 
       const upperSymbol = symbol.toUpperCase();
-      const vixSnapshot = await fetchVixSnapshot();
+      const vixSnapshot = await withTimeout(fetchVixSnapshot(), ENGINE_SPOT_TIMEOUT_MS, `VIX snapshot`)
+        .catch(() => ({ level: undefined, regime: "unknown" as const, source: "timeout" }));
       const tf = timeframe || "15m";
 
       let spotPrice = await fetchEngineSpot(upperSymbol);
@@ -1401,6 +1679,17 @@ export async function registerRoutes(
   });
 
   // ---------- Popular symbols ----------
+  app.get("/api/macro/signals", async (_req, res) => {
+    try {
+      const inputs = await fetchRealMacroInputs();
+      res.json({ ...inputs, timestamp: Date.now() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Macro] Live FRED feed unavailable:", message);
+      res.status(503).json({ error: "LIVE DATA UNAVAILABLE", detail: message });
+    }
+  });
+
   app.get("/api/symbols/popular", (_req, res) => {
     res.json([
       { symbol: "SPY", name: "SPDR S&P 500 ETF" },
@@ -1964,7 +2253,31 @@ export async function registerRoutes(
           return res.json(staleCached.payload);
         }
 
-        return res.status(503).json({ error: "Best play provider rate-limited. Please retry shortly." });
+        const fallbackQuote = getCachedSpot(upperSymbol)?.data ?? getLastKnownSpotFromCandles(upperSymbol)?.data;
+        return res.json({
+          symbol: upperSymbol,
+          spotPrice: fallbackQuote?.spot ?? 0,
+          availability: {
+            state: "DEGRADED",
+            reason: "Live 0DTE chain is rate-limited. No contract is authorized until the provider recovers.",
+          },
+          recommendation: {
+            direction: "NEUTRAL",
+            setupGrade: "WAIT",
+            confidence: 0,
+            expectedWinRate: 0,
+            expectedPL: 0,
+            reasons: ["Live options chain unavailable - stand down until pricing recovers."],
+          },
+          compression: {
+            sparkScore: 0,
+            phase: "WAIT",
+            bbWidth: "0",
+            rangePct: "0",
+            volRatio: "0",
+            triggers: [],
+          },
+        });
       }
 
       console.error("Best Play error:", error);
@@ -2048,6 +2361,7 @@ export async function registerRoutes(
   app.get("/api/spot/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const upperSymbol = symbol.toUpperCase();
+    const isMarketOpen = isRegularMarketHoursNow();
     res.set({
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       Pragma: "no-cache",
@@ -2056,24 +2370,29 @@ export async function registerRoutes(
 
     const spotQuote = await fetchEngineSpotQuote(upperSymbol);
     if (spotQuote) {
-      return res.json(spotQuote.data);
+      return res.json({ ...spotQuote.data, isMarketOpen });
     }
 
     const cachedSpot = getCachedSpot(upperSymbol);
-    if (cachedSpot && cachedSpot.quoteAgeMs <= 15 * 60 * 1000) {
+    const cachedSpotMaxAgeMs = isMarketOpen
+      ? 15 * 60 * 1000
+      : OFF_HOURS_SPOT_FALLBACK_MS;
+    if (cachedSpot && cachedSpot.quoteAgeMs <= cachedSpotMaxAgeMs) {
       return res.json({
         ...cachedSpot.data,
+        isMarketOpen,
         degraded: true,
         degradedReason: "cached-fallback",
       });
     }
 
     const candleFallback = getLastKnownSpotFromCandles(upperSymbol);
-    if (candleFallback && candleFallback.ageMs <= 15 * 60 * 1000) {
+    if (!isRegularMarketHoursNow() && candleFallback && candleFallback.ageMs <= OFF_HOURS_SPOT_FALLBACK_MS) {
       return res.json({
         ...candleFallback.data,
+        isMarketOpen,
         degraded: true,
-        degradedReason: "candle-fallback",
+        degradedReason: "recent-session-candle",
       });
     }
 
@@ -2120,6 +2439,45 @@ export async function registerRoutes(
     res.json({ success: true, ...getBlackBoxStatus(), timestamp: Date.now() });
   });
 
+  app.get("/api/black-box/war-room-calibration", (req, res) => {
+    const requestedHours = Number(req.query.hours ?? 168);
+    if (!Number.isFinite(requestedHours) || requestedHours <= 0) {
+      res.status(400).json({ success: false, error: "hours must be a positive number" });
+      return;
+    }
+    const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+    const timeframe = typeof req.query.timeframe === "string" ? req.query.timeframe : undefined;
+    if ((symbol && !/^[A-Z0-9.-]{1,12}$/i.test(symbol)) || (timeframe && !/^[a-z0-9]{1,12}$/i.test(timeframe))) {
+      res.status(400).json({ success: false, error: "Invalid symbol or timeframe filter" });
+      return;
+    }
+    try {
+      res.json(getWarRoomGaugeCalibration(requestedHours, symbol, timeframe));
+    } catch (error) {
+      console.error("War Room gauge calibration error:", error);
+      res.status(500).json({ success: false, error: "Failed to load War Room gauge calibration" });
+    }
+  });
+
+  app.post("/api/black-box/war-room-gauge", (req, res) => {
+    if (!isValidWarRoomGaugeCapture(req.body)) {
+      res.status(400).json({ success: false, error: "Invalid War Room gauge capture" });
+      return;
+    }
+    try {
+      const recorded = appendWarRoomGaugeCapture(req.body);
+      res.status(recorded ? 201 : 200).json({
+        success: true,
+        recorded,
+        snapshotId: req.body.snapshotId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error("War Room gauge capture error:", error);
+      res.status(500).json({ success: false, error: "Failed to log War Room gauge capture" });
+    }
+  });
+
   app.post("/api/black-box/collect", async (_req, res) => {
     const result = await collectEngineSnapshots();
     res.status(result.ran ? 200 : result.skippedReason === "outside_regular_session" ? 409 : 202).json({
@@ -2128,6 +2486,46 @@ export async function registerRoutes(
       ...getBlackBoxStatus(),
       timestamp: Date.now(),
     });
+  });
+
+  app.post("/api/black-box/position-manager-alert", (req, res) => {
+    const event = req.body as Partial<PositionManagerAlertEvent> | undefined;
+    const valid = event &&
+      (event.event === "activated" || event.event === "resolved") &&
+      typeof event.alertId === "string" && event.alertId.length > 0 && event.alertId.length <= 160 &&
+      typeof event.symbol === "string" && /^[A-Z0-9.-]{1,12}$/i.test(event.symbol) &&
+      typeof event.timeframe === "string" && event.timeframe.length > 0 && event.timeframe.length <= 12 &&
+      (event.side === "CALL" || event.side === "PUT") &&
+      Number.isFinite(event.startedAt) &&
+      Number.isFinite(event.startPrice) &&
+      Number.isFinite(event.score) &&
+      Number.isFinite(event.opposingScore) &&
+      Number.isFinite(event.scoreGap) &&
+      Number.isFinite(event.coverage) &&
+      typeof event.gateState === "string" &&
+      typeof event.studyState === "string" &&
+      typeof event.fusionFresh === "boolean" &&
+      Array.isArray(event.signals) && event.signals.length <= 32 &&
+      event.signals.every((signal) =>
+        signal &&
+        typeof signal.label === "string" && signal.label.length <= 80 &&
+        Number.isFinite(signal.score) &&
+        Number.isFinite(signal.weight) &&
+        (signal.classification === "support" || signal.classification === "neutral" || signal.classification === "conflict")
+      );
+
+    if (!valid) {
+      res.status(400).json({ success: false, error: "Invalid position-manager alert event" });
+      return;
+    }
+
+    try {
+      appendPositionManagerAlertEvent(event as PositionManagerAlertEvent);
+      res.status(201).json({ success: true, alertId: event.alertId, timestamp: Date.now() });
+    } catch (error) {
+      console.error("Position-manager alert logging error:", error);
+      res.status(500).json({ success: false, error: "Failed to log position-manager alert" });
+    }
   });
 
   app.get("/api/scanner/breakout-thresholds", async (req, res) => {
@@ -2283,15 +2681,45 @@ export async function registerRoutes(
     try {
       const { symbol, timeframe } = req.params;
       const tf = timeframe || "15m";
-      
-      const result = await scanSingleSymbol(symbol.toUpperCase(), tf);
+      const upperSymbol = symbol.toUpperCase();
+      const scanKey = `${upperSymbol}:${tf}`;
+
+      if (activePatternScan && activePatternScan.key !== scanKey) {
+        return res.json({
+          patterns: [],
+          delayed: true,
+          message: "Pattern scanner is completing the previous selection",
+        });
+      }
+
+      if (!activePatternScan) {
+        const promise = scanSingleSymbol(upperSymbol, tf);
+        activePatternScan = { key: scanKey, promise };
+        void promise.finally(() => {
+          if (activePatternScan?.promise === promise) activePatternScan = null;
+        });
+      }
+
+      // Pattern enrichment must never hold the dashboard while a provider is degraded.
+      const result = await withTimeout(
+        activePatternScan.promise,
+        5_000,
+        `patterns ${upperSymbol} ${tf}`,
+      );
       if (result) {
         res.json(result);
       } else {
         res.status(404).json({ error: "Could not analyze patterns" });
       }
     } catch (error) {
-      res.status(500).json({ error: "Pattern detection failed" });
+      const message = error instanceof Error ? error.message : "Pattern detection failed";
+      const timedOut = message.includes("timed out");
+      if (timedOut && activePatternScan?.key === `${req.params.symbol.toUpperCase()}:${req.params.timeframe || "15m"}`) {
+        activePatternScan = null;
+      }
+      res.status(timedOut ? 200 : 500).json(timedOut
+        ? { patterns: [], delayed: true, message: "Pattern scan is temporarily delayed" }
+        : { error: "Pattern detection failed" });
     }
   });
 
@@ -2301,22 +2729,17 @@ export async function registerRoutes(
       const { symbol, timeframe } = req.params;
       const upperSymbol = symbol.toUpperCase();
       const tf = timeframe || "15m";
-      const vixSnapshot = await fetchVixSnapshot();
+      const vixSnapshot = await withTimeout(fetchVixSnapshot(), ENGINE_SPOT_TIMEOUT_MS, `VIX snapshot`)
+        .catch(() => ({ level: undefined, regime: "unknown" as const, source: "timeout" }));
       
       // Fetch live spot price first
-      let liveSpotPrice: number | undefined;
-      try {
-        const spotData = await fetchLiveSpot(upperSymbol);
-        liveSpotPrice = spotData.spot;
-      } catch (e) {
-        // Fall through to cache/candle fallback.
-      }
+      let liveSpotPrice = await fetchEngineSpot(upperSymbol, 'default');
 
       if (liveSpotPrice == null) {
         liveSpotPrice = await resolveFallbackSpotPrice(upperSymbol, tf);
       }
       
-      const liveResult = await fetchLiveOHLC(upperSymbol, tf, "FULL");
+      const liveResult = await fetchEngineOhlc(upperSymbol, tf, getCandleCount(tf), liveSpotPrice);
       
       let ohlc: any[];
       let sessionSplit = { rth: [] as any[], overnight: [] as any[], prevDayRth: [] as any[] };
@@ -2324,9 +2747,9 @@ export async function registerRoutes(
       if (liveResult.data.length > 0) {
         ohlc = liveResult.data;
         sessionSplit = {
-          rth: liveResult.rth,
-          overnight: liveResult.overnight,
-          prevDayRth: liveResult.prevDayRth,
+          rth: liveResult.data,
+          overnight: [],
+          prevDayRth: [],
         };
       } else {
         // Use live spot price for realistic simulated data
@@ -2377,24 +2800,26 @@ export async function registerRoutes(
   });
 
   // ---------- Monster OTM Panel (Synthetic Chain) ----------
-  app.get("/api/monster-panel/:symbol", async (req, res) => {
+  app.get("/api/monster-panel/:symbol/:timeframe?", async (req, res) => {
     try {
       const symbol = req.params.symbol;
+      const timeframe = req.params.timeframe || '15m';
       
       if (!symbol || symbol.length < 1 || symbol.length > 10) {
         return res.status(400).json({ error: "Invalid symbol" });
       }
       
       const upperSymbol = symbol.toUpperCase();
-      const vixSnapshot = await fetchVixSnapshot();
+      const vixSnapshot = await withTimeout(fetchVixSnapshot(), ENGINE_SPOT_TIMEOUT_MS, `VIX snapshot`)
+        .catch(() => ({ level: undefined, regime: "unknown" as const, source: "timeout" }));
 
       let lastPrice = await fetchEngineSpot(upperSymbol);
 
       if (lastPrice == null) {
-        lastPrice = await resolveFallbackSpotPrice(upperSymbol, '15m');
+        lastPrice = await resolveFallbackSpotPrice(upperSymbol, timeframe);
       }
 
-      const tfResult = await fetchEngineOhlc(upperSymbol, '15m', 100, lastPrice);
+      const tfResult = await fetchEngineOhlc(upperSymbol, timeframe, 100, lastPrice);
       const ohlc = tfResult.data;
 
       // Get panel data with synthetic chain
@@ -2411,13 +2836,7 @@ export async function registerRoutes(
       const panelSessionSplit = { rth: ohlc, overnight: [] as any[], prevDayRth: [] as any[] };
       
       const marketHealth: MarketHealthIndicators = {
-        healthScore: (mh?.rsi?.contribution ?? 0.5) * 0.15 + 
-                     (mh?.macd?.contribution ?? 0.5) * 0.15 +
-                     (mh?.adx?.contribution ?? 0.5) * 0.20 +
-                     (mh?.obv?.contribution ?? 0.5) * 0.15 +
-                     (mh?.bollingerBands?.contribution ?? 0.5) * 0.15 +
-                     (mh?.stochastic?.contribution ?? 0.5) * 0.10 +
-                     (mh?.cmf?.contribution ?? 0.5) * 0.10,
+        healthScore: Math.max(0, Math.min(1, Number(mh?.overallHealth ?? 50) / 100)),
         healthGrade: mh?.healthGrade ?? 'C',
         rsi: { value: mh?.rsi?.value ?? 50 },
         macd: { value: mh?.macd?.value ?? 0 },
@@ -2453,7 +2872,7 @@ export async function registerRoutes(
       try {
         const fusionInput: FusionInput = {
           symbol: upperSymbol,
-          ohlcByTF: { '15m': ohlc },
+          ohlcByTF: { [timeframe]: ohlc },
           patternsByTF: {},
           marketHealth,
           lastPrice: spotPrice
@@ -2471,7 +2890,7 @@ export async function registerRoutes(
         // Synthesize the play - use panelData's PCE if unified is weak
         unifiedOptionsPlay = synthesizeMonsterPlay({
           symbol: upperSymbol,
-          timeframe: '15m',
+          timeframe,
           unified: unified && unified.state === 'ACTIVE' ? unified : null,
           chain: panelData.chain,
           spot: spotPrice,
@@ -2570,10 +2989,38 @@ export async function registerRoutes(
   });
 
   // ---------- Fusion Engine (Multi-TF) ----------
-  app.get("/api/fusion/:symbol", async (req, res) => {
+  app.get("/api/fusion/:symbol/:timeframe?", async (req, res) => {
+    let fusionRequestKey: string | null = null;
+    const fusionRequestGate: { release: () => void } = { release: () => {} };
+    let ownsFusionRequest = false;
     try {
       const upperSymbol = req.params.symbol.toUpperCase();
-      const vixSnapshot = await fetchVixSnapshot();
+      const rawRequestedTimeframe = req.params.timeframe;
+      const requestedTimeframe = (rawRequestedTimeframe?.toLowerCase() === '1d'
+        ? '1D'
+        : rawRequestedTimeframe?.toLowerCase()) as FusionTimeframe | undefined;
+      const supportedTimeframes: FusionTimeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
+      const primaryTimeframe = requestedTimeframe && supportedTimeframes.includes(requestedTimeframe)
+        ? requestedTimeframe
+        : undefined;
+      fusionRequestKey = `${upperSymbol}:${primaryTimeframe ?? 'default'}`;
+      const cachedFusion = fusionResponseCache.get(fusionRequestKey);
+      if (cachedFusion && Date.now() - cachedFusion.timestamp <= FUSION_RESPONSE_CACHE_MS) {
+        return res.json(cachedFusion.payload);
+      }
+      const activeFusionRequest = fusionRequestsInFlight.get(fusionRequestKey);
+      if (activeFusionRequest) {
+        await activeFusionRequest;
+        const completedFusion = fusionResponseCache.get(fusionRequestKey);
+        if (completedFusion) return res.json(completedFusion.payload);
+      }
+      const fusionRequestDone = new Promise<void>((resolve) => {
+        fusionRequestGate.release = resolve;
+      });
+      fusionRequestsInFlight.set(fusionRequestKey, fusionRequestDone);
+      ownsFusionRequest = true;
+      const vixSnapshot = await withTimeout(fetchVixSnapshot(), ENGINE_SPOT_TIMEOUT_MS, `VIX snapshot`)
+        .catch(() => ({ level: undefined, regime: "unknown" as const, source: "timeout" }));
       
       let lastPrice: number | undefined;
       let spotQuoteMeta:
@@ -2622,7 +3069,17 @@ export async function registerRoutes(
         return { tf, ohlc: result.data, isSimulated: result.isSimulated };
       });
 
-      const ohlcResults = await Promise.all(ohlcPromises);
+      const ohlcSettled = await Promise.allSettled(ohlcPromises);
+      const ohlcResults = ohlcSettled.flatMap((result, index) => {
+        if (result.status === 'fulfilled') return [result.value];
+        const config = tfConfigs[index];
+        console.warn(`[Fusion] ${upperSymbol}/${config.tf} engine unavailable: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+        return [];
+      });
+
+      if (ohlcResults.length === 0) {
+        throw new Error(`No live OHLC engines available for ${upperSymbol}`);
+      }
 
       // Build OHLC and patterns by timeframe
       const ohlcByTF: Partial<Record<FusionTimeframe, any[]>> = {};
@@ -2630,9 +3087,9 @@ export async function registerRoutes(
 
       for (const { tf, ohlc, isSimulated } of ohlcResults) {
         ohlcByTF[tf] = ohlc;
-        const patternCandles = getStablePatternCandles(ohlc, tf);
+        const patternCandles = ohlc.slice(-240);
         const patterns = !isSimulated && patternCandles.length >= 5
-          ? detectAllPatterns(patternCandles, tf)
+          ? detectLiveAwarePatterns(patternCandles, tf)
           : [];
         patternsByTF[tf] = patterns.map(p => ({
           name: p.name,
@@ -2647,8 +3104,22 @@ export async function registerRoutes(
         }));
       }
 
+      if (lastPrice == null) {
+        const fallbackOhlc = (primaryTimeframe ? ohlcByTF[primaryTimeframe] : undefined)
+          ?? ohlcByTF['5m']
+          ?? ohlcByTF['15m']
+          ?? [];
+        const fallbackClose = Number(fallbackOhlc[fallbackOhlc.length - 1]?.close);
+        if (Number.isFinite(fallbackClose) && fallbackClose > 0) {
+          lastPrice = fallbackClose;
+        }
+      }
+
       // Get market health from 15m analysis (primary timeframe)
-      const primaryOhlc = ohlcByTF['15m'] ?? ohlcByTF['5m'] ?? [];
+      const primaryOhlc = (primaryTimeframe ? ohlcByTF[primaryTimeframe] : undefined)
+        ?? ohlcByTF['15m']
+        ?? ohlcByTF['5m']
+        ?? [];
       const analysis = analyzeSymbol(upperSymbol, primaryOhlc, { maxAbsGammaStrike: null }, { 
         rth: primaryOhlc, 
         overnight: [], 
@@ -2659,13 +3130,7 @@ export async function registerRoutes(
       // Build market health indicators for Fusion Engine
       const mh = analysis.marketHealth;
       const marketHealth: MarketHealthIndicators = {
-        healthScore: (mh?.rsi?.contribution ?? 0.5) * 0.15 + 
-                     (mh?.macd?.contribution ?? 0.5) * 0.15 +
-                     (mh?.adx?.contribution ?? 0.5) * 0.20 +
-                     (mh?.obv?.contribution ?? 0.5) * 0.15 +
-                     (mh?.bollingerBands?.contribution ?? 0.5) * 0.15 +
-                     (mh?.stochastic?.contribution ?? 0.5) * 0.10 +
-                     (mh?.cmf?.contribution ?? 0.5) * 0.10,
+        healthScore: Math.max(0, Math.min(1, Number(mh?.overallHealth ?? 50) / 100)),
         healthGrade: mh?.healthGrade ?? 'C',
         rsi: { value: mh?.rsi?.value ?? 50 },
         macd: { value: mh?.macd?.value ?? 0 },
@@ -2686,7 +3151,12 @@ export async function registerRoutes(
         phase: String(analysisAny?.compression?.phase ?? ''),
       };
       marketHealthAny.preBreakoutSetup = {
-        score: Number(analysisAny?.preBreakoutSetup?.score ?? analysisAny?.setupScore ?? 0),
+        score: Number(
+          analysisAny?.preBreakoutSetup?.score ??
+          analysisAny?.preMovePressure?.score ??
+          analysisAny?.setupScore ??
+          0,
+        ),
       };
       marketHealthAny.timeframeStack = {
         agreement: Number(analysisAny?.timeframeStack?.agreement ?? 0),
@@ -2694,7 +3164,11 @@ export async function registerRoutes(
         bias: String(analysisAny?.timeframeStack?.bias ?? ''),
       };
       marketHealthAny.edgeEngine = {
-        triggerProbability: Number(analysisAny?.edgeEngine?.triggerProbability ?? 0),
+        triggerProbability: Number(
+          analysisAny?.edgeEngine?.triggerProbability ??
+          analysisAny?.preMovePressure?.score ??
+          0,
+        ),
         state: String(analysisAny?.edgeEngine?.state ?? ''),
         signal: String(analysisAny?.edgeEngine?.signal ?? ''),
       };
@@ -2706,7 +3180,8 @@ export async function registerRoutes(
         ohlcByTF,
         patternsByTF,
         marketHealth,
-        lastPrice
+        lastPrice,
+        primaryTimeframe
       });
 
       // Get primary pattern from the first timeframe with a pattern
@@ -2762,7 +3237,7 @@ export async function registerRoutes(
       const institutionalSummary = {
         liquidityGeometry: {
           active: Boolean(snapshot.liquidityGeometry),
-          confidence: Number((((liqAny?.confidence ?? liqAny?.reliability) ?? 0) * 100).toFixed(0)),
+          confidence: Number((Math.max(0, Math.min(1, Number(liqAny?.confidence ?? liqAny?.reliability ?? liqAny?.score ?? 0))) * 100).toFixed(0)),
           direction: liqAny?.direction ?? liqAny?.bias ?? 'neutral',
           level: liqAny?.nearestAbove?.price ?? liqAny?.levels?.[0]?.price ?? finalLastPrice
         },
@@ -2965,16 +3440,20 @@ export async function registerRoutes(
       // Use the unifiedSignal directly from fusion.ts (single source of truth)
       // It already contains unifiedDirection, unifiedConfidence, unifiedPlay
       // computed by computeUnifiedSignal with weighted fusion
-      res.json({
+      const fusionPayload = {
         ...snapshot,
+        requestedTimeframe: primaryTimeframe ?? 'default',
         currentPrice: finalLastPrice,
         lastPrice: finalLastPrice,
+        microBreakout: buildMicroBreakoutRead(ohlcByTF['1m'] ?? [], ohlcByTF['5m'] ?? [], snapshot.breakoutZones),
         unifiedSignal: unifiedSignalWithPrice,
         smartSignal,
         institutionalSummary,
         tradingMetrics,
         // unifiedSignal is already part of snapshot from computeFusionSnapshot
-      });
+      };
+      fusionResponseCache.set(fusionRequestKey, { payload: fusionPayload, timestamp: Date.now() });
+      res.json(fusionPayload);
     } catch (error: any) {
       console.error("Fusion Engine error:", error?.stack ?? error);
       const errorPayload: Record<string, unknown> = {
@@ -2986,11 +3465,13 @@ export async function registerRoutes(
         errorPayload.stack = error?.stack;
       }
       res.status(500).json(errorPayload);
+    } finally {
+      if (fusionRequestKey && ownsFusionRequest) {
+        fusionRequestsInFlight.delete(fusionRequestKey);
+        fusionRequestGate.release();
+      }
     }
   });
-
-  // kick off scanner on boot
-  startScanner();
 
   // REAL Historical Backtest endpoint - uses actual Yahoo Finance data
   app.get("/api/backtest", async (req, res) => {

@@ -6,9 +6,14 @@ import { registerStripeWebhook } from "./stripeWebhook";
 import { startEngineIntakeScheduler } from "./engineIntakeScheduler";
 import { startEngineSnapshotScheduler } from "./engineSnapshotCollector";
 import { startScalpConfluenceScanner } from "./scalpConfluenceScanner";
+import { startScanner } from "./scanner";
 
 const app = express();
 const httpServer = createServer(app);
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] Unhandled background rejection:", reason);
+});
 
 declare module "http" {
   interface IncomingMessage {
@@ -42,23 +47,26 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let responseSummary = "";
+
+  if (path.startsWith("/api")) {
+    log(`${req.method} ${path} started`, "api");
+  }
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
+    if (bodyJson && typeof bodyJson === "object") {
+      const symbol = typeof bodyJson.symbol === "string" ? ` symbol=${bodyJson.symbol}` : "";
+      const dataSource = typeof bodyJson.dataSource === "string" ? ` source=${bodyJson.dataSource}` : "";
+      responseSummary = `${symbol}${dataSource}`;
+    }
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms${responseSummary}`);
     }
   });
 
@@ -71,14 +79,13 @@ app.use((req, res, next) => {
   // Start passive intake logging and proactive 15-minute session snapshots.
   startEngineIntakeScheduler();
   startEngineSnapshotScheduler();
-  startScalpConfluenceScanner();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    console.error("[express] Unhandled request error:", err);
     res.status(status).json({ message });
-    throw err;
   });
 
   // importantly only setup vite in development and after
@@ -113,6 +120,8 @@ app.use((req, res, next) => {
         },
     () => {
       log(`serving on port ${port}`);
+          startScanner();
+          startScalpConfluenceScanner();
     },
   );
 })();

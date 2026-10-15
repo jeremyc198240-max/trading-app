@@ -1,9 +1,11 @@
 import { fetchLiveOHLC, type OHLC } from "./marketData";
-import { analyzeSymbol, generateSampleOHLC } from "./finance";
+import { analyzeSymbol, computeVWAPSeries, generateSampleOHLC } from "./finance";
+import { computeEMACloudTrend } from "./emaTrendAdapter";
 import { runMonsterOTMEngine } from "./monsterOtmEngine";
 import { analyzeMarketDNA } from "./engines/marketDnaEngine";
 import { analyzeOrderBlocks } from "./engines/orderBlockEngine";
 import { getLiveTuningSnapshot } from "./signalHistory";
+import { computeReversalSignal } from "./reversalEngine";
 
 type GateMode = "legacy" | "logDriven";
 
@@ -24,6 +26,13 @@ interface SymbolResult {
   unresolved: number;
   decisive: number;
   accuracy: number;
+}
+
+interface EmaHoldReversalStats {
+  blocked: number;
+  validated: number;
+  invalidated: number;
+  unresolved: number;
 }
 
 interface GateEvalResult {
@@ -47,6 +56,8 @@ interface GateEvalResult {
 const LOOKBACK = 120;
 const LOOKAHEAD = 18;
 const STEP = 2;
+const EMA_HOLD_LOOKAHEAD = 3;
+const EMA_HOLD_MOVE_PCT = 0.15;
 
 const CANDIDATE_TUNING = {
   minDomProb: 0.48,
@@ -89,6 +100,26 @@ function pickOutcome(
     } else {
       if (bar.high >= stop) return "loss";
       if (bar.low <= target) return "win";
+    }
+  }
+  return "unresolved";
+}
+
+function evaluateEmaHoldBlock(
+  direction: "bullish" | "bearish",
+  entryPrice: number,
+  futureBars: OHLC[],
+): "validated" | "invalidated" | "unresolved" {
+  const threshold = EMA_HOLD_MOVE_PCT / 100;
+  for (const bar of futureBars) {
+    const moveHigh = (bar.high - entryPrice) / entryPrice;
+    const moveLow = (bar.low - entryPrice) / entryPrice;
+    if (direction === "bullish") {
+      if (moveHigh >= threshold) return "validated";
+      if (moveLow <= -threshold) return "invalidated";
+    } else {
+      if (moveLow <= -threshold) return "validated";
+      if (moveHigh >= threshold) return "invalidated";
     }
   }
   return "unresolved";
@@ -157,7 +188,7 @@ function evaluateGate(
   const spy0dteStrictMode = ctx.symbol === "SPY";
   const zeroDteSessionQualified = Boolean(
     Number.isFinite(ctx.sessionMinuteEt as number) &&
-      (((ctx.sessionMinuteEt as number) >= 575 && (ctx.sessionMinuteEt as number) <= 690) ||
+      (((ctx.sessionMinuteEt as number) >= 590 && (ctx.sessionMinuteEt as number) <= 690) ||
         ((ctx.sessionMinuteEt as number) >= 840 && (ctx.sessionMinuteEt as number) <= 955))
   );
   const spy0dteSessionQualified = !spy0dteStrictMode || zeroDteSessionQualified;
@@ -327,6 +358,7 @@ async function runForSymbol(symbol: string, mode: GateMode): Promise<SymbolResul
   }
 
   const stats: OutcomeStats = { entries: 0, wins: 0, losses: 0, unresolved: 0 };
+  const emaHoldReversalStats: EmaHoldReversalStats = { blocked: 0, validated: 0, invalidated: 0, unresolved: 0 };
   let candidates = 0;
   const gateTotals = {
     totalCandidates: 0,
@@ -356,6 +388,34 @@ async function runForSymbol(symbol: string, mode: GateMode): Promise<SymbolResul
       { rth: window, overnight: [], prevDayRth: [] },
       current.close,
     );
+    const emaTrend = computeEMACloudTrend(window as any, "5m");
+    const vwapSeries = computeVWAPSeries(window as any);
+    const reversalSignal = computeReversalSignal({
+      ohlc: window as any,
+      currentPrice: current.close,
+      emaTrend: emaTrend ?? undefined,
+      breakoutLifecycle: {
+        state: "PRE",
+        zoneLow: current.low,
+        zoneHigh: current.high,
+        lateMoveSide: "none",
+        tolerance: 0,
+      },
+      vwapPrice: vwapSeries.at(-1),
+      dominantTrend: emaTrend?.direction ?? "neutral",
+    });
+    const reversalOpposesEmaHold = emaTrend?.holdConfirmed &&
+      ((emaTrend.direction === "bullish" && reversalSignal.reversalDirection === "down") ||
+        (emaTrend.direction === "bearish" && reversalSignal.reversalDirection === "up"));
+    if (reversalOpposesEmaHold && (emaTrend?.direction === "bullish" || emaTrend?.direction === "bearish")) {
+      emaHoldReversalStats.blocked += 1;
+      const outcome = evaluateEmaHoldBlock(
+        emaTrend.direction,
+        current.close,
+        candles.slice(i + 1, i + 1 + EMA_HOLD_LOOKAHEAD),
+      );
+      emaHoldReversalStats[outcome] += 1;
+    }
 
     const momentumStrength = Number((analysis as any).momentumStrength ?? (analysis as any).marketHealth?.macd?.value ?? 0);
     const analysisAny = analysis as any;
@@ -461,6 +521,16 @@ async function runForSymbol(symbol: string, mode: GateMode): Promise<SymbolResul
   const accuracy = decisive > 0 ? (stats.wins / decisive) * 100 : 0;
 
   console.log(`[${symbol}] ${mode} gate diagnostics`, gateTotals);
+  if (mode === "logDriven") {
+    const decisiveBlocks = emaHoldReversalStats.validated + emaHoldReversalStats.invalidated;
+    const validationRate = decisiveBlocks > 0 ? emaHoldReversalStats.validated / decisiveBlocks * 100 : 0;
+    console.log(`[${symbol}] EMA hold reversal blocks`, {
+      ...emaHoldReversalStats,
+      validationRate: `${validationRate.toFixed(1)}%`,
+      horizon: `${EMA_HOLD_LOOKAHEAD * 5}m`,
+      threshold: `${EMA_HOLD_MOVE_PCT.toFixed(2)}%`,
+    });
+  }
 
   return {
     symbol,

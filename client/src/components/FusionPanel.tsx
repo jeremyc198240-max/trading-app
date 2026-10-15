@@ -24,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 
 interface FusionPanelProps {
   symbol: string;
+  timeframe?: string;
 }
 
 interface TimeframePatternIntel {
@@ -104,6 +105,9 @@ interface EMACloudTrend {
   exhaustion: boolean;
   flip: boolean;
   volatilityRegime: 'low' | 'normal' | 'high';
+  phase?: 'separating' | 'rolling_over' | 'compressed' | 'aligned';
+  spreadPct?: number;
+  spreadChangePct?: number;
 }
 
 interface CorvonaLevels {
@@ -550,12 +554,12 @@ function FuturisticLineMeter({
   );
 }
 
-export function FusionPanel({ symbol }: FusionPanelProps) {
+export function FusionPanel({ symbol, timeframe }: FusionPanelProps) {
   const { data, isLoading, error, refetch } = useQuery<FusionSnapshot>({
-    queryKey: ['/api/fusion', symbol],
+    queryKey: ['/api/fusion', symbol, timeframe ?? "15m"],
     enabled: !!symbol,
     refetchInterval: 30000,
-    staleTime: 10000,
+    staleTime: 5000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false
   });

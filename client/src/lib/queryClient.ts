@@ -25,15 +25,27 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+const QUERY_TIMEOUT_MS = 30000;
+
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
-      credentials: "include",
-      cache: "no-store",
-    });
+  async ({ queryKey, signal }) => {
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]);
+    let res: Response;
+    try {
+      res = await fetch(queryKey.join("/") as string, {
+        credentials: "include",
+        cache: "no-store",
+        signal: requestSignal,
+      });
+    } catch (error) {
+      if (!signal.aborted && error instanceof DOMException && error.name === "TimeoutError") {
+        throw new Error(`Request ${String(queryKey[0])} is taking longer than 30 seconds. Try again.`);
+      }
+      throw error;
+    }
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;
@@ -50,7 +62,10 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: true,
       staleTime: 30000, // 30 seconds - data considered fresh
       gcTime: 60000, // 60 seconds - garbage collection time
-      retry: 1,
+      retry: (failureCount, error) => {
+        if (error instanceof Error && error.message.includes("taking longer than 30 seconds")) return false;
+        return failureCount < 1;
+      },
     },
     mutations: {
       retry: false,

@@ -158,6 +158,7 @@ function deriveLifecycle(
   const age = lastIdx - pattern.endIndex;
 
   if (age > 50) return 'expired';
+  if (pattern.endIndex >= lastIdx) return 'forming';
 
   if (invalidationLevel !== null) {
     const isBearishInvalidation = pattern.type === 'bullish'
@@ -1275,7 +1276,7 @@ function buildRoundedTopGeometry(ohlc: OHLC[], pattern: PatternResult, timeframe
 
   const quad = fitQuadraticDraw(sliceHighs);
 
-  const numSegs = Math.max(24, span * 2);
+  const numSegs = Math.min(28, Math.max(12, Math.ceil(span / 3)));
   const lines: GeometryLine[] = [];
 
   for (let k = 0; k < numSegs; k++) {
@@ -1325,7 +1326,7 @@ function buildRoundedBottomGeometry(ohlc: OHLC[], pattern: PatternResult, timefr
 
   const quad = fitQuadraticDraw(sliceLows);
 
-  const numSegs = Math.max(24, span * 2);
+  const numSegs = Math.min(28, Math.max(12, Math.ceil(span / 3)));
   const lines: GeometryLine[] = [];
 
   for (let k = 0; k < numSegs; k++) {
@@ -1354,6 +1355,109 @@ function buildRoundedBottomGeometry(ohlc: OHLC[], pattern: PatternResult, timefr
     lines,
     breakoutLevel: resistanceLevel,
     invalidationLevel: troughLow,
+  };
+}
+
+function buildDiamondTopGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
+  const start = pattern.startIndex;
+  const end = pattern.endIndex;
+  const span = end - start;
+  if (span < 6) return buildCandlestickGeometry(ohlc, pattern);
+
+  const middleStart = start + Math.max(1, Math.floor(span * 0.2));
+  const middleEnd = end - Math.max(1, Math.floor(span * 0.2));
+  const middle = ohlc.slice(middleStart, middleEnd + 1);
+  const peak = Math.max(...middle.map(candle => candle.high));
+  const trough = Math.min(...middle.map(candle => candle.low));
+  const peakIndex = middleStart + middle.findIndex(candle => candle.high === peak);
+  const troughIndex = middleStart + middle.findIndex(candle => candle.low === trough);
+  const leftIndex = start;
+  const rightIndex = end;
+  const leftPrice = (ohlc[leftIndex].high + ohlc[leftIndex].low) / 2;
+  const rightPrice = (ohlc[rightIndex].open + ohlc[rightIndex].close) / 2;
+
+  return {
+    points: [
+      { x: leftIndex, y: leftPrice, label: 'Expand' },
+      { x: peakIndex, y: peak, label: 'Top' },
+      { x: troughIndex, y: trough, label: 'Bottom' },
+      { x: rightIndex, y: rightPrice, label: 'Contract' },
+    ],
+    lines: [
+      { start: { x: leftIndex, y: leftPrice }, end: { x: peakIndex, y: peak }, style: 'solid' },
+      { start: { x: peakIndex, y: peak }, end: { x: rightIndex, y: rightPrice }, style: 'solid' },
+      { start: { x: leftIndex, y: leftPrice }, end: { x: troughIndex, y: trough }, style: 'solid' },
+      { start: { x: troughIndex, y: trough }, end: { x: rightIndex, y: rightPrice }, style: 'solid' },
+    ],
+    breakoutLevel: rightPrice,
+    invalidationLevel: pattern.type === 'bullish' ? trough : peak,
+  };
+}
+
+function buildRangeEventGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
+  const start = Math.max(0, pattern.startIndex);
+  const end = Math.min(pattern.endIndex, ohlc.length - 1);
+  const structureEnd = Math.max(start, end - 1);
+  const structure = ohlc.slice(start, structureEnd + 1);
+  if (!structure.length) return buildCandlestickGeometry(ohlc, pattern);
+
+  const rangeHigh = Math.max(...structure.map(candle => candle.high));
+  const rangeLow = Math.min(...structure.map(candle => candle.low));
+  const event = ohlc[end];
+  const lines: GeometryLine[] = [
+    { start: { x: start, y: rangeHigh }, end: { x: end, y: rangeHigh }, style: 'dashed' },
+    { start: { x: start, y: rangeLow }, end: { x: end, y: rangeLow }, style: 'dashed' },
+  ];
+  const points: GeometryPoint[] = [
+    { x: start, y: rangeHigh, label: 'R' },
+    { x: start, y: rangeLow, label: 'S' },
+    { x: end, y: event.close, label: pattern.name.toLowerCase().includes('fail') || pattern.name.toLowerCase().includes('trap') ? 'REJECT' : 'LIVE' },
+  ];
+
+  if (end > start) {
+    lines.push({
+      start: { x: structureEnd, y: pattern.type === 'bearish' ? rangeHigh : rangeLow },
+      end: { x: end, y: event.close },
+      style: 'solid',
+    });
+  }
+
+  return {
+    points,
+    lines,
+    breakoutLevel: pattern.type === 'bullish' ? rangeHigh : pattern.type === 'bearish' ? rangeLow : null,
+    invalidationLevel: pattern.type === 'bullish' ? rangeLow : pattern.type === 'bearish' ? rangeHigh : null,
+  };
+}
+
+function buildPivotReversalGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
+  const start = Math.max(0, pattern.startIndex);
+  const end = Math.min(pattern.endIndex, ohlc.length - 1);
+  const slice = ohlc.slice(start, end + 1);
+  if (slice.length < 3) return buildCandlestickGeometry(ohlc, pattern);
+  const bullish = pattern.type === 'bullish';
+  const extreme = bullish
+    ? Math.min(...slice.map(candle => candle.low))
+    : Math.max(...slice.map(candle => candle.high));
+  const pivotOffset = slice.findIndex(candle => (bullish ? candle.low : candle.high) === extreme);
+  const pivotIndex = start + pivotOffset;
+  const neckline = bullish
+    ? Math.max(...slice.map(candle => candle.high))
+    : Math.min(...slice.map(candle => candle.low));
+
+  return {
+    points: [
+      { x: start, y: ohlc[start].close, label: 'LEG 1' },
+      { x: pivotIndex, y: extreme, label: bullish ? 'LOW' : 'HIGH' },
+      { x: end, y: ohlc[end].close, label: 'LEG 2' },
+    ],
+    lines: [
+      { start: { x: start, y: ohlc[start].close }, end: { x: pivotIndex, y: extreme }, style: 'solid' },
+      { start: { x: pivotIndex, y: extreme }, end: { x: end, y: ohlc[end].close }, style: 'solid' },
+      { start: { x: start, y: neckline }, end: { x: end, y: neckline }, style: 'dashed' },
+    ],
+    breakoutLevel: neckline,
+    invalidationLevel: extreme,
   };
 }
 
@@ -1389,7 +1493,8 @@ function buildCandlestickGeometry(ohlc: OHLC[], pattern: PatternResult): Pattern
 
 const CANDLESTICK_PATTERN_NAMES = new Set([
   'hammer', 'hanging man', 'inverted hammer', 'shooting star',
-  'doji', 'dragonfly doji', 'gravestone doji',
+  'doji', 'standard doji', 'long-legged doji', 'dragonfly doji', 'gravestone doji',
+  'spinning top (bullish)', 'spinning top (bearish)',
   'bullish engulfing', 'bearish engulfing',
   'bullish harami', 'bearish harami',
   'morning star', 'evening star',
@@ -1400,12 +1505,31 @@ const CANDLESTICK_PATTERN_NAMES = new Set([
   'bullish belt hold', 'bearish belt hold',
   'bullish abandoned baby', 'bearish abandoned baby',
   'bullish tri-star doji', 'bearish tri-star doji',
-  'piercing pattern', 'dark cloud cover',
+  'piercing pattern', 'piercing line', 'dark cloud cover',
   'tweezer top', 'tweezer bottom',
+  'homing pigeon', 'matching low', 'matching high',
+  'stick sandwich (bullish)', 'stick sandwich (bearish)',
+  'deliberation pattern', 'concealing baby swallow',
+  'three stars in the south', 'tower bottom', 'tower top',
+  'ladder bottom', 'ladder top',
+  'rising three methods', 'falling three methods',
+  'upside tasuki', 'downside tasuki',
+  'separating lines (bullish)', 'separating lines (bearish)',
+  'bullish marubozu', 'bearish marubozu',
+]);
+
+const GAP_SEQUENCE_PATTERN_NAMES = new Set([
+  'breakaway (bullish)', 'breakaway (bearish)',
+  'tasuki gap (bullish)', 'tasuki gap (bearish)',
+  'upside gap two crows', 'downside gap three methods',
+  'side-by-side white lines', 'side-by-side black lines',
 ]);
 
 function isCandlestickPattern(name: string): boolean {
-  return CANDLESTICK_PATTERN_NAMES.has(name.toLowerCase());
+  const normalizedName = name.toLowerCase().replace(/\s*\(forming\)$/, '');
+  return CANDLESTICK_PATTERN_NAMES.has(normalizedName)
+    || normalizedName === 'bullish wick rejection'
+    || normalizedName === 'bearish wick rejection';
 }
 
 function buildCandlestickMarkerGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
@@ -1423,7 +1547,7 @@ function buildCandlestickMarkerGeometry(ohlc: OHLC[], pattern: PatternResult): P
   const markerY = isBullish ? signalCandle.low : signalCandle.high;
   const arrowTipY = isBullish ? rangeLow : rangeHigh;
 
-  const name = pattern.name.toLowerCase();
+  const name = pattern.name.toLowerCase().replace(/\s*\(forming\)$/, '');
   let label = pattern.name;
   if (name === 'bullish engulfing' || name === 'bearish engulfing') label = 'Engulfing';
   else if (name === 'bullish harami' || name === 'bearish harami') label = 'Harami';
@@ -1444,9 +1568,23 @@ function buildCandlestickMarkerGeometry(ohlc: OHLC[], pattern: PatternResult): P
     points.push({ x: i, y: isBullish ? ohlc[i].low : ohlc[i].high, label: '' });
   }
 
+  const boundaryStart = Math.max(0, s - 0.4);
+  const boundaryEnd = Math.min(ohlc.length - 1, e + 0.4);
+
   return {
     points,
-    lines: [],
+    lines: [
+      {
+        start: { x: boundaryStart, y: rangeHigh },
+        end: { x: boundaryEnd, y: rangeHigh },
+        style: 'dashed',
+      },
+      {
+        start: { x: boundaryStart, y: rangeLow },
+        end: { x: boundaryEnd, y: rangeLow },
+        style: 'dashed',
+      },
+    ],
     breakoutLevel: isBullish ? rangeHigh : rangeLow,
     invalidationLevel: isBullish ? rangeLow : rangeHigh,
   };
@@ -1853,6 +1991,46 @@ function buildGapGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry
   };
 }
 
+function buildGapSequenceGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
+  const start = pattern.startIndex;
+  const end = pattern.endIndex;
+  const lines: GeometryLine[] = [];
+  const points: GeometryPoint[] = [];
+
+  for (let index = start + 1; index <= end; index++) {
+    const previous = ohlc[index - 1];
+    const current = ohlc[index];
+    let gapTop: number | null = null;
+    let gapBottom: number | null = null;
+
+    if (current.low > previous.high) {
+      gapTop = current.low;
+      gapBottom = previous.high;
+    } else if (current.high < previous.low) {
+      gapTop = previous.low;
+      gapBottom = current.high;
+    }
+
+    if (gapTop === null || gapBottom === null) continue;
+    const extension = Math.min(end + 3, ohlc.length - 1);
+    lines.push(
+      { start: { x: index - 1, y: gapTop }, end: { x: extension, y: gapTop }, style: 'dashed' },
+      { start: { x: index - 1, y: gapBottom }, end: { x: extension, y: gapBottom }, style: 'dashed' },
+    );
+    points.push({ x: index, y: (gapTop + gapBottom) / 2, label: 'Gap' });
+  }
+
+  if (lines.length === 0) return buildCandlestickMarkerGeometry(ohlc, pattern);
+  const rangeHigh = Math.max(...ohlc.slice(start, end + 1).map(candle => candle.high));
+  const rangeLow = Math.min(...ohlc.slice(start, end + 1).map(candle => candle.low));
+  return {
+    points,
+    lines,
+    breakoutLevel: pattern.type === 'bullish' ? rangeHigh : rangeLow,
+    invalidationLevel: pattern.type === 'bullish' ? rangeLow : rangeHigh,
+  };
+}
+
 function buildSwingFailureGeometry(ohlc: OHLC[], pattern: PatternResult): PatternGeometry {
   const e = pattern.endIndex;
   const s = pattern.startIndex;
@@ -1931,12 +2109,16 @@ function buildSpinningTopDojiGeometry(ohlc: OHLC[], pattern: PatternResult): Pat
 function buildGeometryForPattern(ohlc: OHLC[], pattern: PatternResult, timeframe = "5m"): PatternGeometry {
   const name = pattern.name.toLowerCase();
 
+  if (name.includes('diamond top') || name.includes('diamond bottom')) return buildDiamondTopGeometry(ohlc, pattern);
+  if (GAP_SEQUENCE_PATTERN_NAMES.has(name)) return buildGapSequenceGeometry(ohlc, pattern);
   if (isCandlestickPattern(name)) return buildCandlestickMarkerGeometry(ohlc, pattern);
 
   if (name.includes('order block')) return buildOrderBlockGeometry(ohlc, pattern);
   if (name.includes('breaker block')) return buildBreakerBlockGeometry(ohlc, pattern);
 
-  if (name.includes('liquidity sweep') || name.includes('liquidity grab')) return buildLiquiditySweepGeometry(ohlc, pattern);
+  if (name.includes('liquidity sweep') || name.includes('liquidity grab') || name.includes('stop hunt') ||
+      name.includes('stop-hunt') || name.includes('stop-run') || name.includes('equal highs sweep') ||
+      name.includes('equal lows sweep')) return buildLiquiditySweepGeometry(ohlc, pattern);
 
   if (name.includes('bos') && !name.includes('broadening')) return buildBOSCHOCHGeometry(ohlc, pattern);
   if (name.includes('choch') || name.includes('change of character')) return buildBOSCHOCHGeometry(ohlc, pattern);
@@ -1944,7 +2126,7 @@ function buildGeometryForPattern(ohlc: OHLC[], pattern: PatternResult, timeframe
   if (name.includes('higher high') || name.includes('lower high') ||
       name.includes('higher low') || name.includes('lower low')) return buildSwingPointGeometry(ohlc, pattern);
 
-  if (name.includes('volume climax')) return buildVolumeClimaxGeometry(ohlc, pattern);
+  if (name.includes('volume climax') || name.includes('climax volume')) return buildVolumeClimaxGeometry(ohlc, pattern);
   if (name.includes('ema compression')) return buildEMACompressionGeometry(ohlc, pattern);
   if (name.includes('vwap reversal')) return buildVWAPReversalGeometry(ohlc, pattern);
 
@@ -1960,20 +2142,28 @@ function buildGeometryForPattern(ohlc: OHLC[], pattern: PatternResult, timeframe
   if (name === 'nr7') return buildNR7Geometry(ohlc, pattern);
   if (name.includes('volatility squeeze')) return buildVolatilitySqueezeGeometry(ohlc, pattern);
 
-  if (name.includes('triple top')) return buildTripleTopGeometry(ohlc, pattern, timeframe);
+  if (name.includes('triple top') || name === 'three mountains') return buildTripleTopGeometry(ohlc, pattern, timeframe);
   if (name.includes('triple bottom')) return buildTripleBottomGeometry(ohlc, pattern, timeframe);
   if (name.includes('double top')) return buildDoubleTopGeometry(ohlc, pattern, timeframe);
   if (name.includes('double bottom')) return buildDoubleBottomGeometry(ohlc, pattern, timeframe);
-  if (name.includes('head and shoulders') && !name.includes('inverse')) return buildHeadAndShouldersGeometry(ohlc, pattern, timeframe);
+  if ((name.includes('head and shoulders') || name.includes('head & shoulders')) && !name.includes('inverse')) return buildHeadAndShouldersGeometry(ohlc, pattern, timeframe);
   if (name.includes('inverse head')) return buildInverseHeadAndShouldersGeometry(ohlc, pattern, timeframe);
   if (name.includes('flag') || name.includes('pennant')) return buildFlagGeometry(ohlc, pattern, timeframe);
 
-  if (name.includes('rounded top')) return buildRoundedTopGeometry(ohlc, pattern, timeframe);
-  if (name.includes('rounded bottom')) return buildRoundedBottomGeometry(ohlc, pattern, timeframe);
+  if (name.includes('rounded top') || name.includes('rounding top')) return buildRoundedTopGeometry(ohlc, pattern, timeframe);
+  if (name.includes('rounded bottom') || name.includes('rounding bottom')) return buildRoundedBottomGeometry(ohlc, pattern, timeframe);
+  if (name.includes('adam & eve') || name === 'v-top' || name === 'v-bottom') return buildPivotReversalGeometry(ohlc, pattern);
 
   if (name.includes('wedge') || name.includes('triangle') || name.includes('channel') ||
       name.includes('cup') || name.includes('broadening') || name.includes('megaphone')) {
     return buildTwoTrendlineGeometry(ohlc, pattern, 5, timeframe);
+  }
+
+  if (name.includes('range') || name.includes('rectangle') || name.includes('breakout') ||
+      name.includes('breakdown') || name.includes('trap move') || name.includes('volatility') ||
+      name.includes('atr ') || name.includes('bollinger') || name.includes('keltner') ||
+      name.includes('donchian') || name.includes('volume divergence') || name.includes('volume exhaustion')) {
+    return buildRangeEventGeometry(ohlc, pattern);
   }
 
   return buildCandlestickGeometry(ohlc, pattern);

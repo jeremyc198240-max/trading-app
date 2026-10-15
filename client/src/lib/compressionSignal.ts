@@ -4,6 +4,7 @@ export interface CompressionSignalInput {
   bbSqueeze?: boolean;
   rangeCompression?: number | null;
   atrPercent?: number | null;
+  preMovePressure?: number | null;
   previousState?: CompressionState;
 }
 
@@ -63,10 +64,19 @@ export function deriveCompressionSignal(input: CompressionSignalInput): Compress
     : 10;
 
   const bbScore = input.bbSqueeze ? 20 : 0;
-  const score = Math.round(clamp(rangeTightnessScore + atrCompressionScore + bbScore, 0, 100));
+  const pressureScore = Number.isFinite(input.preMovePressure)
+    ? clamp(Number(input.preMovePressure), 0, 100)
+    : 0;
+  const pressureContribution = Number.isFinite(input.preMovePressure)
+    ? pressureScore * 0.15
+    : 0;
+  const score = Math.round(clamp(rangeTightnessScore + atrCompressionScore + bbScore + pressureContribution, 0, 100));
 
   const reasons: string[] = [];
   if (input.bbSqueeze) reasons.push("Bollinger squeeze active");
+  if (Number.isFinite(input.preMovePressure) && pressureScore >= 55) {
+    reasons.push(`Pre-move pressure building (${Math.round(pressureScore)}%)`);
+  }
 
   if (Number.isFinite(normalizedRange)) {
     const rangePct = Math.round(normalizedRange * 100);

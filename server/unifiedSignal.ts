@@ -757,8 +757,12 @@ function normalizeInputs(params: {
     const dir = snapshot.emaTrend.direction === 'bullish' ? 'call' : 'put';
     const strength = Math.min(snapshot.emaTrend.strength / 20, 1);
     
-    // Check if reversal is active - if so, reduce EMA weight significantly
-    const hasActiveReversal = snapshot.reversalSignal?.reversalSignal === true;
+    // A bounce opposite a confirmed EMA hold is a pullback, not a reason to discard trend.
+    const reversalDirection = snapshot.reversalSignal?.reversalDirection;
+    const reversalOpposesConfirmedEmaHold = snapshot.emaTrend?.holdConfirmed &&
+      ((snapshot.emaTrend.direction === 'bullish' && reversalDirection === 'down') ||
+        (snapshot.emaTrend.direction === 'bearish' && reversalDirection === 'up'));
+    const hasActiveReversal = snapshot.reversalSignal?.reversalSignal === true && !reversalOpposesConfirmedEmaHold;
     const baseWeight = 0.25;
     const adjustedWeight = hasActiveReversal ? 0.08 : baseWeight; // Reduce to 0.08 during reversals
     
@@ -848,21 +852,31 @@ function normalizeInputs(params: {
     const dir = snapshot.reversalSignal.reversalDirection === 'up' ? 'call' : 
                 snapshot.reversalSignal.reversalDirection === 'down' ? 'put' : 'neutral';
     if (dir !== 'neutral') {
-      // Boost weight significantly - bounces need to override lagging indicators
-      const baseWeight = 0.50; // Very high base weight for reversal
-      const confBoost = snapshot.reversalSignal.reversalConfidence / 100; // Extra boost from confidence
-      
-      signals.push({
-        source: 'bounce_reversal',
-        direction: dir,
-        weight: baseWeight + confBoost * 0.3, // 0.50 - 0.80 weight range
-        confidence: Math.max(0.5, snapshot.reversalSignal.reversalConfidence / 100 + 0.3), // Boost confidence
-        timeframe: '5m',
-        reason: `🔄 BOUNCE: ${snapshot.reversalSignal.reversalType} (${snapshot.reversalSignal.reversalConfidence}%)`,
-        isTrendAligned: false,
-        isReversal: true,
-        isConfirmed: true // Always confirmed for immediate action
-      });
+      const emaDirection = snapshot.emaTrend?.direction;
+      const alignsWithEmaHold = snapshot.emaTrend?.holdConfirmed &&
+        ((dir === 'call' && emaDirection === 'bullish') || (dir === 'put' && emaDirection === 'bearish'));
+      const opposesEmaHold = snapshot.emaTrend?.holdConfirmed &&
+        ((dir === 'call' && emaDirection === 'bearish') || (dir === 'put' && emaDirection === 'bullish'));
+
+      // A two-candle EMA hold rejects a single counter-trend bounce/rejection. It must not
+      // re-enter fusion as an immediately confirmed option signal.
+      if (!opposesEmaHold) {
+        const confidence = snapshot.reversalSignal.reversalConfidence / 100;
+        const baseWeight = alignsWithEmaHold ? 0.42 : 0.25;
+        const confWeight = alignsWithEmaHold ? 0.18 : 0.12;
+        
+        signals.push({
+          source: 'bounce_reversal',
+          direction: dir,
+          weight: baseWeight + confidence * confWeight,
+          confidence,
+          timeframe: '5m',
+          reason: `🔄 BOUNCE: ${snapshot.reversalSignal.reversalType} (${snapshot.reversalSignal.reversalConfidence}%)${alignsWithEmaHold ? ' [EMA HOLD]' : ''}`,
+          isTrendAligned: alignsWithEmaHold,
+          isReversal: true,
+          isConfirmed: alignsWithEmaHold || snapshot.reversalSignal.reversalConfidence >= 70
+        });
+      }
     }
   }
   
@@ -1670,8 +1684,8 @@ export function computeUnifiedSignal(params: {
   }
 
   const pushAgainstSignal =
-    (safeDirection === 'CALL' && priceActionSafety.momentumDirection === 'bearish' && priceActionSafety.momentumStrength >= 0.45) ||
-    (safeDirection === 'PUT' && priceActionSafety.momentumDirection === 'bullish' && priceActionSafety.momentumStrength >= 0.45);
+    (safeDirection === 'CALL' && priceActionSafety.momentumDirection === 'bearish' && priceActionSafety.momentumStrength >= 45) ||
+    (safeDirection === 'PUT' && priceActionSafety.momentumDirection === 'bullish' && priceActionSafety.momentumStrength >= 45);
 
   if (pushAgainstSignal) {
     safeDirection = 'WAIT';
@@ -1681,6 +1695,26 @@ export function computeUnifiedSignal(params: {
     reasons.push({
       label: `Intraday push mismatch: momentum ${priceActionSafety.momentumDirection} contradicts ${fusionResult.direction}`,
       weight: 0.85,
+      impact: 'risk'
+    });
+  }
+
+  const priceActionCandles = recentOhlc ?? [];
+  const priorClosedPrice = priceActionCandles.at(-2)?.close;
+  const latestObservedPrice = Number.isFinite(currentPrice) && currentPrice > 0
+    ? currentPrice
+    : priceActionCandles.at(-1)?.close;
+  const putHasDownwardConfirmation = Number.isFinite(priorClosedPrice) && Number.isFinite(latestObservedPrice) &&
+    Number(latestObservedPrice) < Number(priorClosedPrice);
+
+  if (safeDirection === 'PUT' && !putHasDownwardConfirmation) {
+    safeDirection = 'WAIT';
+    safeConfidence = Math.min(safeConfidence, 35);
+    state = 'STALE';
+    recommendedAction = 'PRICE ACTION SAFETY: PUT requires live price below the prior closed candle. Wait for price to turn down.';
+    reasons.push({
+      label: 'PUT blocked: price is not moving down versus the prior closed candle',
+      weight: 0.95,
       impact: 'risk'
     });
   }
@@ -1724,6 +1758,12 @@ export function computeUnifiedSignal(params: {
 
   let finalDirection = memorySmoothing.smoothedDirection;
 
+  // A live safety veto must remain terminal for this cycle; smoothing only
+  // prevents display flicker and cannot revive an invalidated direction.
+  if (safeDirection === 'WAIT') {
+    finalDirection = 'WAIT';
+  }
+
   // A prior directional reading must never revive an entry after the current fusion gate blocks it.
   // Memory smoothing is for display stability, not permission to bypass live risk controls.
   if (!gatingState.metaAllowed) {
@@ -1754,7 +1794,7 @@ export function computeUnifiedSignal(params: {
     return (stopLossValue as number) > entryPrice && targetValues.every((target) => target < entryPrice);
   };
 
-  const expansionDetected = breakoutTriggered && breakoutBias !== 'WAIT';
+  const expansionDetected = safeDirection !== 'WAIT' && breakoutTriggered && breakoutBias !== 'WAIT';
   if (expansionDetected) {
     finalDirection = breakoutBias;
     if (state !== 'INACTIVE') {

@@ -938,6 +938,1630 @@
 			"problemMatcher": [
 				"$tsc"
 			]
+		},
+		{
+			"label": "tune-spy-30d-scalper",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts SPY 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "tune-spy-30d-scalper-incremental",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts SPY 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "tune-spy-30d-breakout-acceptance",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts SPY 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "tune-qqq-30d-breakout-acceptance",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts QQQ 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "tune-spy-30d-directional",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts SPY 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "tune-qqq-30d-directional",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\tuneHistoricalScalper.ts QQQ 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-historical-calibration",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "volume-diagnostic-all-tickers-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diagnostic-all-tickers-30d-retry",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diagnostic-all-tickers-30d-checkpoint",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-aapl-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 AAPL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-msft-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-googl-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 GOOGL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-amzn-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 AMZN"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-tsla-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-nvda-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-gld-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-after-volume-diagnostic",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-tsla-merge-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-nvda-merge-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-gld-merge-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-nvda-final-merge",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "mine-repeated-algo-patterns",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\mineRepeatedAlgoPatterns.ts 8"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-after-repeat-mine",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-after-repeated-policy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "volume-diag-all-tickers-full-rerun",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "summarize-volume-diag-results",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"node -e \"const fs=require('fs');const p='logs/volume_diagnostic_30d.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const rows=j.allRows||[];const sy=[...new Set(rows.map(r=>r.symbol))];const pf=[...new Set(rows.map(r=>r.profile))];const best=sy.map(s=>{const r=rows.filter(x=>x.symbol===s);r.sort((a,b)=>b.profitFactor-a.profitFactor||b.expectancy-a.expectancy||b.winRate-a.winRate);const b=r[0];const base=r.find(x=>x.profile==='baseline_v1.04');return {symbol:s,bestProfile:b.profile,bestPF:b.profitFactor,bestWR:b.winRate,bestTrades:b.trades,baselinePF:base?.profitFactor,baselineWR:base?.winRate,deltaPF:base?Number((b.profitFactor-base.profitFactor).toFixed(2)):null,deltaWR:base?Number((b.winRate-base.winRate).toFixed(1)):null};});const agg=pf.map(name=>{const r=rows.filter(x=>x.profile===name);const t=r.reduce((s,x)=>s+x.trades,0);const w=t?r.reduce((s,x)=>s+x.winRate*x.trades,0)/t:0;const e=t?r.reduce((s,x)=>s+x.expectancy*x.trades,0)/t:0;const prof=r.filter(x=>x.profitFactor>=1.0).length;return {profile:name,totalTrades:t,weightedWinRate:Number(w.toFixed(1)),weightedExpectancy:Number(e.toFixed(2)),symbolsPFge1:prof};});console.log('BEST_JSON_START');console.log(JSON.stringify(best,null,2));console.log('BEST_JSON_END');console.log('AGG_JSON_START');console.log(JSON.stringify(agg,null,2));console.log('AGG_JSON_END');\""
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "summarize-volume-diag-script",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\summarizeVolumeDiag.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-after-all-ticker-tests",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-warroom-liquidity-magnet",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "test-now-types",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "test-now-repeated-patterns",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\mineRepeatedAlgoPatterns.ts 8"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "test-now-all-tickers",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\volumeDiagnosticAllTickers.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "test-now-summary",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\summarizeVolumeDiag.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-shadow-gauge",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-six-gauges-shadow",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-shadow-ignition-match",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-final-top-row-rhythm",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-option-ignition-overflow-fix",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-execution-restructure-jsx",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-execution-controls-style",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-backtest-window",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-selective-walk-forward",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-scalper-30d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 30"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-walk-forward-checkpoint",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 30 AAPL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-css-fix-types",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-msft-resume",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 30 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-msft-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 30 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-tsla-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 30 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-aapl-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 AAPL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-msft-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-tsla-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-remaining-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 SPY,QQQ,GOOGL,AMZN,NVDA,GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-googl-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 GOOGL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-amzn-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 AMZN"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-nvda-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "validate-selective-gld-60d",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\validateSelectiveScalper.ts 60 GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "final-selective-typecheck",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "final-selective-build",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "final-selective-change-inventory",
+			"type": "shell",
+			"command": "git",
+			"args": [
+				"status",
+				"--short"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-prospective-selector",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 SPY"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-spy-retry",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 SPY"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-remaining",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 QQQ,AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 AAPL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-msft",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-googl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 GOOGL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-amzn",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 AMZN"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-tsla",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-nvda",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-gld",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 GLD"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-tsla-retry",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "freeze-prospective-nvda-retry",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-prospective-freeze-guard",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "verify-prospective-freeze-lock",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts freeze 60 SPY"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-prospective-baseline",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run backtest:selective:prospective"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-prospective-baseline-retry",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run backtest:selective:prospective"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-prospective-checkpoint-code",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "prospective-baseline-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts check 60 QQQ"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "prospective-baseline-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts check 60 AAPL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "prospective-baseline-msft",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts check 60 MSFT"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "prospective-baseline-tsla",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts check 60 TSLA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "prospective-baseline-nvda",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\prospectiveSelectiveScalper.ts check 60 NVDA"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "final-prospective-typecheck",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "final-prospective-build",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "verify-0dte-proxy-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx server\\historicalBacktestCli.ts AAPL 5m 10"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-0dte-proxy-aapl-short",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx server\\historicalBacktestCli.ts AAPL 5m 3"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-0dte-model-unit",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run backtest:0dte:verify-model"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "typecheck-0dte-model",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "smoke-0dte-real-candles",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx server\\historicalBacktestCli.ts AAPL 5m 3"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-listed-strike-0dte-model",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run backtest:0dte:verify-model"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "final-0dte-typecheck",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "final-0dte-build",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run build"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "real-candle-0dte-smoke-final",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx server\\historicalBacktestCli.ts QQQ 5m 3"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "verify-0dte-labels",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "analyze-session-top-moves",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npm run analyze:session-top-moves"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-nine-symbol-snapshots",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "check-intake-top-moves",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 SPY 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 QQQ 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 AAPL 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-msft",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 MSFT 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-googl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 GOOGL 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-amzn",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 AMZN 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-tsla",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 TSLA 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-nvda",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 NVDA 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-intake-top-moves-gld",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 GLD 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-premium-top-move-analysis",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-spy",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 SPY 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-qqq",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 QQQ 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-aapl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 AAPL 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-msft",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 MSFT 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-googl",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 GOOGL 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-amzn",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 AMZN 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-tsla",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 TSLA 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "refresh-premium-analysis-nvda",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 NVDA 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-nonoverlap-policy-analysis",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "rebuild-nonoverlap-report",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 SPY 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "rebuild-structural-policy-report",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzeIntakeTopMoves.ts 30 GLD 3 6 55"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "check-structural-primed-gate",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsc --noEmit --pretty false"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "run-5m-0dte-half-list-discovery",
+			"type": "shell",
+			"command": "C:\\Program Files\\nodejs\\node.exe",
+			"args": [
+				".\\node_modules\\tsx\\dist\\cli.mjs",
+				".\\script\\discoverFiveMinuteBreakouts.ts",
+				"30",
+				"SPY,QQQ,AAPL,MSFT,GOOGL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "run-1m-ignition-5m-0dte-half-list",
+			"type": "shell",
+			"command": "C:\\Program Files\\nodejs\\node.exe",
+			"args": [
+				".\\node_modules\\tsx\\dist\\cli.mjs",
+				".\\script\\discoverMicroBreakouts.ts",
+				"7",
+				"SPY,QQQ,AAPL,MSFT,GOOGL"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "analyze-position-manager-black-box",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzePositionManagerLogs.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "analyze-position-manager-cross-logs",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/d",
+				"/c",
+				"npx tsx script\\analyzePositionManagerCrossLogs.ts"
+			],
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

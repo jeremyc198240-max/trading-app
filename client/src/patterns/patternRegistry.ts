@@ -1,4 +1,5 @@
 import type { OHLC, DrawablePattern } from "@shared/schema";
+import { PATTERN_REGISTRY } from "@shared/patternRegistry";
 import {
   buildSMCOrderBlock,
   buildSMCBreakerBlock,
@@ -56,7 +57,63 @@ function buildRoundedBottomGeometry(_ohlc: OHLC[], pattern: DrawablePattern): Dr
   return pattern.geometry ?? null;
 }
 
+function buildServerGeometry(_ohlc: OHLC[], pattern: DrawablePattern): DrawablePattern["geometry"] | null {
+  return pattern.geometry ?? null;
+}
+
+const chartCandlestickNames = [
+  "Hammer", "Inverted Hammer", "Shooting Star", "Hanging Man",
+  "Bullish Belt Hold", "Bearish Belt Hold", "Long-Legged Doji", "Dragonfly Doji",
+  "Gravestone Doji", "Standard Doji", "Spinning Top (Bullish)", "Spinning Top (Bearish)",
+  "Bullish Engulfing", "Bearish Engulfing", "Piercing Line", "Dark Cloud Cover",
+  "Bullish Harami", "Bearish Harami", "Tweezer Bottom", "Tweezer Top", "Homing Pigeon",
+  "Bullish Kicker", "Bearish Kicker", "Three Inside Up", "Three Inside Down",
+  "Three Outside Up", "Three Outside Down", "Morning Star", "Evening Star",
+  "Three White Soldiers", "Three Black Crows", "Bullish Abandoned Baby", "Bearish Abandoned Baby",
+  "Bullish Tri-Star Doji", "Bearish Tri-Star Doji", "Deliberation Pattern", "Concealing Baby Swallow",
+  "Breakaway (Bullish)", "Breakaway (Bearish)", "Tasuki Gap (Bullish)", "Tasuki Gap (Bearish)",
+  "Upside Gap Two Crows", "Downside Gap Three Methods", "Side-by-Side White Lines", "Side-by-Side Black Lines",
+  "Three Stars in the South", "Three Mountains", "Tower Bottom", "Tower Top", "Ladder Bottom", "Ladder Top",
+  "Matching Low", "Matching High", "Stick Sandwich (Bullish)", "Stick Sandwich (Bearish)",
+  "Rising Three Methods", "Falling Three Methods", "Upside Tasuki", "Downside Tasuki",
+  "Separating Lines (Bullish)", "Separating Lines (Bearish)", "Bullish Marubozu", "Bearish Marubozu",
+] as const;
+
+const chartCandlestickRegistry = Object.fromEntries(
+  chartCandlestickNames.map(name => [name, {
+    name,
+    category: "Candlestick",
+    geometryBuilder: buildServerGeometry,
+    showOnChart: true,
+  }]),
+) as Record<string, PatternRegistryEntry>;
+
+const sharedChartRegistry = Object.fromEntries(
+  Object.values(PATTERN_REGISTRY)
+    .filter(entry => entry.showOnChart)
+    .map(entry => [entry.name, {
+      name: entry.name,
+      category: entry.category,
+      geometryBuilder: buildServerGeometry,
+      showOnChart: true,
+    }]),
+) as Record<string, PatternRegistryEntry>;
+
 export const patternRegistry: Record<string, PatternRegistryEntry> = {
+  ...sharedChartRegistry,
+  ...chartCandlestickRegistry,
+  "Diamond Top": {
+    name: "Diamond Top",
+    category: "Classical",
+    geometryBuilder: buildServerGeometry,
+    showOnChart: true,
+  },
+  "Diamond Top (forming)": {
+    name: "Diamond Top (forming)",
+    category: "Classical",
+    geometryBuilder: buildServerGeometry,
+    showOnChart: true,
+  },
   "Rising Wedge": {
     name: "Rising Wedge",
     category: "Classical",

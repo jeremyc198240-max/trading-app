@@ -935,7 +935,21 @@ function shouldForceExecuteMode(input: BreakoutAlertInput, direction: BreakoutDi
     setupScore >= 85 &&
     (setupEtaMinutes == null || setupEtaMinutes <= 6);
 
-  return triggeredOverride || primedOverride;
+  const setupTraits = new Set((input.preBreakoutSetup?.traits ?? []).map((trait) => String(trait).toUpperCase()));
+  const repeatCompressionOverride =
+    stateRank >= edgeStateRank("PRIMED") &&
+    avgAdx >= 22 &&
+    confidence >= 72 &&
+    probability >= 60 &&
+    edgeScore >= 72 &&
+    leadMinutes <= 10 &&
+    setupScore >= 78 &&
+    (setupEtaMinutes == null || setupEtaMinutes <= 10) &&
+    input.warnings?.some((warning) => String(warning).toUpperCase() === "REPEAT_SETUP_PATTERN") === true &&
+    setupTraits.has("PRE_RANGE_COMPRESSION") &&
+    setupTraits.has("MTF_ALIGNMENT");
+
+  return triggeredOverride || primedOverride || repeatCompressionOverride;
 }
 
 function normalizeOptionsReadiness(
@@ -993,8 +1007,9 @@ function toDirection(input: BreakoutAlertInput): BreakoutDirection {
     if (input.expansionDirection === "bullish") return "bullish";
     if (input.expansionDirection === "bearish") return "bearish";
     const momentum = parseNum(input.momentumStrength, 0);
-    if (momentum >= 0) return "bullish";
-    return "bearish";
+    if (momentum >= 8) return "bullish";
+    if (momentum <= -8) return "bearish";
+    return "neutral";
   }
 
   const edgeDirection = input.edgeEngine?.direction;
@@ -1152,17 +1167,18 @@ function isStrongExecuteCandidate(input: BreakoutAlertInput, direction: Breakout
 
   return (
     stateRank >= edgeStateRank("PRIMED") &&
-    edgeConfidence >= 62 &&
-    edgeProbability >= 36 &&
-    edgeLead <= 15 &&
-    (stackAgreement >= 75 || breakoutScore >= 40 || momentumAbs >= 28 || signal === "BREAKOUT" || signal === "BREAKDOWN" || signal === "EXPANSION" || signal === "MOMENTUM")
+    edgeScore >= 72 &&
+    edgeConfidence >= 70 &&
+    edgeProbability >= 60 &&
+    edgeLead <= 10 &&
+    (stackAgreement >= 75 || breakoutScore >= 60 || momentumAbs >= 40 || signal === "BREAKOUT" || signal === "BREAKDOWN")
   ) || (
     stateRank >= edgeStateRank("ARMING") &&
-    edgeScore >= 72 &&
-    edgeConfidence >= 68 &&
-    edgeProbability >= 44 &&
-    momentumAbs >= 26 &&
-    (breakoutScore >= 36 || stackAgreement >= 85)
+    edgeScore >= 78 &&
+    edgeConfidence >= 76 &&
+    edgeProbability >= 65 &&
+    momentumAbs >= 32 &&
+    (breakoutScore >= 48 || stackAgreement >= 85)
   );
 }
 

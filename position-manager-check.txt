@@ -1,0 +1,16 @@
+
+> rest-express@1.0.0 check
+> tsc
+
+client/src/components/WarRoomCommandDeck.tsx(1341,103): error TS18048: 'level' is possibly 'undefined'.
+client/src/components/WarRoomCommandDeck.tsx(1341,130): error TS18048: 'level' is possibly 'undefined'.
+client/src/components/WarRoomCommandDeck.tsx(1353,103): error TS18048: 'level' is possibly 'undefined'.
+client/src/components/WarRoomCommandDeck.tsx(1353,130): error TS18048: 'level' is possibly 'undefined'.
+client/src/components/WarRoomCommandDeck.tsx(2017,62): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number | undefined'.
+  Type 'null' is not assignable to type 'number | undefined'.
+client/src/components/WarRoomCommandDeck.tsx(2018,61): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number | undefined'.
+  Type 'null' is not assignable to type 'number | undefined'.
+client/src/components/WarRoomCommandDeck.tsx(2019,65): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number | undefined'.
+  Type 'null' is not assignable to type 'number | undefined'.
+client/src/components/WarRoomCommandDeck.tsx(2020,65): error TS2345: Argument of type 'number | null' is not assignable to parameter of type 'number | undefined'.
+  Type 'null' is not assignable to type 'number | undefined'.

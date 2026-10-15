@@ -31,6 +31,151 @@ export const UI_CATEGORY_COLORS: Record<UIPatternCategory, string> = {
   sequence: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
 };
 
+const bullishTwoCandleReversalNames = [
+  'Bullish Engulfing', 'Bullish Harami', 'Bullish Harami Cross',
+  'Piercing Line (Piercing Pattern)', 'Tweezer Bottom', 'Bullish Kicker',
+  'Matching Low', 'Homing Pigeon', 'Bullish Counterattack', 'Bullish Meeting Lines',
+  'Bullish Separating Lines', 'Stick Sandwich', 'Bullish Belt Hold Pair',
+  'On-Neck Pattern (weak bullish reversal candidate)', 'In-Neck Pattern (weak bullish reversal candidate)',
+  'Thrusting Pattern (bullish variation)',
+] as const;
+
+const bearishTwoCandleReversalNames = [
+  'Bearish Engulfing', 'Bearish Harami', 'Bearish Harami Cross',
+  'Dark Cloud Cover', 'Tweezer Top', 'Bearish Kicker', 'Matching High',
+  'Descending Hawk', 'Bearish Counterattack', 'Bearish Meeting Lines',
+  'Bearish Separating Lines', 'Bearish Belt Hold Pair', 'Delayed Dark Cloud Cover',
+  'Bearish Neckline Pattern', 'Bearish Thrusting Variation', 'Bearish On-Neck Variation',
+] as const;
+
+const gapTwoCandleReversalNames = [
+  'Bullish Gap Reversal', 'Bearish Gap Reversal',
+  'Island Reversal Bottom (2-candle interpretation)', 'Island Reversal Top (2-candle interpretation)',
+  'Bullish Window Reversal', 'Bearish Window Reversal',
+] as const;
+
+const rareTwoCandleReversalNames = [
+  'Matching Low Plus Confirmation', 'Matching High Plus Confirmation',
+  'Last Engulfing Bottom', 'Last Engulfing Top', 'Doji Star Bottom', 'Doji Star Top',
+  'Bullish Tasuki Reversal', 'Bearish Tasuki Reversal',
+] as const;
+
+export const TWO_CANDLE_REVERSAL_PATTERN_NAMES = [
+  ...bullishTwoCandleReversalNames,
+  ...bearishTwoCandleReversalNames,
+  ...gapTwoCandleReversalNames,
+  ...rareTwoCandleReversalNames,
+] as const;
+
+const requestedChartPatterns: Array<{
+  name: string;
+  category: UIPatternCategory;
+  backendCategory: BackendPatternCategory;
+  direction: 'bullish' | 'bearish' | 'neutral';
+}> = [
+  { name: 'Diamond Top', category: 'classical', backendCategory: 'reversal', direction: 'bearish' },
+  { name: 'Diamond Top (forming)', category: 'classical', backendCategory: 'reversal', direction: 'bearish' },
+  ...[
+    'Hammer', 'Inverted Hammer', 'Bullish Belt Hold', 'Dragonfly Doji', 'Bullish Engulfing', 'Piercing Line',
+    'Bullish Harami', 'Tweezer Bottom', 'Homing Pigeon', 'Bullish Kicker', 'Three Inside Up', 'Three Outside Up',
+    'Morning Star', 'Three White Soldiers', 'Bullish Abandoned Baby', 'Bullish Tri-Star Doji', 'Tri-Star Doji (Bullish)', 'Three Stars in the South',
+    'Tower Bottom', 'Ladder Bottom', 'Matching Low', 'Stick Sandwich (Bullish)',
+  ].map(name => ({ name, category: 'candlestick' as const, backendCategory: 'candlestick' as const, direction: 'bullish' as const })),
+  ...[
+    'Shooting Star', 'Hanging Man', 'Bearish Belt Hold', 'Gravestone Doji', 'Bearish Engulfing', 'Dark Cloud Cover',
+    'Bearish Harami', 'Tweezer Top', 'Bearish Kicker', 'Three Inside Down', 'Three Outside Down', 'Evening Star',
+    'Three Black Crows', 'Bearish Abandoned Baby', 'Bearish Tri-Star Doji', 'Tri-Star Doji (Bearish)', 'Deliberation Pattern', 'Three Mountains',
+    'Tower Top', 'Ladder Top', 'Matching High', 'Stick Sandwich (Bearish)',
+  ].map(name => ({ name, category: 'candlestick' as const, backendCategory: 'candlestick' as const, direction: 'bearish' as const })),
+  ...[
+    'Long-Legged Doji', 'Standard Doji', 'Spinning Top (Bullish)', 'Spinning Top (Bearish)',
+  ].map(name => ({ name, category: 'candlestick' as const, backendCategory: 'candlestick' as const, direction: 'neutral' as const })),
+  ...[
+    'Breakaway (Bullish)', 'Tasuki Gap (Bullish)', 'Side-by-Side White Lines',
+  ].map(name => ({ name, category: 'candlestick' as const, backendCategory: 'gap' as const, direction: 'bullish' as const })),
+  ...[
+    'Breakaway (Bearish)', 'Tasuki Gap (Bearish)', 'Upside Gap Two Crows', 'Downside Gap Three Methods', 'Side-by-Side Black Lines',
+  ].map(name => ({ name, category: 'candlestick' as const, backendCategory: 'gap' as const, direction: 'bearish' as const })),
+  ...[
+    'Rising Three Methods', 'Upside Tasuki', 'Separating Lines (Bullish)', 'Bullish Marubozu',
+  ].map(name => ({ name, category: 'sequence' as const, backendCategory: 'continuation' as const, direction: 'bullish' as const })),
+  ...[
+    'Falling Three Methods', 'Downside Tasuki', 'Separating Lines (Bearish)', 'Bearish Marubozu', 'Concealing Baby Swallow',
+  ].map(name => ({ name, category: 'sequence' as const, backendCategory: 'continuation' as const, direction: 'bearish' as const })),
+  ...[
+    'Bull Flag', 'Bull Pennant', 'High-Tight Flag', 'Ascending Flag', 'Channel Flag (Bullish)',
+    'Triangle Breakout → Continuation', 'Falling Wedge (Bullish Reversal)', 'Wedge Breakout',
+    'Ascending Channel', 'Channel Breakout', 'Breakout', 'Range Breakout', 'Bullish Rectangle Breakout',
+    'V-Bottom', 'Adam & Eve Bottom', 'Diamond Bottom', 'Broadening Bottom', 'Rounding Bottom', 'Cup & Handle (bullish reversal)',
+    'Accumulation Range',
+  ].map(name => ({ name, category: 'classical' as const, backendCategory: 'continuation' as const, direction: 'bullish' as const })),
+  ...[
+    'Bear Flag', 'Bear Pennant', 'Low-Tight Flag', 'Descending Flag', 'Channel Flag (Bearish)',
+    'Triangle Breakdown → Continuation', 'Rising Wedge (Bearish Reversal)', 'Wedge Breakdown',
+    'Descending Channel', 'Channel Breakdown', 'Breakdown', 'Range Breakdown', 'Bearish Rectangle Breakdown',
+    'V-Top', 'Adam & Eve Top', 'Diamond Top', 'Broadening Top', 'Rounding Top', 'Inverted Cup & Handle (bearish reversal)',
+    'Distribution Range',
+  ].map(name => ({ name, category: 'classical' as const, backendCategory: 'reversal' as const, direction: 'bearish' as const })),
+  ...[
+    'Expanding Triangle', 'Contracting Triangle', 'Running Triangle', 'Broadening Wedge', 'Contracting Wedge',
+    'Terminal Wedge', 'Parallel Channel', 'Expanding Channel', 'Contracting Channel', 'Horizontal Channel',
+    'Box Range', 'Micro-Range', 'Compression Range', 'Expansion Range',
+  ].map(name => ({ name, category: 'classical' as const, backendCategory: 'structure' as const, direction: 'neutral' as const })),
+  ...[
+    'Bullish Flag Failure → Reversal', 'Bearish Flag Failure → Reversal', 'Triangle Fakeout → Reversal',
+    'Triangle Apex Reversal', 'Wedge Fakeout', 'Wedge Throw-Over', 'Wedge Failure → Opposite Reversal',
+    'Channel Fakeout', 'Channel Exhaustion Reversal', 'Failed Breakout', 'Failed Breakdown',
+    'Range Fakeout', 'Range Flip', 'Range Reversal', 'Trap Move (Bull Trap)', 'Trap Move (Bear Trap)',
+  ].map(name => ({ name, category: 'classical' as const, backendCategory: 'reversal' as const, direction: 'neutral' as const })),
+  ...[
+    'Swing Failure Pattern (SFP)', 'Liquidity Grab', 'Stop Hunt', 'Stop-Hunt Reversal', 'Stop-Run Reversal',
+    'Liquidity Sweep (Bullish)', 'Equal Lows Sweep', 'Order Block Reversal (Bullish)', 'Breaker Block (Bullish)',
+  ].map(name => ({ name, category: 'smc' as const, backendCategory: 'liquidity' as const, direction: 'bullish' as const })),
+  ...[
+    'Liquidity Sweep (Bearish)', 'Equal Highs Sweep', 'Order Block Reversal (Bearish)', 'Breaker Block (Bearish)',
+  ].map(name => ({ name, category: 'smc' as const, backendCategory: 'liquidity' as const, direction: 'bearish' as const })),
+  ...[
+    'Fair Value Gap Reversal', 'Displacement Reversal', 'Mitigation Block Reversal', 'Rejection Block Reversal',
+  ].map(name => ({ name, category: 'smc' as const, backendCategory: 'reversal' as const, direction: 'neutral' as const })),
+  ...[
+    'Climax Volume Reversal', 'Volume Divergence Reversal', 'Volume Exhaustion', 'Volume Expansion Breakout',
+    'Volatility Expansion Reversal', 'Volatility Compression Reversal', 'ATR Spike Reversal', 'ATR Collapse Reversal',
+    'Bollinger Band M-Top', 'Bollinger Band W-Bottom', 'BB Squeeze Reversal', 'Keltner Channel Reversal',
+    'Donchian Channel Reversal', 'Volatility Divergence Reversal', 'Range Break Reversal', 'Volatility Exhaustion Reversal',
+  ].map(name => ({ name, category: 'volatility' as const, backendCategory: 'volatility' as const, direction: 'neutral' as const })),
+  ...[
+    'HTF Engulfing Reversal', 'HTF Hammer Reversal', 'HTF Shooting Star Reversal',
+    'LTF Liquidity Sweep + HTF Support', 'LTF Engulfing + HTF Trend Exhaustion', 'HTF Order Block Reversal',
+    'HTF Breaker Reversal', 'HTF FVG Reversal', 'Multi-Timeframe Divergence Reversal', 'Multi-Timeframe Volume Reversal',
+  ].map(name => ({ name, category: 'sequence' as const, backendCategory: 'reversal' as const, direction: 'neutral' as const })),
+  ...bullishTwoCandleReversalNames.map(name => ({
+    name, category: 'candlestick' as const, backendCategory: 'candlestick' as const, direction: 'bullish' as const,
+  })),
+  ...bearishTwoCandleReversalNames.map(name => ({
+    name, category: 'candlestick' as const, backendCategory: 'candlestick' as const, direction: 'bearish' as const,
+  })),
+  ...gapTwoCandleReversalNames.map(name => ({
+    name, category: 'candlestick' as const, backendCategory: 'gap' as const,
+    direction: name.startsWith('Bullish') || name.startsWith('Island Reversal Bottom') ? 'bullish' as const : 'bearish' as const,
+  })),
+  ...rareTwoCandleReversalNames.map(name => ({
+    name, category: 'candlestick' as const,
+    backendCategory: name.includes('Tasuki') ? 'gap' as const : 'candlestick' as const,
+    direction: name.includes('Bottom') || name.includes('Low') || name.includes('Bullish') ? 'bullish' as const : 'bearish' as const,
+  })),
+];
+
+const requestedChartRegistry = Object.fromEntries(requestedChartPatterns.map(pattern => [pattern.name, {
+  name: pattern.name,
+  category: pattern.category,
+  backendCategory: pattern.backendCategory,
+  color: pattern.direction === 'bullish' ? '#22c55e' : pattern.direction === 'bearish' ? '#ef4444' : '#a78bfa',
+  icon: pattern.name.includes('Diamond') ? 'Diamond' : 'CandlestickChart',
+  description: `${pattern.name} chart pattern`,
+  contributesToConfluence: pattern.direction !== 'neutral',
+  showOnChart: true,
+}])) as Record<string, PatternRegistryEntry>;
+
 export const PATTERN_REGISTRY: Record<string, PatternRegistryEntry> = {
   'Bullish Order Block': {
     name: 'Bullish Order Block',
@@ -886,6 +1031,7 @@ export const PATTERN_REGISTRY: Record<string, PatternRegistryEntry> = {
     contributesToConfluence: true,
     showOnChart: true,
   },
+  ...requestedChartRegistry,
 };
 
 const lowerCaseMap = new Map<string, PatternRegistryEntry>();

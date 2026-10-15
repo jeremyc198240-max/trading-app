@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { calculateScannerTradeQuality, isScannerHotPlay } from "@/lib/scannerHotPlay";
 
 interface PatternResult {
   name: string;
@@ -115,9 +116,13 @@ interface ScannerResult {
 
 interface ScannerStatus {
   isScanning: boolean;
+  cycleInProgress?: boolean;
   lastScanTime: number;
+  lastCycleStartedAt?: number;
+  symbolsScanned?: number;
   watchlistCount: number;
   resultCount: number;
+  scanErrors?: string[];
 }
 
 interface AnalyzeExpandedPayload {
@@ -157,16 +162,18 @@ interface ScannerPanelProps {
 export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelProps) {
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
 
-  const { data: results, isLoading } = useQuery<ScannerResult[]>({
+  const { data: results, isLoading, isFetching: resultsFetching, isError: resultsError, error: resultsErrorDetails, refetch: refetchResults } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    refetchInterval: 30000,
-    staleTime: 5000,
+    refetchInterval: 8000,
+    staleTime: 2000,
+    retry: 2,
   });
 
-  const { data: status } = useQuery<ScannerStatus>({
+  const { data: status, isFetching: statusFetching, isError: statusError, error: statusErrorDetails, refetch: refetchStatus } = useQuery<ScannerStatus>({
     queryKey: ["/api/scanner/status"],
-    refetchInterval: 30000,
-    staleTime: 10000,
+    refetchInterval: 8000,
+    staleTime: 2000,
+    retry: 2,
   });
 
   const formatTime = (timestamp: number) => {
@@ -198,14 +205,13 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
   });
 
   const expandedResult = filteredResults.find((r) => r.symbol === expandedSymbol) ?? null;
-  const isExpandedResultDegraded = Boolean(
-    expandedResult?.isDegraded ||
-    expandedResult?.warnings?.includes('NO_OHLC_DATA')
+  const isExpandedResultUnavailable = Boolean(
+    expandedResult?.warnings?.includes('MARKET_DATA_UNAVAILABLE')
   );
 
-  const { data: expandedAnalysis, isFetching: isExpandedFetching } = useQuery<AnalyzeExpandedPayload>({
+  const { data: expandedAnalysis, isFetching: isExpandedFetching, isError: expandedAnalysisError, error: expandedAnalysisErrorDetails } = useQuery<AnalyzeExpandedPayload>({
     queryKey: ["/api/analyze", expandedSymbol ?? "idle", "5m"],
-    enabled: Boolean(expandedResult) && !isExpandedResultDegraded,
+    enabled: Boolean(expandedResult) && !isExpandedResultUnavailable,
     staleTime: 20000,
     refetchInterval: expandedSymbol ? 30000 : false,
   });
@@ -230,20 +236,56 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
               </span>
             </div>
           </div>
-          {status?.isScanning && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gradient-to-r from-emerald-500/20 to-emerald-500/10 border border-emerald-500/30 shadow-sm shadow-emerald-500/20">
-              <Radio className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
-              <span className="text-[10px] font-bold text-emerald-400 tracking-wider">LIVE</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5">
+            <span className={cn(
+              "flex items-center gap-1.5 rounded-md border px-2 py-1 text-[9px] font-bold tracking-wider",
+              status?.cycleInProgress
+                ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                : statusError
+                  ? "border-red-400/40 bg-red-500/10 text-red-300"
+                  : "border-cyan-400/30 bg-cyan-500/10 text-cyan-200",
+            )}>
+              <Radio className={cn("h-2.5 w-2.5", status?.cycleInProgress && "animate-pulse")} />
+              {statusError ? "FEED ERROR" : status?.cycleInProgress ? "SCANNING" : status?.isScanning ? "MONITORING" : "STARTING"}
+            </span>
+            <button
+              type="button"
+              aria-label="Refresh market scanner data"
+              title="Refresh scanner results and status"
+              className="grid h-7 w-7 place-items-center rounded-md border border-cyan-400/25 bg-cyan-500/5 text-cyan-300 transition hover:border-cyan-300/60 hover:bg-cyan-500/15 disabled:opacity-50"
+              disabled={resultsFetching || statusFetching}
+              onClick={() => { void Promise.all([refetchResults(), refetchStatus()]); }}
+            >
+              <RefreshCw className={cn("h-3 w-3", (resultsFetching || statusFetching) && "animate-spin")} />
+            </button>
+          </div>
         </div>
       </CardHeader>
       
       <CardContent className="relative p-3 space-y-3">
+        {(resultsError || statusError || status?.scanErrors?.length) && <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-2" role="alert">
+          <div className="flex min-w-0 items-start gap-1.5 text-[10px] text-amber-200">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span className="break-words">
+              {resultsError
+                ? `Scanner results failed: ${resultsErrorDetails instanceof Error ? resultsErrorDetails.message : "request error"}`
+                : statusError
+                  ? `Scanner status unavailable: ${statusErrorDetails instanceof Error ? statusErrorDetails.message : "request error"}`
+                  : `Latest scan cycle reported ${status?.scanErrors?.length ?? 0} error(s): ${status?.scanErrors?.slice(0, 3).join(" · ")}`}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-amber-400/35 px-2 py-1 text-[9px] font-bold text-amber-100 hover:bg-amber-400/10"
+            onClick={() => { void Promise.all([refetchResults(), refetchStatus()]); }}
+          >
+            RETRY
+          </button>
+        </div>}
         <div className="flex items-center gap-2 text-xs">
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-gradient-to-br from-cyan-500/10 to-transparent border border-cyan-500/20">
             <Activity className="w-3 h-3 text-cyan-400" />
-            <span className="font-mono font-bold text-cyan-400">8</span>
+            <span className="font-mono font-bold text-cyan-400">{status?.watchlistCount ?? 8}</span>
             <span className="text-muted-foreground text-[10px]">active</span>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-500/20">
@@ -256,6 +298,11 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
             <span className="font-mono">{formatTime(status?.lastScanTime || 0)}</span>
           </div>
         </div>
+        {status?.cycleInProgress && <div className="scanner-cycle-progress" role="status">
+          <span><i style={{ width: `${Math.min(100, ((status.symbolsScanned ?? 0) / Math.max(status.watchlistCount, 1)) * 100)}%` }} /></span>
+          <b>{status.symbolsScanned ?? 0}/{status.watchlistCount} SYMBOLS</b>
+          <small>Updating watchlist</small>
+        </div>}
 
         {isLoading ? (
           <div className="space-y-2">
@@ -280,34 +327,39 @@ export function ScannerPanel({ onSelectSymbol, selectedSymbol }: ScannerPanelPro
               ))}
               {(!results || results.length === 0) && (
                 <div className="text-center py-8">
-                  <div className="relative inline-block">
-                    <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" />
-                    <Radar className="relative w-10 h-10 mx-auto mb-3 text-cyan-400/50" />
-                  </div>
-                  <p className="text-sm text-muted-foreground">Scanning market...</p>
-                  <p className="text-[10px] text-muted-foreground/50 mt-1">Detecting patterns across watchlist</p>
+                  {resultsError ? <>
+                    <AlertCircle className="mx-auto mb-2 h-8 w-8 text-amber-400" />
+                    <p className="text-sm text-amber-200">Scanner data is unavailable</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">Use RETRY above after the scanner service recovers.</p>
+                  </> : <>
+                    <div className="relative inline-block">
+                      <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" />
+                      <Radar className="relative w-10 h-10 mx-auto mb-3 text-cyan-400/50" />
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {isLoading ? "Connecting to market scanner..." : status?.cycleInProgress ? "Scanner is building the first result set..." : "Waiting for scan results..."}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/50 mt-1">
+                      {status?.cycleInProgress
+                        ? `${status.symbolsScanned ?? 0} of ${status.watchlistCount} symbols processed`
+                        : "The scanner will retry automatically; use the refresh button to check again."}
+                    </p>
+                  </>}
                 </div>
               )}
             </div>
 
             {expandedResult && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setExpandedSymbol(null)}
-                  aria-label="Close expanded trade panel overlay"
-                  className="hidden lg:block fixed inset-0 z-[130] bg-slate-950/70 backdrop-blur-[2px]"
+              <div className="mt-2 lg:mt-0 lg:fixed lg:right-4 lg:top-[72px] lg:z-[90] lg:w-[min(640px,calc(100vw-1.5rem))] lg:max-h-[calc(100vh-92px)]">
+                <ExpandedTradePanel
+                  result={expandedResult}
+                  analysis={expandedAnalysis}
+                  isFetching={isExpandedFetching}
+                  analysisError={expandedAnalysisError ? (expandedAnalysisErrorDetails instanceof Error ? expandedAnalysisErrorDetails.message : "Expanded analysis request failed") : null}
+                  onClose={() => setExpandedSymbol(null)}
+                  className="lg:min-h-0 lg:max-h-[calc(100vh-92px)]"
                 />
-                <div className="mt-2 lg:mt-0 lg:fixed lg:right-4 lg:top-[72px] lg:z-[140] lg:w-[min(640px,calc(100vw-1.5rem))] lg:max-h-[calc(100vh-92px)]">
-                  <ExpandedTradePanel
-                    result={expandedResult}
-                    analysis={expandedAnalysis}
-                    isFetching={isExpandedFetching}
-                    onClose={() => setExpandedSymbol(null)}
-                    className="lg:min-h-0 lg:max-h-[calc(100vh-92px)]"
-                  />
-                </div>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -329,17 +381,13 @@ function ScannerRow({
   isExpanded?: boolean;
   onToggleExpand: () => void;
 }) {
-  const isDegraded = Boolean(
-    result.isDegraded ||
-    result.warnings?.includes('NO_OHLC_DATA')
-  );
+  const isUnavailable = result.warnings?.includes('MARKET_DATA_UNAVAILABLE') ?? false;
 
   const handleRowClick = () => {
     onClick();
-    onToggleExpand();
   };
 
-  if (isDegraded) {
+  if (isUnavailable) {
     return (
       <div
         className={cn(
@@ -352,6 +400,11 @@ function ScannerRow({
       >
         <div className="h-0.5 bg-gradient-to-r from-cyan-500/60 to-blue-500/40" />
         <div className="relative p-3">
+          {isHotPlay && <div className={`scanner-row__gold-alert ${result.hasMonsterPlay ? "is-monster" : ""}`}>
+            <span className="scanner-row__gold-spark"><Zap className="h-3.5 w-3.5" /></span>
+            <div><strong>{result.hasMonsterPlay ? "MONSTER PLAY" : "GOLD SIGNAL"}</strong><small>{result.breakoutSignal ?? "VALIDATED SCANNER SETUP"}</small></div>
+            <b>{tradeDirection === "WAIT" ? "WATCH" : tradeDirection}</b>
+          </div>}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="font-mono font-bold text-sm tracking-wide text-cyan-200">{result.symbol}</span>
@@ -384,44 +437,11 @@ function ScannerRow({
   const hasMomentum = result.breakoutSignal === 'MOMENTUM';
   const hasBuilding = result.breakoutSignal === 'BUILDING';
   const hasVolumeSpike = (result.volumeSpike || 0) >= 1.5;
-  const hasCriticalSqueeze = result.breakoutSignal === 'SQUEEZE' && (result.squeezeCandles || 0) >= 5;
   
-  // Calculate Trade Quality Score (0-100)
   const momentum = result.momentumStrength || 0;
   const rsi = result.rsiValue || 50;
   const isBullish = momentum > 0;
-  
-  let tradeQuality = 0;
-  const qualityFactors: string[] = [];
-  
-  // Health Grade contribution (0-25)
-  if (result.healthGrade === 'A') { tradeQuality += 25; qualityFactors.push('Strong health (A)'); }
-  else if (result.healthGrade === 'B') { tradeQuality += 20; qualityFactors.push('Good health (B)'); }
-  else if (result.healthGrade === 'C') { tradeQuality += 10; qualityFactors.push('Fair health (C)'); }
-  
-  // RSI alignment (0-20) - bullish should have room to run, bearish should be overbought
-  if (isBullish && rsi < 60) { tradeQuality += 20; qualityFactors.push('RSI has room to run'); }
-  else if (isBullish && rsi < 70) { tradeQuality += 10; qualityFactors.push('RSI acceptable'); }
-  else if (!isBullish && rsi > 40) { tradeQuality += 20; qualityFactors.push('RSI has room to fall'); }
-  else if (!isBullish && rsi > 30) { tradeQuality += 10; qualityFactors.push('RSI acceptable'); }
-  else if (isBullish && rsi >= 70) { qualityFactors.push('[!] RSI overbought'); }
-  else if (!isBullish && rsi <= 30) { qualityFactors.push('[!] RSI oversold'); }
-  
-  // Momentum strength (0-20)
-  const absMomentum = Math.abs(momentum);
-  if (absMomentum >= 50) { tradeQuality += 20; qualityFactors.push('Strong momentum'); }
-  else if (absMomentum >= 30) { tradeQuality += 15; qualityFactors.push('Good momentum'); }
-  else if (absMomentum >= 15) { tradeQuality += 10; qualityFactors.push('Mild momentum'); }
-  
-  // Volume confirmation (0-15)
-  if (hasVolumeSpike) { tradeQuality += 15; qualityFactors.push('Volume confirmed'); }
-  else if ((result.volumeSpike || 0) >= 1.2) { tradeQuality += 8; qualityFactors.push('Decent volume'); }
-  
-  // Breakout/Expansion signal (0-20)
-  if (hasExpansion) { tradeQuality += 20; qualityFactors.push('Squeeze released!'); }
-  else if (hasBreakoutSignal) { tradeQuality += 18; qualityFactors.push('Breakout confirmed'); }
-  else if (hasCriticalSqueeze) { tradeQuality += 12; qualityFactors.push('Critical squeeze'); }
-  else if ((result.squeezeCandles || 0) >= 3) { tradeQuality += 8; qualityFactors.push('Building pressure'); }
+  const { score: tradeQuality, factors: qualityFactors } = calculateScannerTradeQuality(result);
   
   // Determine trade direction
   const tradeDirection: 'LONG' | 'SHORT' | 'WAIT' = 
@@ -439,23 +459,7 @@ function ScannerRow({
     tradeQuality >= 40 ? 'B' :
     tradeQuality >= 25 ? 'C' : 'D';
   
-  // Hot play detection - VERY selective - only exceptional setups get gold
-  // Requirements: Must have VOLUME + MOMENTUM confirmation, not just patterns
-  const hasRealVolume = hasVolumeSpike; // Volume must be 1.5x+ average
-  const hasStrongMomentum = Math.abs(momentum) >= 40;
-  const isHighQuality = tradeQuality >= 60; // A or A+ only
-  
-  // Only gold for truly exceptional plays:
-  // 1. Monster play (already validated)
-  // 2. EXPANSION with volume OR momentum
-  // 3. BREAKOUT/BREAKDOWN with strong signals
-  // 4. MOMENTUM signals (strong directional move)
-  // 5. Critical squeeze (5+) with high quality AND strong momentum
-  const isHotPlay = result.hasMonsterPlay || 
-    hasMomentum ||
-    (hasExpansion && (hasRealVolume || hasStrongMomentum)) ||
-    (hasBreakoutSignal && hasRealVolume && hasStrongMomentum) ||
-    (hasCriticalSqueeze && isHighQuality && hasStrongMomentum);
+  const isHotPlay = isScannerHotPlay(result);
   
   return (
     <div
@@ -512,14 +516,6 @@ function ScannerRow({
                       : ""
                 )}>{result.symbol}</span>
               </div>
-              {isHotPlay && (
-                <Badge 
-                  variant="outline" 
-                  className="text-[7px] font-bold px-1 py-0 mt-0.5 w-fit bg-gradient-to-r from-amber-500/30 to-orange-500/30 text-amber-300 border-amber-400/60 shadow-sm shadow-amber-500/20"
-                >
-                  HOT
-                </Badge>
-              )}
             </div>
             <GradeBadge grade={result.healthGrade} />
             
@@ -1004,12 +1000,14 @@ function ExpandedTradePanel({
   result,
   analysis,
   isFetching,
+  analysisError,
   onClose,
   className,
 }: {
   result: ScannerResult;
   analysis?: AnalyzeExpandedPayload;
   isFetching: boolean;
+  analysisError: string | null;
   onClose: () => void;
   className?: string;
 }) {
@@ -1125,6 +1123,9 @@ function ExpandedTradePanel({
               Live OHLC candles are delayed for this symbol. Tactical data falls back to available feeds.
             </div>
           )}
+          {analysisError && <div className="rounded-md border border-red-500/35 bg-red-500/10 px-2.5 py-2 text-[10px] text-red-200" role="alert">
+            Expanded analysis failed: {analysisError}
+          </div>}
         </div>
       </div>
 

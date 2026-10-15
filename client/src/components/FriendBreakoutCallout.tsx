@@ -417,6 +417,129 @@ function derivePressureMetrics(analysis: AnalysisPayload, response: CompressionA
   } as const;
 }
 
+function ChronosImbalanceRadar({
+  symbol,
+  direction,
+  score,
+  trend,
+  volume,
+  market,
+  candle,
+  buyingPressure,
+  sellingPressure,
+}: {
+  symbol: string;
+  direction: CompressionAiResponse["direction"];
+  score: number;
+  trend: number;
+  volume: number;
+  market: number;
+  candle: number;
+  buyingPressure: number;
+  sellingPressure: number;
+}) {
+  const metrics = [score, trend, volume, market, candle].map((value) => Math.max(0, Math.min(100, value)));
+  const center = 90;
+  const radius = 64;
+  const point = (index: number, value: number) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / metrics.length;
+    const scaledRadius = radius * value / 100;
+    return `${center + Math.cos(angle) * scaledRadius},${center + Math.sin(angle) * scaledRadius}`;
+  };
+  const polygon = metrics.map((value, index) => point(index, value)).join(" ");
+  const axes = metrics.map((_, index) => point(index, 100));
+  const tone = direction === "CALL" ? "long" : direction === "PUT" ? "short" : "neutral";
+  const leadPressure = Math.max(buyingPressure, sellingPressure);
+
+  return (
+    <div className={`warroom-scalp-radar is-${tone}`} aria-label={`${symbol} Chronos imbalance field radar`}>
+      <svg viewBox="0 0 180 180" role="img" aria-label="Chronos evidence field">
+        {[1, 0.72, 0.42].map((scale) => <polygon key={scale} points={metrics.map((_, index) => point(index, scale * 100)).join(" ")} className="warroom-scalp-radar__ring" />)}
+        {axes.map((axis, index) => {
+          const [x, y] = axis.split(",");
+          return <line key={index} x1={center} y1={center} x2={x} y2={y} className="warroom-scalp-radar__axis" />;
+        })}
+        <polygon points={polygon} className="warroom-scalp-radar__field" />
+        <circle cx={center} cy={center} r="5" className="warroom-scalp-radar__core" />
+        <text x="90" y="13" textAnchor="middle">EDGE</text>
+        <text x="169" y="70" textAnchor="end">TREND</text>
+        <text x="143" y="165" textAnchor="middle">VOLUME</text>
+        <text x="37" y="165" textAnchor="middle">MARKET</text>
+        <text x="11" y="70">CANDLE</text>
+      </svg>
+      <div className="warroom-scalp-radar__readout">
+        <span>{symbol} · IMBALANCE FIELD</span>
+        <strong>{Math.round(leadPressure)}%</strong>
+        <small>{direction} · {Math.round(score)}% EDGE</small>
+      </div>
+      <div className="warroom-scalp-radar__legend">
+        <div className="warroom-scalp-radar__pressure">
+          <span style={{ width: `${buyingPressure}%` }}>CALL {Math.round(buyingPressure)}%</span>
+          <span style={{ width: `${sellingPressure}%` }}>PUT {Math.round(sellingPressure)}%</span>
+        </div>
+        <span>LIVE EVIDENCE FIELD</span>
+        <span>{leadPressure >= 65 ? "PRESSURE CONCENTRATED" : "WAIT FOR IMBALANCE"}</span>
+      </div>
+    </div>
+  );
+}
+
+function ChronosFieldRadar({
+  label,
+  state,
+  values,
+  labels,
+  tone = "neutral",
+  readout,
+  detail,
+}: {
+  label: string;
+  state: string;
+  values: number[];
+  labels: string[];
+  tone?: "long" | "short" | "neutral";
+  readout: string;
+  detail: string;
+}) {
+  const metrics = values.map((value) => Math.max(0, Math.min(100, value)));
+  const center = 90;
+  const radius = 64;
+  const point = (index: number, value: number) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / metrics.length;
+    const scaledRadius = radius * value / 100;
+    return `${center + Math.cos(angle) * scaledRadius},${center + Math.sin(angle) * scaledRadius}`;
+  };
+  const polygon = metrics.map((value, index) => point(index, value)).join(" ");
+  const axes = metrics.map((_, index) => point(index, 100));
+
+  return (
+    <div className={`warroom-scalp-radar is-${tone}`} aria-label={`${label} field radar`}>
+      <svg viewBox="0 0 180 180" role="img" aria-label={`${label} radar field`}>
+        {[1, 0.72, 0.42].map((scale) => <polygon key={scale} points={metrics.map((_, index) => point(index, scale * 100)).join(" ")} className="warroom-scalp-radar__ring" />)}
+        {axes.map((axis, index) => {
+          const [x, y] = axis.split(",");
+          return <line key={index} x1={center} y1={center} x2={x} y2={y} className="warroom-scalp-radar__axis" />;
+        })}
+        <polygon points={polygon} className="warroom-scalp-radar__field" />
+        <circle cx={center} cy={center} r="5" className="warroom-scalp-radar__core" />
+        {labels.map((text, index) => {
+          const [x, y] = point(index, 115).split(",");
+          return <text key={text} x={x} y={y} textAnchor="middle">{text}</text>;
+        })}
+      </svg>
+      <div className="warroom-scalp-radar__readout">
+        <span>{label} · {state}</span>
+        <strong>{readout}</strong>
+        <small>{detail}</small>
+      </div>
+      <div className="warroom-scalp-radar__legend">
+        <span>LIVE FIELD</span>
+        <span>{Math.round(metrics.reduce((sum, value) => sum + value, 0) / Math.max(metrics.length, 1))}% EVIDENCE DENSITY</span>
+      </div>
+    </div>
+  );
+}
+
 function deriveReadinessState(
   analysis: AnalysisPayload,
   response: CompressionAiResponse | null,
@@ -553,7 +676,7 @@ function buildChronosMessage(
 export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutProps) {
   const { data } = useQuery<CompressionAiResponse>({
     queryKey: ["/api/compression-ai", symbol, timeframe],
-    enabled: Boolean(symbol),
+    enabled: false,
     staleTime: 15000,
     refetchInterval: 30000,
     retry: false,
@@ -823,19 +946,16 @@ export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutPr
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-3">
-                <div className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Bias</div>
-                <div className="mt-1 text-sm font-semibold text-white">{analysis.directionalBias.toUpperCase()}</div>
-              </div>
-              <div className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-3">
-                <div className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Confidence</div>
-                <div className="mt-1 text-sm font-semibold text-white">{signalConfidenceLabel}</div>
-              </div>
-              <div className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-3">
-                <div className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Readiness</div>
-                <div className={`mt-1 text-sm font-semibold ${readinessState.tone === "emerald" ? "text-emerald-300" : readinessState.tone === "amber" ? "text-amber-300" : "text-slate-300"}`}>{readinessState.label}</div>
-              </div>
+            <div className="mt-4 rounded-2xl border border-cyan-500/15 bg-[#04101b]/70 p-2">
+              <ChronosFieldRadar
+                label="Chronos command field"
+                state={readinessState.label}
+                values={[marketLean.bull, callConfidence, pressureMetrics.buyingPressure, pressureMetrics.sellingPressure, data?.aiScore ?? 50]}
+                labels={["BIAS", "CONF", "BUY", "SELL", "EDGE"]}
+                tone={marketLean.lean === "Bullish" ? "long" : marketLean.lean === "Bearish" ? "short" : "neutral"}
+                readout={`${Math.max(marketLean.bull, marketLean.bear)}%`}
+                detail={`${analysis.directionalBias.toUpperCase()} · ${signalConfidenceLabel} · ${readinessState.label}`}
+              />
             </div>
           </div>
 
@@ -866,22 +986,19 @@ export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutPr
                 {Math.max(pressureMetrics.buyingPressure, pressureMetrics.sellingPressure)}%
               </div>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3">
-                <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-200">Buying pressure</div>
-                <div className="mt-2 text-sm font-semibold text-white">{pressureMetrics.buyingPressure}%</div>
-                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-900">
-                  <div className="h-full bg-gradient-to-r from-emerald-400 via-emerald-300 to-cyan-300 transition-all duration-300" style={{ width: `${pressureMetrics.buyingPressure}%` }} />
-                </div>
+              <div className="mt-4 rounded-2xl border border-cyan-500/15 bg-[#04101b]/70 p-2">
+                <ChronosImbalanceRadar
+                  symbol={symbol.toUpperCase()}
+                  direction={data?.direction ?? "NEUTRAL"}
+                  score={data?.aiScore ?? Math.max(pressureMetrics.buyingPressure, pressureMetrics.sellingPressure)}
+                  trend={analysis.trendConfidence ?? 50}
+                  volume={analysis.volumeConfidence ?? 50}
+                  market={analysis.marketConfidence ?? 50}
+                  candle={analysis.candleStrength?.score ?? 50}
+                  buyingPressure={pressureMetrics.buyingPressure}
+                  sellingPressure={pressureMetrics.sellingPressure}
+                />
               </div>
-              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-3">
-                <div className="text-[10px] uppercase tracking-[0.22em] text-rose-200">Selling pressure</div>
-                <div className="mt-2 text-sm font-semibold text-white">{pressureMetrics.sellingPressure}%</div>
-                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-900">
-                  <div className="h-full bg-gradient-to-r from-rose-400 via-rose-300 to-slate-400 transition-all duration-300" style={{ width: `${pressureMetrics.sellingPressure}%` }} />
-                </div>
-              </div>
-            </div>
             <div className="mt-3 text-[11px] text-slate-400">{pressureMetrics.detail}</div>
           </div>
 
@@ -896,27 +1013,16 @@ export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutPr
                 {data ? data.confidenceBand.toUpperCase() : "SYNC"}
               </div>
             </div>
-            <div className="mt-4 space-y-3">
-              <div className="rounded-2xl border border-slate-800/60 bg-slate-950/90 p-3">
-                <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.24em] text-slate-400">
-                  <span>PUT pressure</span>
-                  <span className="text-sm font-semibold text-white">{putConfidence.toFixed(0)}%</span>
-                </div>
-                <div className="relative mt-3 h-3 rounded-full bg-slate-900 overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_right,rgba(248,113,113,0.18),transparent_40%)]" />
-                  <div className="relative h-full rounded-full bg-gradient-to-r from-rose-500 via-fuchsia-400 to-cyan-400 transition-all duration-500" style={{ width: `${putConfidence}%` }} />
-                </div>
-              </div>
-              <div className="rounded-2xl border border-slate-800/60 bg-slate-950/90 p-3">
-                <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.24em] text-slate-400">
-                  <span>CALL pressure</span>
-                  <span className="text-sm font-semibold text-white">{callConfidence.toFixed(0)}%</span>
-                </div>
-                <div className="relative mt-3 h-3 rounded-full bg-slate-900 overflow-hidden">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_left,rgba(52,211,153,0.18),transparent_40%)]" />
-                  <div className="relative h-full rounded-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-sky-400 transition-all duration-500" style={{ width: `${callConfidence}%` }} />
-                </div>
-              </div>
+            <div className="mt-4 rounded-2xl border border-cyan-500/15 bg-[#04101b]/70 p-2">
+              <ChronosFieldRadar
+                label="Directional confidence field"
+                state={signalMeterLabel}
+                values={[callConfidence, putConfidence, marketLean.bull, marketLean.bear, pressureMetrics.buyingPressure]}
+                labels={["CALL", "PUT", "BULL", "BEAR", "FLOW"]}
+                tone={data?.direction === "CALL" ? "long" : data?.direction === "PUT" ? "short" : "neutral"}
+                readout={`${Math.max(callConfidence, putConfidence).toFixed(0)}%`}
+                detail={`${data?.confidenceBand?.toUpperCase() ?? "SYNC"} · ${confidenceNote}`}
+              />
             </div>
             <div className="mt-3 rounded-2xl border border-slate-800/60 bg-[#03131e]/80 p-3 text-[11px] uppercase tracking-[0.22em] text-slate-400">
               {confidenceNote}
@@ -956,19 +1062,16 @@ export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutPr
                 {historySummary.totalSignals} signals
               </span>
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl bg-slate-950/80 p-3 border border-slate-800/80">
-                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">CALL win rate</p>
-                <p className="mt-2 text-sm font-semibold text-emerald-300">{historyStats.callWinRate.toFixed(0)}%</p>
-              </div>
-              <div className="rounded-2xl bg-slate-950/80 p-3 border border-slate-800/80">
-                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">PUT win rate</p>
-                <p className="mt-2 text-sm font-semibold text-rose-300">{historyStats.putWinRate.toFixed(0)}%</p>
-              </div>
-              <div className="rounded-2xl bg-slate-950/80 p-3 border border-slate-800/80">
-                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Avg outcome delta</p>
-                <p className="mt-2 text-sm font-semibold text-white">{historyStats.callSignals + historyStats.putSignals > 0 ? `${historyStats.callAvgDeltaPct.toFixed(1)}% / ${historyStats.putAvgDeltaPct.toFixed(1)}%` : "--"}</p>
-              </div>
+            <div className="mt-3 rounded-2xl border border-cyan-500/15 bg-[#04101b]/70 p-2">
+              <ChronosFieldRadar
+                label="Historical edge field"
+                state={historyBiasLabel}
+                values={[historyStats.callWinRate, historyStats.putWinRate, historyEdgeStrength, Math.min(100, historyStats.callSignals * 5), Math.min(100, historyStats.putSignals * 5)]}
+                labels={["CALL", "PUT", "BIAS", "C-HIST", "P-HIST"]}
+                tone={historyStats.callWinRate > historyStats.putWinRate + 5 ? "long" : historyStats.putWinRate > historyStats.callWinRate + 5 ? "short" : "neutral"}
+                readout={historyPerformanceLabel}
+                detail={`${historyStats.callSignals} CALL · ${historyStats.putSignals} PUT · ${historySummary.totalSignals} TOTAL`}
+              />
             </div>
             <p className="mt-3 text-[11px] leading-5 text-slate-400">{historyEdgeNote}</p>
           </div>
@@ -986,19 +1089,21 @@ export function ChronosCallout({ symbol, timeframe, analysis }: ChronosCalloutPr
           </div>
 
           <div className="mb-4 rounded-[1.75rem] border border-slate-800/80 bg-[#08101f]/90 p-3 shadow-[inset_0_0_24px_rgba(14,165,233,0.14)]">
-            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.26em] text-slate-400">
-              <span>Overall price action pulse</span>
-              <span className="font-semibold text-slate-200">{watchlistPulseStrength}%</span>
-            </div>
-            <div className="relative mt-3 h-4 overflow-hidden rounded-full border border-cyan-500/15 bg-[#04101b]/80">
-              <div className="absolute inset-y-0 left-0 h-full rounded-full bg-gradient-to-r from-fuchsia-400/90 via-cyan-300/90 to-sky-400/80 shadow-[0_0_22px_rgba(56,189,248,0.25)]" style={{ width: `${watchlistPulseStrength}%` }} />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.12),_transparent_40%)] pointer-events-none" />
-              <div className="absolute inset-y-0 left-0 right-0 grid grid-cols-8 opacity-15">
-                {Array.from({ length: 8 }).map((_, index) => (
-                  <span key={index} className="h-full border-r border-slate-500/15" />
-                ))}
-              </div>
-            </div>
+            <ChronosFieldRadar
+              label="Watchlist pulse field"
+              state={watchlistHighlights.length > 0 ? "ACTIVE" : "QUIET"}
+              values={[
+                watchlistPulseStrength,
+                watchlistHighlights[0]?.score ?? 0,
+                watchlistHighlights[1]?.score ?? 0,
+                watchlistHighlights[2]?.score ?? 0,
+                watchlistHighlights.filter((item) => item.priceChangePercent >= 0).length / Math.max(watchlistHighlights.length, 1) * 100,
+              ]}
+              labels={["PULSE", "LEAD", "SECOND", "THIRD", "CALL"]}
+              tone={watchlistHighlights[0]?.priceChangePercent >= 0 ? "long" : watchlistHighlights.length ? "short" : "neutral"}
+              readout={`${watchlistPulseStrength}%`}
+              detail={`${watchlistHighlights.length} STRONG MOVES · ALL TICKERS`}
+            />
           </div>
 
           {watchlistHighlights.length === 0 ? (

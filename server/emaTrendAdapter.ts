@@ -3,6 +3,7 @@ import { computeEMACloud } from './finance';
 
 export type EMATrendDirection = 'bullish' | 'bearish' | 'neutral';
 export type EMAVolRegime = 'low' | 'normal' | 'high';
+export type EMACloudPhase = 'separating' | 'rolling_over' | 'compressed' | 'aligned';
 
 export interface EMACloudTrend {
   direction: EMATrendDirection;
@@ -10,7 +11,11 @@ export interface EMACloudTrend {
   compression: boolean;
   exhaustion: boolean;
   flip: boolean;
+  holdConfirmed: boolean;
   volatilityRegime: EMAVolRegime;
+  phase: EMACloudPhase;
+  spreadPct: number;
+  spreadChangePct: number;
 }
 
 function computeEMA(prices: number[], period: number): number[] {
@@ -63,6 +68,23 @@ function detectFlip(ema9: number[], ema21: number[]): boolean {
   return wasBullish !== isBullish;
 }
 
+function detectCrossHold(ema9: number[], ema21: number[], closes: number[]): boolean {
+  if (ema9.length < 2 || ema21.length < 2 || closes.length < 2) return false;
+
+  const latestClose = closes[closes.length - 1];
+  const priorClose = closes[closes.length - 2];
+  const latestEma9 = ema9[ema9.length - 1];
+  const priorEma9 = ema9[ema9.length - 2];
+  const latestEma21 = ema21[ema21.length - 1];
+  const priorEma21 = ema21[ema21.length - 2];
+  const bullishCross = priorEma9 <= priorEma21 && latestEma9 > latestEma21;
+  const bearishCross = priorEma9 >= priorEma21 && latestEma9 < latestEma21;
+  const bullishHold = latestEma9 > latestEma21 && latestClose > latestEma9 && (bullishCross || priorClose > priorEma9);
+  const bearishHold = latestEma9 < latestEma21 && latestClose < latestEma9 && (bearishCross || priorClose < priorEma9);
+
+  return bullishHold || bearishHold;
+}
+
 function computeVolatilityRegime(closes: number[]): EMAVolRegime {
   if (closes.length < 20) return 'normal';
   const returns = closes.slice(1).map((c, i) => Math.abs((c - closes[i]) / closes[i]));
@@ -87,6 +109,34 @@ function computeStrength(ema9: number[], ema21: number[], trend: 'bullish' | 'be
   return Math.min(Math.max(strength, 0), 100);
 }
 
+function computeCloudPhase(
+  ema9: number[],
+  ema21: number[],
+  direction: EMATrendDirection,
+  compression: boolean,
+  flip: boolean,
+): { phase: EMACloudPhase; spreadPct: number; spreadChangePct: number } {
+  const last9 = ema9[ema9.length - 1];
+  const last21 = ema21[ema21.length - 1];
+  const previous9 = ema9[ema9.length - 2];
+  const previous21 = ema21[ema21.length - 2];
+  const spreadPct = Math.abs(last9 - last21) / Math.max(Math.abs(last21), 0.000001) * 100;
+  const previousSpreadPct = Math.abs(previous9 - previous21) / Math.max(Math.abs(previous21), 0.000001) * 100;
+  const spreadChangePct = previousSpreadPct > 0
+    ? ((spreadPct - previousSpreadPct) / previousSpreadPct) * 100
+    : 0;
+
+  const phase: EMACloudPhase = flip || (direction !== 'neutral' && spreadChangePct < -5)
+    ? 'rolling_over'
+    : compression
+      ? 'compressed'
+      : spreadChangePct > 5
+        ? 'separating'
+        : 'aligned';
+
+  return { phase, spreadPct, spreadChangePct };
+}
+
 export function computeEMACloudTrend(ohlc: OHLC[], timeframe: string): EMACloudTrend | null {
   if (ohlc.length < 21) return null;
 
@@ -100,14 +150,16 @@ export function computeEMACloudTrend(ohlc: OHLC[], timeframe: string): EMACloudT
   const last21 = ema21[ema21.length - 1];
 
   const direction: EMATrendDirection = 
-    last9 > last21 * 1.001 ? 'bullish' : 
-    last9 < last21 * 0.999 ? 'bearish' : 'neutral';
+    last9 > last21 ? 'bullish' : 
+    last9 < last21 ? 'bearish' : 'neutral';
 
   const compression = detectCompression(ema9, ema21);
   const exhaustion = detectExhaustion(ema9, ema21, closes);
   const flip = detectFlip(ema9, ema21);
+  const holdConfirmed = detectCrossHold(ema9, ema21, closes);
   const volatilityRegime = computeVolatilityRegime(closes);
   const strength = computeStrength(ema9, ema21, direction);
+  const cloudPhase = computeCloudPhase(ema9, ema21, direction, compression, flip);
 
   return {
     direction,
@@ -115,6 +167,8 @@ export function computeEMACloudTrend(ohlc: OHLC[], timeframe: string): EMACloudT
     compression,
     exhaustion,
     flip,
-    volatilityRegime
+    holdConfirmed,
+    volatilityRegime,
+    ...cloudPhase
   };
 }

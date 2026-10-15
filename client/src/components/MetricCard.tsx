@@ -586,7 +586,7 @@ function getStrongStackExecuteDirection(alert: ScannerResult): 'bullish' | 'bear
   const primaryDirectionalRelease =
     (stack?.agreement ?? 0) >= 60 &&
     isExecuteLikeSignal(alert.breakoutSignal) &&
-    Math.abs(alert.momentumStrength ?? 0) >= 36;
+    Math.abs(alert.momentumStrength ?? 0) >= 36 &&
     alert.expansionDirection === stackBias;
   if (primaryDirectionalRelease) return stackBias;
 
@@ -1643,6 +1643,7 @@ export function PriceCard({
   intradayChange,
   intradayChangePercent,
   sectorData,
+  isMarketOpen,
 }: {
   symbol: string;
   price: number;
@@ -1650,6 +1651,7 @@ export function PriceCard({
   changePercent?: number;
   intradayChange?: number;
   intradayChangePercent?: number;
+  isMarketOpen: boolean;
   sectorData?: Array<{
     code: string;
     label: string;
@@ -1667,15 +1669,14 @@ export function PriceCard({
 
   const { data: scannerResults } = useQuery<ScannerResult[]>({
     queryKey: ["/api/scanner/results"],
-    enabled: !!symbol,
-    refetchInterval: 30000,
+    enabled: !!symbol && isMarketOpen,
+    refetchInterval: isMarketOpen ? 30000 : false,
     staleTime: 5000,
   });
 
   const { data: fusionSnapshot } = useQuery<PriceCardFusionSnapshot>({
     queryKey: ["/api/fusion", symbol],
-    enabled: !!symbol,
-    refetchInterval: 30000,
+    enabled: !!symbol && isMarketOpen,
     staleTime: 10000,
   });
 
@@ -1685,11 +1686,11 @@ export function PriceCard({
     return Math.round(Math.abs(numeric) <= 1 ? numeric * 100 : numeric);
   };
 
-  const scannerSignal = scannerResults?.find(
+  const scannerSignal = isMarketOpen ? scannerResults?.find(
     (result) => String(result.symbol ?? "").toUpperCase() === symbol.toUpperCase(),
-  );
+  ) : undefined;
 
-  const unifiedSignal = fusionSnapshot?.unifiedSignal;
+  const unifiedSignal = isMarketOpen ? fusionSnapshot?.unifiedSignal : undefined;
   const unifiedDirectionRaw = String(unifiedSignal?.unifiedDirection ?? "WAIT").toUpperCase();
   const unifiedDirection: "CALL" | "PUT" | "WAIT" =
     unifiedDirectionRaw === "CALL" ? "CALL" : unifiedDirectionRaw === "PUT" ? "PUT" : "WAIT";
@@ -2232,6 +2233,8 @@ export function PriceCard({
   if (hardFusionConflict) callPutSignal = "NO TRADE";
   if (unifiedSafetyForceWait && Math.abs(callPutScore) < 88) callPutSignal = "NO TRADE";
   if (scannerSignalQuality === "UNRELIABLE" && Math.abs(callPutScore) < 85) callPutSignal = "NO TRADE";
+  if (!isMarketOpen) callPutSignal = "NO TRADE";
+  const actionLabel = isMarketOpen ? callPutSignal : "MARKET CLOSED";
   const absCpScore = Math.abs(callPutScore);
   const cpStrength =
     absCpScore >= Math.max(72, dynamicThreshold + 14)
@@ -2418,7 +2421,7 @@ export function PriceCard({
                   )}
                   <div className="text-[22px] font-black font-mono leading-none tracking-wider"
                     style={{ color: callPutColor, textShadow: `0 0 16px ${callPutColor}88` }}>
-                    {callPutSignal}
+                    {actionLabel}
                   </div>
                   <div className="flex items-center justify-center gap-1.5 mt-0.5">
                     <span className="text-[8px] font-black tracking-widest uppercase" style={{ color: callPutColor + "aa" }}>{cpStrength}</span>
@@ -2544,7 +2547,7 @@ export function PriceCard({
               </span>
               <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-gradient-to-r border"
                 style={{ borderColor: callPutColor + "45", backgroundColor: callPutColor + "18", color: callPutColor }}>
-                {callPutSignal}
+                {actionLabel}
               </span>
               <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border border-cyan-400/40 text-cyan-200 bg-cyan-500/10">
                 {cpStrength}
@@ -2629,7 +2632,7 @@ export function PriceCard({
                 <div className={`aegis-alert-radar is-${callPutSignal.toLowerCase()}`}>
                   <div className="warroom-smart-engine is-call" style={{ minHeight: "7.2rem", minWidth: 0 }}>
                     <div className="warroom-smart-engine__orbit"><i /><i /><i /></div>
-                    <svg viewBox="0 0 180 180" role="img" aria-label={`${callPutSignal} alert radar`}>
+                    <svg viewBox="0 0 180 180" role="img" aria-label={`${actionLabel} alert radar`}>
                       <circle className="warroom-smart-engine__halo" cx="90" cy="90" r="82" />
                       <circle className="warroom-smart-engine__track" cx="90" cy="90" r="70" pathLength="100" />
                       <circle className="warroom-smart-engine__probability" cx="90" cy="90" r="70" pathLength="100" style={{ strokeDasharray: `${Math.min(100, Math.round(surgeHeat * 100))} ${100 - Math.min(100, Math.round(surgeHeat * 100))}` }} />
@@ -2641,7 +2644,7 @@ export function PriceCard({
                     <div className="warroom-smart-engine__readout">
                       <span>{isSurging ? "ALERT" : "BUILDING"}</span>
                       <strong>{Math.round(surgeHeat * 100)}</strong>
-                      <em>{callPutSignal}</em>
+                      <em>{actionLabel}</em>
                       <small>{surgeLabel}</small>
                     </div>
                   </div>
@@ -2653,7 +2656,7 @@ export function PriceCard({
                       {isSurging ? "EXPLOSIVE MOVE" : "BUILDING"}
                     </span>
                     <span className="aegis-alert-copy__signal" style={{ color: callPutColor, borderColor: callPutColor + "55", background: callPutColor + "15" }}>
-                      {callPutSignal}
+                      {actionLabel}
                     </span>
                   </div>
                   <div className="aegis-alert-copy__meter">

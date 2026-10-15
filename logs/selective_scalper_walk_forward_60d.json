@@ -1,0 +1,186 @@
+{
+  "generatedAt": "2026-09-05T14:23:30.786Z",
+  "lookbackDays": 60,
+  "split": "first 70% sessions train / final 30% sessions holdout",
+  "selectionCriteria": {
+    "minTrainTrades": 12,
+    "minTrainWinRate": 65,
+    "minTrainProfitFactor": 1,
+    "minHoldoutTrades": 5
+  },
+  "aggregateHoldout": {
+    "symbols": 4,
+    "trades": 105,
+    "wins": 65,
+    "winRate": 61.9,
+    "targetWinRate": 70,
+    "releaseQualified": false
+  },
+  "rows": [
+    {
+      "symbol": "AAPL",
+      "selectedProfile": "strong_bar_v1.10_calls",
+      "direction": "CALL",
+      "accepted": true,
+      "rejectionReason": null,
+      "train": {
+        "totalSignals": 59,
+        "wins": 39,
+        "winRate": 66.1,
+        "profitFactor": 1.25,
+        "expectancy": 1.6
+      },
+      "holdout": {
+        "totalSignals": 28,
+        "wins": 19,
+        "winRate": 67.9,
+        "profitFactor": 1.55,
+        "expectancy": 3.17
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "selectedProfile": "strong_bar_v1.10_puts",
+      "direction": "PUT",
+      "accepted": false,
+      "rejectionReason": "Holdout sample below 5 trades",
+      "train": {
+        "totalSignals": 33,
+        "wins": 27,
+        "winRate": 81.8,
+        "profitFactor": 2.1,
+        "expectancy": 4.96
+      },
+      "holdout": {
+        "totalSignals": 4,
+        "wins": 1,
+        "winRate": 25,
+        "profitFactor": 0.15,
+        "expectancy": -8.73
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "selectedProfile": "strong_bar_v1.10_puts",
+      "direction": "PUT",
+      "accepted": true,
+      "rejectionReason": null,
+      "train": {
+        "totalSignals": 47,
+        "wins": 37,
+        "winRate": 78.7,
+        "profitFactor": 2.06,
+        "expectancy": 5.12
+      },
+      "holdout": {
+        "totalSignals": 19,
+        "wins": 13,
+        "winRate": 68.4,
+        "profitFactor": 0.95,
+        "expectancy": -0.38
+      }
+    },
+    {
+      "symbol": "SPY",
+      "selectedProfile": "volume_v1.10_puts",
+      "direction": "PUT",
+      "accepted": false,
+      "rejectionReason": "No training profile met 12+ trades, 65% WR, PF 1+ and positive expectancy",
+      "train": {
+        "totalSignals": 79,
+        "wins": 44,
+        "winRate": 55.7,
+        "profitFactor": 1.06,
+        "expectancy": 0.28
+      },
+      "holdout": null
+    },
+    {
+      "symbol": "QQQ",
+      "selectedProfile": "strong_bar_v1.10_calls",
+      "direction": "CALL",
+      "accepted": true,
+      "rejectionReason": null,
+      "train": {
+        "totalSignals": 46,
+        "wins": 30,
+        "winRate": 65.2,
+        "profitFactor": 1.43,
+        "expectancy": 1.99
+      },
+      "holdout": {
+        "totalSignals": 13,
+        "wins": 5,
+        "winRate": 38.5,
+        "profitFactor": 0.53,
+        "expectancy": -3.28
+      }
+    },
+    {
+      "symbol": "GOOGL",
+      "selectedProfile": "volume_v1.10_calls",
+      "direction": "CALL",
+      "accepted": false,
+      "rejectionReason": "No training profile met 12+ trades, 65% WR, PF 1+ and positive expectancy",
+      "train": {
+        "totalSignals": 113,
+        "wins": 73,
+        "winRate": 64.6,
+        "profitFactor": 1.09,
+        "expectancy": 0.68
+      },
+      "holdout": null
+    },
+    {
+      "symbol": "AMZN",
+      "selectedProfile": "volume_v1.20_puts",
+      "direction": "PUT",
+      "accepted": false,
+      "rejectionReason": "No training profile met 12+ trades, 65% WR, PF 1+ and positive expectancy",
+      "train": {
+        "totalSignals": 117,
+        "wins": 70,
+        "winRate": 59.8,
+        "profitFactor": 0.96,
+        "expectancy": -0.33
+      },
+      "holdout": null
+    },
+    {
+      "symbol": "NVDA",
+      "selectedProfile": "volume_v1.20_calls",
+      "direction": "CALL",
+      "accepted": true,
+      "rejectionReason": null,
+      "train": {
+        "totalSignals": 109,
+        "wins": 72,
+        "winRate": 66.1,
+        "profitFactor": 1.18,
+        "expectancy": 1.32
+      },
+      "holdout": {
+        "totalSignals": 45,
+        "wins": 28,
+        "winRate": 62.2,
+        "profitFactor": 0.89,
+        "expectancy": -1.01
+      }
+    },
+    {
+      "symbol": "GLD",
+      "selectedProfile": "baseline_v1.04_calls",
+      "direction": "CALL",
+      "accepted": false,
+      "rejectionReason": "No training profile met 12+ trades, 65% WR, PF 1+ and positive expectancy",
+      "train": {
+        "totalSignals": 102,
+        "wins": 50,
+        "winRate": 49,
+        "profitFactor": 0.82,
+        "expectancy": -0.99
+      },
+      "holdout": null
+    }
+  ]
+}

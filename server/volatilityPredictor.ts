@@ -7,10 +7,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const logsDir = path.join(__dirname, '..', 'logs');
+const logsDir = path.resolve(process.cwd(), 'logs');
 
 interface VolatilityModel {
   weights: Record<string, number>;

@@ -31,6 +31,18 @@ interface TrendExhaustion {
   isExhausted: boolean;
 }
 
+interface PreMovePressure {
+  score: number;
+  direction: 'bullish' | 'bearish' | 'neutral';
+  components: {
+    directional: number;
+    candle: number;
+    volume: number;
+    trend: number;
+  };
+  reasons: string[];
+}
+
 interface BullishPower {
   rawScore: number;
   meter: number;
@@ -166,6 +178,45 @@ const CONFIG = {
 };
 
 const clampNum = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+function computePreMovePressure(
+  directionScore: number,
+  candleStrength: CandleStrength,
+  volumeSpike: VolumeSpike | null,
+  adx: number,
+  bias: 'bullish' | 'bearish' | 'neutral',
+): PreMovePressure {
+  const directional = clampNum(Math.abs(directionScore) / 30 * 100, 0, 100);
+  const candle = clampNum(candleStrength.score, 0, 100);
+  const volumeRatio = volumeSpike && volumeSpike.avgVolume > 0
+    ? volumeSpike.lastVolume / volumeSpike.avgVolume
+    : 1;
+  const volume = clampNum(volumeRatio / 2 * 100, 0, 100);
+  const trend = clampNum(adx / 35 * 100, 0, 100);
+  const score = Math.round(clampNum(
+    directional * 0.4 + candle * 0.25 + volume * 0.2 + trend * 0.15,
+    0,
+    100,
+  ));
+  const reasons: string[] = [];
+
+  if (directional >= 60) reasons.push(`Directional pressure elevated (${Math.round(directional)})`);
+  if (volume >= 65) reasons.push(`Volume supporting the move (${volumeRatio.toFixed(2)}x)`);
+  if (candle >= 65) reasons.push(`Candle structure firm (${Math.round(candle)})`);
+  if (trend >= 60) reasons.push(`Trend participation present (ADX ${Math.round(adx)})`);
+
+  return {
+    score,
+    direction: bias,
+    components: {
+      directional: Math.round(directional),
+      candle: Math.round(candle),
+      volume: Math.round(volume),
+      trend: Math.round(trend),
+    },
+    reasons,
+  };
+}
 
 export function assignGrade(overall: number, trendConfidence: number, volumeConfidence: number, patternConfidence: number, marketConfidence: number, signals: any) {
   const roundedOverall = Math.round(overall);
@@ -1049,6 +1100,14 @@ export function analyzeSymbol(
     historicalMetrics
   );
 
+  const preMovePressure = computePreMovePressure(
+    tactical.directionScore,
+    candleStrength,
+    volSpike,
+    marketHealth.adx.value,
+    tactical.bias,
+  );
+
   const overall = (bullishPower.meter + candleStrength.score + marketConfidence) / 3;
   const gradePayload = assignGrade(overall, trendConfidence, volumeConfidence, patternConfidence, marketConfidence, {});
 
@@ -1088,6 +1147,7 @@ export function analyzeSymbol(
     momentumDivergence: momDiv,
     volumeSpike: volSpike,
     trendExhaustion: exhaustion,
+    preMovePressure,
     emaCloud,
     failedVwapReclaim: failedVwap,
     marketHealth,

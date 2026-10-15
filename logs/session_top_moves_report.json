@@ -1,0 +1,147 @@
+{
+  "generatedAt": "2026-09-05T16:22:03.845Z",
+  "methodology": {
+    "topMovesPerSession": 3,
+    "horizonBars": 6,
+    "horizonMinutes": 30,
+    "minConfidence": 55,
+    "lookaheadControl": "Only the latest accepted snapshot with candleTimeMs strictly before the candidate move is evaluated.",
+    "caveat": "Move labels use underlying OHLC. Contract profitability still requires historical option quotes or the versioned 0DTE premium proxy."
+  },
+  "coverage": {
+    "snapshots": 3,
+    "sessions": 3,
+    "reconstructedBars": 33,
+    "topMoves": 4,
+    "movesWithPriorSnapshot": 0
+  },
+  "performance": {
+    "directionCorrect": 0,
+    "directionAccuracyPct": 0,
+    "actionable": 0,
+    "actionableRecallPct": 0,
+    "waitPredictions": 0,
+    "wrongDirection": 0
+  },
+  "featureComparison": {
+    "actionable": {
+      "adx": null,
+      "rsi": null,
+      "macd": null,
+      "volumeRatio": null,
+      "closeLocationPct": null,
+      "rangePct": null,
+      "upProbability": null,
+      "downProbability": null,
+      "chopProbability": null
+    },
+    "missed": {
+      "adx": null,
+      "rsi": null,
+      "macd": null,
+      "volumeRatio": null,
+      "closeLocationPct": null,
+      "rangePct": null,
+      "upProbability": null,
+      "downProbability": null,
+      "chopProbability": null
+    }
+  },
+  "bySymbol": [
+    {
+      "symbol": "IWM",
+      "moves": 0,
+      "actionable": 0,
+      "actionableRecallPct": 0,
+      "averageMovePct": 0
+    },
+    {
+      "symbol": "QQQ",
+      "moves": 0,
+      "actionable": 0,
+      "actionableRecallPct": 0,
+      "averageMovePct": 0
+    },
+    {
+      "symbol": "SPY",
+      "moves": 0,
+      "actionable": 0,
+      "actionableRecallPct": 0,
+      "averageMovePct": 0
+    }
+  ],
+  "moves": [
+    {
+      "symbol": "IWM",
+      "sessionDate": "2026-08-21",
+      "entryTimeMs": 1787328300000,
+      "extremeTimeMs": 1787329500000,
+      "entryPrice": 299.3999938964844,
+      "extremePrice": 299.79998779296875,
+      "direction": "CALL",
+      "magnitudePct": 0.134,
+      "rank": 1,
+      "snapshotTimeMs": null,
+      "leadMinutes": null,
+      "predictedDirection": "WAIT",
+      "confidence": 0,
+      "directionCorrect": false,
+      "actionable": false,
+      "features": {}
+    },
+    {
+      "symbol": "IWM",
+      "sessionDate": "2026-08-21",
+      "entryTimeMs": 1787330100000,
+      "extremeTimeMs": 1787330400000,
+      "entryPrice": 299.7799072265625,
+      "extremePrice": 299.69000244140625,
+      "direction": "PUT",
+      "magnitudePct": 0.03,
+      "rank": 2,
+      "snapshotTimeMs": null,
+      "leadMinutes": null,
+      "predictedDirection": "WAIT",
+      "confidence": 0,
+      "directionCorrect": false,
+      "actionable": false,
+      "features": {}
+    },
+    {
+      "symbol": "SPY",
+      "sessionDate": "2026-08-24",
+      "entryTimeMs": 1787584500000,
+      "extremeTimeMs": 1787586000000,
+      "entryPrice": 762.6799926757812,
+      "extremePrice": 764.4199829101562,
+      "direction": "CALL",
+      "magnitudePct": 0.228,
+      "rank": 1,
+      "snapshotTimeMs": null,
+      "leadMinutes": null,
+      "predictedDirection": "WAIT",
+      "confidence": 0,
+      "directionCorrect": false,
+      "actionable": false,
+      "features": {}
+    },
+    {
+      "symbol": "QQQ",
+      "sessionDate": "2026-08-24",
+      "entryTimeMs": 1787584200000,
+      "extremeTimeMs": 1787586000000,
+      "entryPrice": 705.0599975585938,
+      "extremePrice": 708.280029296875,
+      "direction": "CALL",
+      "magnitudePct": 0.457,
+      "rank": 1,
+      "snapshotTimeMs": null,
+      "leadMinutes": null,
+      "predictedDirection": "WAIT",
+      "confidence": 0,
+      "directionCorrect": false,
+      "actionable": false,
+      "features": {}
+    }
+  ]
+}

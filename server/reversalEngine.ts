@@ -327,6 +327,14 @@ export function computeReversalSignal(params: {
   
   let finalDirection = reversalSignal ? direction : 'none';
   let finalConfidence = reversalConfidence;
+  const hasConfirmedBullishReversalEvidence = reasons.some(reason =>
+    reason.includes('VWAP reclaim') ||
+    reason.includes('Recovery bounce') ||
+    reason.includes('V-shape bounce') ||
+    reason.includes('Bullish engulfing') ||
+    reason.includes('swept recent low') ||
+    reason.includes('Hammer reversal')
+  );
   
   if (dominantTrend && reversalSignal) {
     // In a BULLISH trend: don't report DOWN reversals from momentum (pullbacks are normal)
@@ -341,7 +349,12 @@ export function computeReversalSignal(params: {
     
     // In a BEARISH trend: don't report UP reversals from momentum (bounces are normal)
     // Still report DOWN reversals (bounces off resistance) - these are actionable
-    if (dominantTrend === 'bearish' && finalDirection === 'up' && type?.includes('momentum')) {
+    if (
+      dominantTrend === 'bearish' &&
+      finalDirection === 'up' &&
+      type?.includes('momentum') &&
+      !hasConfirmedBullishReversalEvidence
+    ) {
       finalConfidence = Math.max(10, finalConfidence * 0.3); // Reduce to 30%
       finalDirection = 'none'; // Don't report as reversal
       reasons.push(`[TREND GATE] Bounce in bear market - not a reversal`);

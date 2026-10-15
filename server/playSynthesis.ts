@@ -64,6 +64,7 @@ export function synthesizeMonsterPlay(params: SynthesizePlayParams): UnifiedOpti
 
   const direction: MonsterDirection = unified.direction === 'bullish' ? 'CALLS' : 'PUTS';
   const contracts = direction === 'CALLS' ? chain.calls : chain.puts;
+  const pce = chain.pce;
 
   if (!contracts || contracts.length === 0) return null;
 
@@ -99,7 +100,6 @@ export function synthesizeMonsterPlay(params: SynthesizePlayParams): UnifiedOpti
   if (viable.length === 0) return null;
 
   const unifiedConfidence = unified.confidence ?? 50;
-  const pce = chain.pce;
 
   const ranked = viable
     .map((c) => ({

@@ -829,18 +829,21 @@ export function detectDoji(ohlc: OHLC[]): PatternResult | null {
   if (!isDoji) return null;
 
   const atr5 = computeATR5(ohlc);
-  let name = 'Doji';
+  let name = 'Standard Doji';
   let type: PatternResult['type'] = 'neutral';
   let description = 'Indecision candle with very small body.';
 
-  if (upper > body * 2.5 && lower < body * 1.2) {
+  if (upper >= range * 0.6 && lower <= range * 0.1) {
     name = 'Gravestone Doji';
     type = 'bearish';
     description = 'Potential bearish reversal doji with dominant upper wick.';
-  } else if (lower > body * 2.5 && upper < body * 1.2) {
+  } else if (lower >= range * 0.6 && upper <= range * 0.1) {
     name = 'Dragonfly Doji';
     type = 'bullish';
     description = 'Potential bullish reversal doji with dominant lower wick.';
+  } else if (upper >= range * 0.35 && lower >= range * 0.35) {
+    name = 'Long-Legged Doji';
+    description = 'Long-legged doji showing strong two-sided rejection and indecision.';
   }
 
   const trendBias = inferTrendBias(ohlc);
@@ -891,20 +894,19 @@ export function detectSpinningTop(ohlc: OHLC[]): PatternResult | null {
   if (!isSpinning) return null;
 
   const atr5 = computeATR5(ohlc);
-  const spinBias = inferTrendBias(ohlc);
-  const spinBiasUp = spinBias === 'bullish';
+  const type: PatternResult['type'] = isBullish(c) ? 'bullish' : 'bearish';
 
   return {
-    name: 'Spinning Top',
-    type: 'neutral',
+    name: `Spinning Top (${type === 'bullish' ? 'Bullish' : 'Bearish'})`,
+    type,
     category: 'candlestick',
     confidence: 55,
     description: 'Indecision pattern with small body and relatively long upper and lower wicks',
     startIndex: i,
     endIndex: i,
-    pt1: spinBiasUp ? c.close + atr5 : c.close - atr5,
-    pt2: spinBiasUp ? c.close + atr5 * 2 : c.close - atr5 * 2,
-    stopLoss: spinBiasUp ? c.low : c.high,
+    pt1: type === 'bullish' ? c.close + atr5 : c.close - atr5,
+    pt2: type === 'bullish' ? c.close + atr5 * 2 : c.close - atr5 * 2,
+    stopLoss: type === 'bullish' ? c.low : c.high,
     strengthWeight: 55 / 100
   };
 }
@@ -928,7 +930,7 @@ export function detectMarubozu(ohlc: OHLC[]): PatternResult | null {
   return {
     name: `${type === 'bullish' ? 'Bullish' : 'Bearish'} Marubozu`,
     type,
-    category: 'candlestick',
+    category: 'continuation',
     confidence: 70,
     description: `Strong ${type} momentum candle with almost no wicks`,
     startIndex: i,
@@ -954,12 +956,16 @@ export function detectBullishEngulfing(ohlc: OHLC[]): PatternResult | null {
     if (curr.open < prev.close && curr.close > prev.open) {
       const trend = inferTrendBias(ohlc);
       if (trend === 'bearish') {
+        const lastEngulfingBottom = curr.open < prev.low
+          && inferTrendBias(ohlc.slice(0, -2)) === 'bearish';
         return {
-          name: 'Bullish Engulfing',
+          name: lastEngulfingBottom ? 'Last Engulfing Bottom' : 'Bullish Engulfing',
           type: 'bullish',
           category: 'candlestick',
           confidence: 80,
-          description: 'Strong bullish reversal - current candle engulfs previous bearish body',
+          description: lastEngulfingBottom
+            ? 'A bullish candle gaps lower and engulfs the final bearish candle of a decline.'
+            : 'Strong bullish reversal - current candle engulfs previous bearish body',
           startIndex: i - 1,
           endIndex: i,
           pt1: Math.max(prev.high, curr.high),
@@ -987,12 +993,16 @@ export function detectBearishEngulfing(ohlc: OHLC[]): PatternResult | null {
     if (curr.open > prev.close && curr.close < prev.open) {
       const trend = inferTrendBias(ohlc);
       if (trend === 'bullish') {
+        const lastEngulfingTop = curr.open > prev.high
+          && inferTrendBias(ohlc.slice(0, -2)) === 'bullish';
         return {
-          name: 'Bearish Engulfing',
+          name: lastEngulfingTop ? 'Last Engulfing Top' : 'Bearish Engulfing',
           type: 'bearish',
           category: 'candlestick',
           confidence: 80,
-          description: 'Strong bearish reversal - current candle engulfs previous bullish body',
+          description: lastEngulfingTop
+            ? 'A bearish candle gaps higher and engulfs the final bullish candle of an advance.'
+            : 'Strong bearish reversal - current candle engulfs previous bullish body',
           startIndex: i - 1,
           endIndex: i,
           pt1: Math.min(prev.low, curr.low),
@@ -1265,7 +1275,7 @@ export function detectPiercingPattern(ohlc: OHLC[]): PatternResult | null {
       const trend = inferTrendBias(ohlc);
       if (trend === 'bearish') {
         return {
-          name: 'Piercing Pattern',
+          name: 'Piercing Line',
           type: 'bullish',
           category: 'candlestick',
           confidence: 70,
@@ -1358,6 +1368,438 @@ export function detectTweezers(ohlc: OHLC[]): PatternResult | null {
     };
   }
 
+  return null;
+}
+
+function makeCandlePattern(
+  ohlc: OHLC[],
+  count: number,
+  name: string,
+  type: PatternResult['type'],
+  category: PatternResult['category'],
+  confidence: number,
+  description: string,
+): PatternResult {
+  const endIndex = ohlc.length - 1;
+  const startIndex = Math.max(0, endIndex - count + 1);
+  const candles = ohlc.slice(startIndex, endIndex + 1);
+  const high = Math.max(...candles.map(candle => candle.high));
+  const low = Math.min(...candles.map(candle => candle.low));
+  const height = Math.max(high - low, computeATR5(ohlc));
+
+  return {
+    name,
+    type,
+    category,
+    confidence,
+    description,
+    startIndex,
+    endIndex,
+    pt1: type === 'bullish' ? high + height * 0.5 : low - height * 0.5,
+    pt2: type === 'bullish' ? high + height : low - height,
+    stopLoss: type === 'bullish' ? low : high,
+    strengthWeight: confidence / 100,
+  };
+}
+
+function samePrice(left: number, right: number, tolerance: number): boolean {
+  return Math.abs(left - right) <= tolerance;
+}
+
+export function detectHomingPigeon(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 6 || inferTrendBias(ohlc) !== 'bearish') return null;
+  const previous = ohlc[ohlc.length - 2];
+  const current = ohlc[ohlc.length - 1];
+  const insideBody = Math.max(current.open, current.close) < previous.open
+    && Math.min(current.open, current.close) > previous.close;
+  if (!isBearish(previous) || !isBearish(current) || !insideBody || bodySize(current) >= bodySize(previous) * 0.65) return null;
+  return makeCandlePattern(ohlc, 2, 'Homing Pigeon', 'bullish', 'candlestick', 67, 'Bullish reversal setup with a small bearish body contained inside the prior bearish body.');
+}
+
+export function detectMatchingLowHigh(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 6) return null;
+  const previous = ohlc[ohlc.length - 2];
+  const current = ohlc[ohlc.length - 1];
+  const tolerance = Math.max(avgRange(ohlc, 10) * 0.08, Math.abs(current.close) * 0.0002);
+  const trend = inferTrendBias(ohlc);
+
+  if (trend === 'bearish' && isBearish(previous) && isBearish(current) && samePrice(previous.close, current.close, tolerance)) {
+    return makeCandlePattern(ohlc, 2, 'Matching Low', 'bullish', 'candlestick', 65, 'Bullish reversal setup with two bearish candles closing at matching support.');
+  }
+  if (trend === 'bullish' && isBullish(previous) && isBullish(current) && samePrice(previous.close, current.close, tolerance)) {
+    return makeCandlePattern(ohlc, 2, 'Matching High', 'bearish', 'candlestick', 65, 'Bearish reversal setup with two bullish candles closing at matching resistance.');
+  }
+  return null;
+}
+
+export function detectStickSandwich(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 7) return null;
+  const first = ohlc[ohlc.length - 3];
+  const middle = ohlc[ohlc.length - 2];
+  const last = ohlc[ohlc.length - 1];
+  const tolerance = Math.max(avgRange(ohlc, 10) * 0.1, Math.abs(last.close) * 0.0002);
+  const trend = inferTrendBias(ohlc);
+
+  if (trend === 'bearish' && isBearish(first) && isBullish(middle) && isBearish(last)
+      && samePrice(first.close, last.close, tolerance) && middle.close > first.open) {
+    return makeCandlePattern(ohlc, 3, 'Stick Sandwich (Bullish)', 'bullish', 'candlestick', 72, 'Bullish reversal with matching bearish closes surrounding a bullish candle.');
+  }
+  if (trend === 'bullish' && isBullish(first) && isBearish(middle) && isBullish(last)
+      && samePrice(first.close, last.close, tolerance) && middle.close < first.open) {
+    return makeCandlePattern(ohlc, 3, 'Stick Sandwich (Bearish)', 'bearish', 'candlestick', 72, 'Bearish reversal with matching bullish closes surrounding a bearish candle.');
+  }
+  return null;
+}
+
+export function detectDeliberationPattern(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 7 || inferTrendBias(ohlc) !== 'bullish') return null;
+  const first = ohlc[ohlc.length - 3];
+  const second = ohlc[ohlc.length - 2];
+  const third = ohlc[ohlc.length - 1];
+  const firstTwoStrong = isBullish(first) && isBullish(second)
+    && second.close > first.close && bodySize(second) >= bodySize(first) * 0.7;
+  const hesitation = isBullish(third) && third.open >= second.close - avgRange(ohlc, 10) * 0.1
+    && bodySize(third) <= bodySize(second) * 0.45;
+  if (!firstTwoStrong || !hesitation) return null;
+  return makeCandlePattern(ohlc, 3, 'Deliberation Pattern', 'bearish', 'candlestick', 64, 'Bearish reversal warning as a strong advance stalls on a small third bullish candle.');
+}
+
+export function detectConcealingBabySwallow(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 8 || inferTrendBias(ohlc) !== 'bearish') return null;
+  const [first, second, third, fourth] = ohlc.slice(-4);
+  const firstTwoMarubozu = [first, second].every(candle => isBearish(candle)
+    && bodySize(candle) / Math.max(totalRange(candle), 1e-9) >= 0.8);
+  const thirdGapDown = isBearish(third) && third.high < second.low && upperWick(third) >= bodySize(third) * 0.25;
+  const fourthEngulfsThird = isBearish(fourth) && fourth.open > third.high && fourth.close < third.low;
+  if (!firstTwoMarubozu || !thirdGapDown || !fourthEngulfsThird) return null;
+  return makeCandlePattern(ohlc, 4, 'Concealing Baby Swallow', 'bearish', 'continuation', 76, 'Bearish continuation pattern whose final engulfing candle can precede downside exhaustion.');
+}
+
+export function detectBreakaway(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 9) return null;
+  const [first, second, third, fourth, fifth] = ohlc.slice(-5);
+  const trend = inferTrendBias(ohlc.slice(0, -4));
+
+  if (trend === 'bearish' && isBearish(first) && second.high < first.low
+      && third.high <= second.high && fourth.low <= third.low && isBullish(fifth)
+      && fifth.close > second.open && fifth.close < first.open) {
+    return makeCandlePattern(ohlc, 5, 'Breakaway (Bullish)', 'bullish', 'gap', 78, 'Five-candle bullish breakaway reversal that closes back into the initial downside gap.');
+  }
+  if (trend === 'bullish' && isBullish(first) && second.low > first.high
+      && third.low >= second.low && fourth.high >= third.high && isBearish(fifth)
+      && fifth.close < second.open && fifth.close > first.open) {
+    return makeCandlePattern(ohlc, 5, 'Breakaway (Bearish)', 'bearish', 'gap', 78, 'Five-candle bearish breakaway reversal that closes back into the initial upside gap.');
+  }
+  return null;
+}
+
+export function detectTasukiGap(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 6) return null;
+  const [first, second, third] = ohlc.slice(-3);
+  if (isBullish(first) && isBullish(second) && second.low > first.high && isBearish(third)
+      && third.open < second.close && third.close > first.high && third.close < second.low) {
+    return makeCandlePattern(ohlc, 3, 'Tasuki Gap (Bullish)', 'bullish', 'gap', 70, 'Bullish continuation gap partially filled by a bearish third candle without closing the gap.');
+  }
+  if (isBearish(first) && isBearish(second) && second.high < first.low && isBullish(third)
+      && third.open > second.close && third.close < first.low && third.close > second.high) {
+    return makeCandlePattern(ohlc, 3, 'Tasuki Gap (Bearish)', 'bearish', 'gap', 70, 'Bearish continuation gap partially filled by a bullish third candle without closing the gap.');
+  }
+  return null;
+}
+
+function detectRequestedReversalVariants(ohlc: OHLC[]): PatternResult[] {
+  if (ohlc.length < 8) return [];
+
+  const index = ohlc.length - 1;
+  const first = ohlc[index - 2];
+  const previous = ohlc[index - 1];
+  const current = ohlc[index];
+  const prior = ohlc.slice(0, -2);
+  const trend = inferTrendBias(prior);
+  const baselineBody = Math.max(avgBody(prior, 10), Math.abs(current.close) * 0.0001);
+  const tolerance = Math.max(avgRange(prior, 10) * 0.12, Math.abs(current.close) * 0.0002);
+  const previousMid = (previous.open + previous.close) / 2;
+  const previousBodyHigh = Math.max(previous.open, previous.close);
+  const previousBodyLow = Math.min(previous.open, previous.close);
+  const currentBodyHigh = Math.max(current.open, current.close);
+  const currentBodyLow = Math.min(current.open, current.close);
+  const previousLong = bodySize(previous) >= baselineBody * 0.8;
+  const previousGapDown = current.open < previous.low - tolerance * 0.25;
+  const previousGapUp = current.open > previous.high + tolerance * 0.25;
+  const results: PatternResult[] = [];
+
+  const add = (
+    name: string,
+    direction: 'bullish' | 'bearish',
+    confidence: number,
+    description: string,
+    count: number = 2,
+    category: PatternResult['category'] = 'candlestick',
+  ) => results.push(makeCandlePattern(ohlc, count, name, direction, category, confidence, description));
+
+  if (trend === 'bearish' && isBullish(previous) && isBullish(current)
+      && bodySize(previous) >= baselineBody * 0.75 && bodySize(current) >= baselineBody * 0.75
+      && lowerWick(previous) <= bodySize(previous) * 0.12
+      && lowerWick(current) <= bodySize(current) * 0.12
+      && current.close > previous.high) {
+    add('Bullish Belt Hold Pair', 'bullish', 62, 'Two strong bullish belt-hold candles appear after a decline, with the second closing above the first high.');
+  }
+  if (trend === 'bullish' && isBearish(previous) && isBearish(current)
+      && bodySize(previous) >= baselineBody * 0.75 && bodySize(current) >= baselineBody * 0.75
+      && upperWick(previous) <= bodySize(previous) * 0.12
+      && upperWick(current) <= bodySize(current) * 0.12
+      && current.close < previous.low) {
+    add('Bearish Belt Hold Pair', 'bearish', 62, 'Two strong bearish belt-hold candles appear after an advance, with the second closing below the first low.');
+  }
+  if (trend === 'bearish' && isBearish(first) && first.high < prior[prior.length - 2].low
+      && current.low > previous.high && isBullish(current)) {
+    add('Island Reversal Bottom (2-candle interpretation)', 'bullish', 72, 'A downside-gap island is isolated by a subsequent upside gap and bullish close.', 3, 'gap');
+  }
+  if (trend === 'bullish' && isBullish(first) && first.low > prior[prior.length - 2].high
+      && current.high < previous.low && isBearish(current)) {
+    add('Island Reversal Top (2-candle interpretation)', 'bearish', 72, 'An upside-gap island is isolated by a subsequent downside gap and bearish close.', 3, 'gap');
+  }
+
+  if (trend === 'bearish' && isBearish(previous) && previousLong) {
+    if (bodySize(current) <= baselineBody * 0.12
+        && currentBodyLow > previousBodyLow && currentBodyHigh < previousBodyHigh) {
+      add('Bullish Harami Cross', 'bullish', 64, 'A doji is contained inside a long bearish body after a decline; reversal is unconfirmed.');
+    }
+    if (isBullish(current) && previousGapDown && samePrice(current.close, previous.close, tolerance)) {
+      if (current.open < previous.low - tolerance) {
+        add('Bullish Counterattack', 'bullish', 66, 'A bullish candle gaps below the prior low and closes near the prior bearish close.');
+      } else {
+        add('Bullish Meeting Lines', 'bullish', 62, 'A bullish candle opens lower and recovers to the prior bearish close.');
+      }
+    }
+    if (isBullish(current) && previousGapDown) {
+      if (current.close > previous.high) {
+        add('Bullish Window Reversal', 'bullish', 70, 'A downside gap is fully reclaimed by the bullish candle.', 2, 'gap');
+      } else if (current.close > previousMid) {
+        add('Bullish Gap Reversal', 'bullish', 68, 'A bullish candle gaps below the prior low and recovers above its midpoint.', 2, 'gap');
+      }
+    }
+    if (isBullish(current) && previousGapDown && current.close <= previous.low + tolerance
+        && current.close >= previous.low - tolerance) {
+      add('On-Neck Pattern (weak bullish reversal candidate)', 'bullish', 52, 'Weak reversal candidate: after a downside gap, the bullish close returns to the prior low.');
+    } else if (isBullish(current) && previousGapDown
+        && current.close > previous.low + tolerance && current.close < previous.close) {
+      add('In-Neck Pattern (weak bullish reversal candidate)', 'bullish', 54, 'Weak reversal candidate: the bullish close recovers just above the prior low but remains below the prior close.');
+    } else if (isBullish(current) && previousGapDown
+        && current.close >= previous.close && current.close < previousMid) {
+      add('Thrusting Pattern (bullish variation)', 'bullish', 56, 'Weak reversal candidate: the bullish candle enters the lower half of the prior bearish body.');
+    }
+    if (isBearish(first) && isBearish(previous)
+        && samePrice(first.close, previous.close, tolerance)
+        && isBullish(current) && current.close > Math.max(first.high, previous.high)) {
+      add('Matching Low Plus Confirmation', 'bullish', 70, 'Two bearish candles hold matching closes and a bullish third candle closes above both highs.', 3);
+    }
+    if (isBearish(first) && isBearish(previous) && previous.high < first.low
+        && isBullish(current) && current.open < previous.close
+        && current.close > previous.high && current.close < first.low) {
+      add('Bullish Tasuki Reversal', 'bullish', 68, 'A bullish third candle recovers part of a downside gap after a selloff.', 3, 'gap');
+    }
+  }
+
+  if (trend === 'bullish' && isBullish(previous) && previousLong) {
+    if (isBullish(previous) && isBullish(current)
+        && currentBodyHigh < previousBodyHigh && currentBodyLow > previousBodyLow
+        && bodySize(current) < bodySize(previous) * 0.6) {
+      add('Descending Hawk', 'bearish', 62, 'A smaller bullish candle remains inside the prior bullish candle near the end of an advance.');
+    }
+    if (bodySize(current) <= baselineBody * 0.12
+        && currentBodyLow > previousBodyLow && currentBodyHigh < previousBodyHigh) {
+      add('Bearish Harami Cross', 'bearish', 64, 'A doji is contained inside a long bullish body after an advance; reversal is unconfirmed.');
+    }
+    if (isBearish(current) && previousGapUp && samePrice(current.close, previous.close, tolerance)) {
+      if (current.open > previous.high + tolerance) {
+        add('Bearish Counterattack', 'bearish', 66, 'A bearish candle gaps above the prior high and closes near the prior bullish close.');
+      } else {
+        add('Bearish Meeting Lines', 'bearish', 62, 'A bearish candle opens higher and sells back to the prior bullish close.');
+      }
+    }
+    if (isBearish(current) && previousGapUp) {
+      if (current.close < previous.low) {
+        add('Bearish Window Reversal', 'bearish', 70, 'An upside gap is fully rejected by the bearish candle.', 2, 'gap');
+      } else if (current.close < previousMid) {
+        add('Bearish Gap Reversal', 'bearish', 68, 'A bearish candle gaps above the prior high and closes below its midpoint.', 2, 'gap');
+      }
+    }
+    if (isBullish(previous) && isBearish(current)
+        && previousLong && isBullish(first)
+        && current.open > previous.close && current.open <= previous.high
+        && current.close < previousMid && current.close > previous.open) {
+      add('Delayed Dark Cloud Cover', 'bearish', 64, 'A bearish candle opens within the prior bullish range and later closes below its midpoint.');
+    }
+    if (isBearish(current) && previousGapUp && current.close >= previous.high - tolerance
+        && current.close <= previous.high + tolerance) {
+      add('Bearish Neckline Pattern', 'bearish', 52, 'Weak reversal candidate: after an upside gap, the bearish close returns to the prior high.');
+    } else if (isBearish(current) && previousGapUp
+        && current.close < previous.high - tolerance && current.close > previous.close) {
+      add('Bearish On-Neck Variation', 'bearish', 54, 'Weak reversal candidate: the bearish close slips just below the prior high but remains above the prior close.');
+    } else if (isBearish(current) && previousGapUp
+        && current.close <= previous.close && current.close > previousMid) {
+      add('Bearish Thrusting Variation', 'bearish', 56, 'Weak reversal candidate: the bearish candle enters the upper half of the prior bullish body.');
+    }
+    if (isBullish(first) && isBullish(previous)
+        && samePrice(first.close, previous.close, tolerance)
+        && isBearish(current) && current.close < Math.min(first.low, previous.low)) {
+      add('Matching High Plus Confirmation', 'bearish', 70, 'Two bullish candles hold matching closes and a bearish third candle closes below both lows.', 3);
+    }
+    if (isBullish(first) && isBullish(previous) && previous.low > first.high
+        && isBearish(current) && current.open > previous.close
+        && current.close < previous.low && current.close > first.high) {
+      add('Bearish Tasuki Reversal', 'bearish', 68, 'A bearish third candle rejects part of an upside gap after a rally.', 3, 'gap');
+    }
+  }
+
+  if (trend === 'bearish' && isBearish(previous)
+      && bodySize(previous) >= baselineBody * 0.8
+      && bodySize(current) <= baselineBody * 0.12
+      && current.high < previous.low) {
+    add('Doji Star Bottom', 'bullish', 58, 'A small doji gaps below a long bearish candle; reversal requires confirmation.');
+  }
+  if (trend === 'bullish' && isBullish(previous)
+      && bodySize(previous) >= baselineBody * 0.8
+      && bodySize(current) <= baselineBody * 0.12
+      && current.low > previous.high) {
+    add('Doji Star Top', 'bearish', 58, 'A small doji gaps above a long bullish candle; reversal requires confirmation.');
+  }
+
+  return results;
+}
+
+export function detectGapTwoCrowsAndMethods(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 7) return null;
+  const lastThree = ohlc.slice(-3);
+  const [first, second, third] = lastThree;
+  if (inferTrendBias(ohlc) === 'bullish' && isBullish(first) && isBearish(second) && isBearish(third)
+      && second.low > first.high && third.open > second.open && third.close < second.close && third.close > first.close) {
+    return makeCandlePattern(ohlc, 3, 'Upside Gap Two Crows', 'bearish', 'gap', 74, 'Bearish reversal with two bearish candles holding above an upside gap after an advance.');
+  }
+
+  if (ohlc.length >= 8) {
+    const [a, b, c, d] = ohlc.slice(-4);
+    if (inferTrendBias(ohlc) === 'bearish' && isBearish(a) && isBearish(b) && b.high < a.low
+        && isBullish(c) && c.close < a.low && isBearish(d) && d.close < b.low) {
+      return makeCandlePattern(ohlc, 4, 'Downside Gap Three Methods', 'bearish', 'gap', 75, 'Bearish continuation with a downside gap, failed recovery, and renewed breakdown.');
+    }
+  }
+  return null;
+}
+
+export function detectSideBySideLines(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 6) return null;
+  const [first, second, third] = ohlc.slice(-3);
+  const tolerance = avgRange(ohlc, 10) * 0.12;
+  if (second.low > first.high && isBullish(second) && isBullish(third)
+      && samePrice(second.open, third.open, tolerance) && samePrice(second.close, third.close, tolerance)) {
+    return makeCandlePattern(ohlc, 3, 'Side-by-Side White Lines', 'bullish', 'gap', 68, 'Bullish continuation with two similar white candles holding above an upside gap.');
+  }
+  if (second.high < first.low && isBearish(second) && isBearish(third)
+      && samePrice(second.open, third.open, tolerance) && samePrice(second.close, third.close, tolerance)) {
+    return makeCandlePattern(ohlc, 3, 'Side-by-Side Black Lines', 'bearish', 'gap', 68, 'Bearish continuation with two similar black candles holding below a downside gap.');
+  }
+  return null;
+}
+
+export function detectThreeStarsInSouth(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 7 || inferTrendBias(ohlc) !== 'bearish') return null;
+  const [first, second, third] = ohlc.slice(-3);
+  const contracting = isBearish(first) && isBearish(second) && bodySize(second) < bodySize(first)
+    && second.low > first.low && lowerWick(first) > bodySize(first) * 0.5;
+  const finalSmall = bodySize(third) < bodySize(second) * 0.6 && third.low > second.low && third.high < second.high;
+  if (!contracting || !finalSmall) return null;
+  return makeCandlePattern(ohlc, 3, 'Three Stars in the South', 'bullish', 'candlestick', 72, 'Bullish reversal as three bearish candles contract and stop making lower lows.');
+}
+
+export function detectThreeMountains(ohlc: OHLC[]): PatternResult | null {
+  const tripleTop = detectTripleTop(ohlc);
+  if (!tripleTop) return null;
+  return {
+    ...tripleTop,
+    name: 'Three Mountains',
+    category: 'reversal',
+    description: 'Bearish long-form reversal with three comparable mountain peaks and a support break.',
+  };
+}
+
+export function detectTowerReversal(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 10) return null;
+  const candles = ohlc.slice(-7);
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  const middle = candles.slice(1, -1);
+  const averageBody = avgBody(ohlc.slice(0, -1), 10);
+  const middleBody = average(middle.map(bodySize));
+
+  if (inferTrendBias(ohlc) === 'bearish' && isBearish(first) && bodySize(first) > averageBody * 1.1
+      && middleBody < bodySize(first) * 0.55 && isBullish(last) && bodySize(last) > averageBody) {
+    return makeCandlePattern(ohlc, 7, 'Tower Bottom', 'bullish', 'candlestick', 76, 'Bullish tower reversal with a selloff, basing candles, and a strong recovery candle.');
+  }
+  if (inferTrendBias(ohlc) === 'bullish' && isBullish(first) && bodySize(first) > averageBody * 1.1
+      && middleBody < bodySize(first) * 0.55 && isBearish(last) && bodySize(last) > averageBody) {
+    return makeCandlePattern(ohlc, 7, 'Tower Top', 'bearish', 'candlestick', 76, 'Bearish tower reversal with a rally, distribution candles, and a strong selloff candle.');
+  }
+  return null;
+}
+
+export function detectLadderReversal(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 9) return null;
+  const [one, two, three, four, five] = ohlc.slice(-5);
+  if (inferTrendBias(ohlc) === 'bearish' && [one, two, three].every(isBearish)
+      && two.close < one.close && three.close < two.close && lowerWick(four) > bodySize(four)
+      && isBullish(five) && five.open > four.open && five.close > four.high) {
+    return makeCandlePattern(ohlc, 5, 'Ladder Bottom', 'bullish', 'candlestick', 75, 'Bullish five-candle ladder reversal confirmed by a strong final recovery candle.');
+  }
+  if (inferTrendBias(ohlc) === 'bullish' && [one, two, three].every(isBullish)
+      && two.close > one.close && three.close > two.close && upperWick(four) > bodySize(four)
+      && isBearish(five) && five.open < four.open && five.close < four.low) {
+    return makeCandlePattern(ohlc, 5, 'Ladder Top', 'bearish', 'candlestick', 75, 'Bearish five-candle ladder reversal confirmed by a strong final selloff candle.');
+  }
+  return null;
+}
+
+export function detectThreeMethods(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 7) return null;
+  const [first, second, third, fourth, fifth] = ohlc.slice(-5);
+  const middle = [second, third, fourth];
+  const middleInsideFirst = middle.every(candle => candle.high < first.high && candle.low > first.low);
+
+  if (isBullish(first) && middle.every(isBearish) && middleInsideFirst && isBullish(fifth) && fifth.close > first.high) {
+    return makeCandlePattern(ohlc, 5, 'Rising Three Methods', 'bullish', 'continuation', 80, 'Bullish continuation after three controlled pullback candles remain inside the impulse range.');
+  }
+  if (isBearish(first) && middle.every(isBullish) && middleInsideFirst && isBearish(fifth) && fifth.close < first.low) {
+    return makeCandlePattern(ohlc, 5, 'Falling Three Methods', 'bearish', 'continuation', 80, 'Bearish continuation after three controlled rebound candles remain inside the impulse range.');
+  }
+  return null;
+}
+
+export function detectTasukiContinuation(ohlc: OHLC[]): PatternResult | null {
+  const tasuki = detectTasukiGap(ohlc);
+  if (!tasuki) return null;
+  return {
+    ...tasuki,
+    name: tasuki.type === 'bullish' ? 'Upside Tasuki' : 'Downside Tasuki',
+    category: 'continuation',
+  };
+}
+
+export function detectSeparatingLines(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 6) return null;
+  const previous = ohlc[ohlc.length - 2];
+  const current = ohlc[ohlc.length - 1];
+  const tolerance = avgRange(ohlc, 10) * 0.1;
+  const trend = inferTrendBias(ohlc);
+
+  if (trend === 'bullish' && isBearish(previous) && isBullish(current)
+      && samePrice(previous.open, current.open, tolerance) && bodySize(current) >= bodySize(previous) * 0.8) {
+    return makeCandlePattern(ohlc, 2, 'Separating Lines (Bullish)', 'bullish', 'continuation', 70, 'Bullish continuation as opposite-colored candles share an opening level and trend resumes.');
+  }
+  if (trend === 'bearish' && isBullish(previous) && isBearish(current)
+      && samePrice(previous.open, current.open, tolerance) && bodySize(current) >= bodySize(previous) * 0.8) {
+    return makeCandlePattern(ohlc, 2, 'Separating Lines (Bearish)', 'bearish', 'continuation', 70, 'Bearish continuation as opposite-colored candles share an opening level and trend resumes.');
+  }
   return null;
 }
 
@@ -2002,6 +2444,83 @@ export function detectFallingWedge(ohlc: OHLC[]): PatternResult | null {
   return null;
 }
 
+export function detectDiamondTop(ohlc: OHLC[]): PatternResult | null {
+  if (ohlc.length < 28) return null;
+
+  const lastIndex = ohlc.length - 1;
+  const averageRange = Math.max(avgRange(ohlc, 20), Math.abs(ohlc[lastIndex].close) * 0.0001);
+  const windowLengths = [18, 22, 26, 30];
+
+  for (const windowLength of windowLengths) {
+    const startIndex = lastIndex - windowLength + 1;
+    if (startIndex < 8) continue;
+
+    const priorStart = Math.max(0, startIndex - 12);
+    const priorRise = ohlc[startIndex].close - ohlc[priorStart].close;
+    if (priorRise < averageRange * 1.25) continue;
+
+    const slice = ohlc.slice(startIndex, lastIndex + 1);
+    const shoulderLength = Math.max(4, Math.floor(slice.length * 0.25));
+    const left = slice.slice(0, shoulderLength);
+    const middle = slice.slice(shoulderLength, slice.length - shoulderLength);
+    const right = slice.slice(-shoulderLength);
+    if (middle.length < 6) continue;
+
+    const envelopeWidth = (candles: OHLC[]) =>
+      Math.max(...candles.map(candle => candle.high)) - Math.min(...candles.map(candle => candle.low));
+    const leftWidth = envelopeWidth(left);
+    const middleWidth = envelopeWidth(middle);
+    const rightWidth = envelopeWidth(right);
+
+    if (middleWidth < leftWidth * 1.25 || middleWidth < rightWidth * 1.35) continue;
+    if (rightWidth > middleWidth * 0.72) continue;
+
+    const middleOffset = startIndex + shoulderLength;
+    const peakOffset = middle.findIndex(candle => candle.high === Math.max(...middle.map(candle => candle.high)));
+    const troughOffset = middle.findIndex(candle => candle.low === Math.min(...middle.map(candle => candle.low)));
+    const peakIndex = middleOffset + peakOffset;
+    const troughIndex = middleOffset + troughOffset;
+    if (Math.abs(peakIndex - troughIndex) < 2) continue;
+
+    const leftCenter = average(left.slice(0, 3).map(candle => (candle.high + candle.low) / 2));
+    const rightBase = right.slice(0, Math.max(2, right.length - 1));
+    const rightCenter = average(rightBase.map(candle => (candle.high + candle.low) / 2));
+    const peak = ohlc[peakIndex].high;
+    const trough = ohlc[troughIndex].low;
+    if (peak - Math.max(leftCenter, rightCenter) < averageRange * 0.8) continue;
+    if (Math.min(leftCenter, rightCenter) - trough < averageRange * 0.8) continue;
+
+    const rightNeckIndex = Math.max(troughIndex + 1, lastIndex - 1);
+    if (rightNeckIndex >= lastIndex) continue;
+    const rightNeckLow = Math.min(ohlc[rightNeckIndex].open, ohlc[rightNeckIndex].close);
+    const supportSlope = (rightNeckLow - trough) / Math.max(1, rightNeckIndex - troughIndex);
+    const projectedSupport = trough + supportSlope * (lastIndex - troughIndex);
+    const last = ohlc[lastIndex];
+    const formed = isBearish(last) && last.close < projectedSupport - averageRange * 0.05;
+    const height = peak - trough;
+    const confidence = formed ? 82 : 68;
+
+    return {
+      name: formed ? 'Diamond Top' : 'Diamond Top (forming)',
+      type: 'bearish',
+      category: 'reversal',
+      confidence,
+      description: formed
+        ? 'Diamond top confirmed by a bearish break below the contracting support boundary.'
+        : 'Diamond top forming as volatility expands and then contracts after an advance.',
+      startIndex,
+      endIndex: lastIndex,
+      priceTarget: projectedSupport - height,
+      pt1: projectedSupport - height * 0.5,
+      pt2: projectedSupport - height,
+      stopLoss: peak,
+      strengthWeight: confidence / 100,
+    };
+  }
+
+  return null;
+}
+
 export function detectFlag(ohlc: OHLC[]): PatternResult | null {
   if (ohlc.length < 20) return null;
 
@@ -2119,7 +2638,6 @@ export function detectFlag(ohlc: OHLC[]): PatternResult | null {
   const lowerAtLast = lowerTL.slope * lastX + lowerTL.intercept;
 
   const breakout = isBull ? last.close > upperAtLast : last.close < lowerAtLast;
-  if (!breakout) return null;
 
   const stopLoss = isBull
     ? Math.min(...consolidationSlice.map(c => c.low))
@@ -2132,15 +2650,17 @@ export function detectFlag(ohlc: OHLC[]): PatternResult | null {
     name: `${isBull ? 'Bull' : 'Bear'} Flag`,
     type: isBull ? 'bullish' : 'bearish',
     category: 'continuation',
-    confidence: 85,
-    description: `${isBull ? 'Bullish' : 'Bearish'} continuation pattern with clean impulse and tight consolidation.`,
+    confidence: breakout ? 85 : 68,
+    description: breakout
+      ? `${isBull ? 'Bullish' : 'Bearish'} continuation pattern with clean impulse, tight consolidation, and confirmed break.`
+      : `${isBull ? 'Bullish' : 'Bearish'} flag is forming after a clean impulse; wait for the channel boundary to break.`,
     startIndex: pole.start,
     endIndex: ohlc.length - 1,
     priceTarget: pt2,
     pt1,
     pt2,
     stopLoss,
-    strengthWeight: 0.92
+    strengthWeight: breakout ? 0.92 : 0.68
   };
 }
 
@@ -2898,6 +3418,20 @@ function fitQuadratic(values: number[]): { a: number; b: number; c: number; r2: 
   return { a, b, c, r2 };
 }
 
+function countDirectionalProgress(
+  values: number[],
+  startIndex: number,
+  direction: 'higher' | 'lower',
+  tolerance: number,
+): number {
+  let count = 0;
+  for (let index = startIndex; index < values.length - 1; index++) {
+    const change = values[index + 1] - values[index];
+    if (direction === 'higher' ? change >= -tolerance : change <= tolerance) count++;
+  }
+  return count;
+}
+
 export function detectRoundedBottom(ohlc: OHLC[]): PatternResult | null {
   if (ohlc.length < 20) return null;
   for (const len of [20, 30, 40, 50, 60]) {
@@ -2950,21 +3484,14 @@ export function detectRoundedBottom(ohlc: OHLC[]): PatternResult | null {
 
     const afterStart = troughIdx + 1;
     const afterLen = len - afterStart;
-    let higherLowCount = 0;
-    if (afterLen >= 4) {
-      for (let j = afterStart; j < Math.min(afterStart + afterLen, len - 1); j++) {
-        if (slice[j + 1].low > slice[j].low) {
-          higherLowCount++;
-        } else {
-          break;
-        }
-      }
-    }
-    if (higherLowCount < 3) continue;
+    const reversalTolerance = Math.max(avgRange(slice, Math.min(10, len)) * 0.15, Math.abs(slice[troughIdx].low) * 0.0002);
+    const higherLowCount = countDirectionalProgress(lows, troughIdx, 'higher', reversalTolerance);
+    const requiredHigherLows = Math.max(2, Math.floor((afterLen - 1) * 0.45));
+    if (higherLowCount < requiredHigherLows) continue;
 
     const quadFit = fitQuadratic(lows);
     if (quadFit.a <= 0) continue;
-    if (quadFit.r2 < 0.70) continue;
+    if (quadFit.r2 < 0.40) continue;
 
     const neckline = Math.max(slice[0].high, slice[len - 1].high);
     const troughLow = slice[troughIdx].low;
@@ -2990,7 +3517,7 @@ export function detectRoundedBottom(ohlc: OHLC[]): PatternResult | null {
       type: 'bullish',
       category: 'breakout',
       confidence,
-      description: `Quadratic saucer bottom (a=${quadFit.a.toFixed(6)}, R²=${quadFit.r2.toFixed(3)}, neckline=${neckline.toFixed(2)}, higherLows=${higherLowCount}${breakConfirmed ? ', BREAK CONFIRMED' : ''})`,
+      description: `Rounded bottom ${breakConfirmed ? 'confirmed' : 'forming'} (a=${quadFit.a.toFixed(6)}, R²=${quadFit.r2.toFixed(3)}, neckline=${neckline.toFixed(2)}, higherLows=${higherLowCount}${breakConfirmed ? ', BREAK CONFIRMED' : ''})`,
       startIndex: startIdx,
       endIndex: ohlc.length - 1,
       priceTarget: neckline + (neckline - troughLow),
@@ -3058,21 +3585,14 @@ export function detectRoundedTop(ohlc: OHLC[]): PatternResult | null {
 
     const afterStart = peakIdx + 1;
     const afterLen = len - afterStart;
-    let lowerHighCount = 0;
-    if (afterLen >= 4) {
-      for (let j = afterStart; j < Math.min(afterStart + afterLen, len - 1); j++) {
-        if (slice[j + 1].high < slice[j].high) {
-          lowerHighCount++;
-        } else {
-          break;
-        }
-      }
-    }
-    if (lowerHighCount < 3) continue;
+    const reversalTolerance = Math.max(avgRange(slice, Math.min(10, len)) * 0.15, Math.abs(slice[peakIdx].high) * 0.0002);
+    const lowerHighCount = countDirectionalProgress(highs, peakIdx, 'lower', reversalTolerance);
+    const requiredLowerHighs = Math.max(2, Math.floor((afterLen - 1) * 0.45));
+    if (lowerHighCount < requiredLowerHighs) continue;
 
     const quadFit = fitQuadratic(highs);
     if (quadFit.a >= 0) continue;
-    if (quadFit.r2 < 0.70) continue;
+    if (quadFit.r2 < 0.40) continue;
 
     const neckline = Math.min(slice[0].low, slice[len - 1].low);
     const peakHigh = slice[peakIdx].high;
@@ -3098,7 +3618,7 @@ export function detectRoundedTop(ohlc: OHLC[]): PatternResult | null {
       type: 'bearish',
       category: 'breakout',
       confidence,
-      description: `Quadratic dome top (a=${quadFit.a.toFixed(6)}, R²=${quadFit.r2.toFixed(3)}, neckline=${neckline.toFixed(2)}, lowerHighs=${lowerHighCount}${breakConfirmed ? ', BREAK CONFIRMED' : ''})`,
+      description: `Rounded top ${breakConfirmed ? 'confirmed' : 'forming'} (a=${quadFit.a.toFixed(6)}, R²=${quadFit.r2.toFixed(3)}, neckline=${neckline.toFixed(2)}, lowerHighs=${lowerHighCount}${breakConfirmed ? ', BREAK CONFIRMED' : ''})`,
       startIndex: startIdx,
       endIndex: ohlc.length - 1,
       priceTarget: neckline - (peakHigh - neckline),
@@ -3314,6 +3834,415 @@ export function detectLiquidityGrab(ohlc: OHLC[]): PatternResult | null {
   return null;
 }
 
+function createAdvancedPattern(
+  name: string,
+  type: PatternResult['type'],
+  category: PatternResult['category'],
+  confidence: number,
+  description: string,
+  startIndex: number,
+  endIndex: number,
+  rangeHigh: number,
+  rangeLow: number,
+  atr: number,
+): PatternResult {
+  const bullish = type === 'bullish';
+  const bearish = type === 'bearish';
+  return {
+    name,
+    type,
+    category,
+    confidence,
+    description,
+    startIndex,
+    endIndex,
+    priceTarget: bullish ? rangeHigh + (rangeHigh - rangeLow) : bearish ? rangeLow - (rangeHigh - rangeLow) : undefined,
+    pt1: bullish ? rangeHigh + atr : bearish ? rangeLow - atr : rangeHigh,
+    pt2: bullish ? rangeHigh + atr * 2 : bearish ? rangeLow - atr * 2 : rangeLow,
+    stopLoss: bullish ? rangeLow : bearish ? rangeHigh : undefined,
+    strengthWeight: confidence / 100,
+  };
+}
+
+export function detectAdvancedStructuralPatterns(ohlc: OHLC[]): PatternResult[] {
+  if (ohlc.length < 16) return [];
+
+  const results: PatternResult[] = [];
+  const seen = new Set<string>();
+  const endIndex = ohlc.length - 1;
+  const lookback = Math.min(24, ohlc.length - 1);
+  const startIndex = endIndex - lookback;
+  const structure = ohlc.slice(startIndex, endIndex);
+  const current = ohlc[endIndex];
+  const previous = ohlc[endIndex - 1];
+  const atr = Math.max(computeATR5(ohlc), current.close * 0.0001);
+  const rangeHigh = Math.max(...structure.map(candle => candle.high));
+  const rangeLow = Math.min(...structure.map(candle => candle.low));
+  const preBreakStructure = structure.slice(0, -1);
+  const preBreakHigh = Math.max(...preBreakStructure.map(candle => candle.high));
+  const preBreakLow = Math.min(...preBreakStructure.map(candle => candle.low));
+  const rangeWidth = Math.max(rangeHigh - rangeLow, atr);
+  const upper = calculateTrendline(structure.map((candle, index) => ({ x: index, y: candle.high })));
+  const lower = calculateTrendline(structure.map((candle, index) => ({ x: index, y: candle.low })));
+  const firstWidth = Math.max(atr * 0.1, upper.intercept - lower.intercept);
+  const lastX = structure.length - 1;
+  const lastWidth = Math.max(atr * 0.1, (upper.slope * lastX + upper.intercept) - (lower.slope * lastX + lower.intercept));
+  const widthRatio = lastWidth / firstWidth;
+  const slopeTolerance = atr * 0.035;
+  const parallelTolerance = atr * 0.08;
+  const upperFlat = Math.abs(upper.slope) <= slopeTolerance;
+  const lowerFlat = Math.abs(lower.slope) <= slopeTolerance;
+  const parallel = Math.abs(upper.slope - lower.slope) <= parallelTolerance;
+  const priorRanges = structure.map(totalRange);
+  const earlyRange = average(priorRanges.slice(0, Math.max(4, Math.floor(priorRanges.length / 2))));
+  const lateRange = average(priorRanges.slice(-Math.max(4, Math.floor(priorRanges.length / 2))));
+  const trend = inferTrendBias(structure);
+  const buffer = atr * 0.08;
+  const brokeUp = current.close > rangeHigh + buffer;
+  const brokeDown = current.close < rangeLow - buffer;
+  const priorBrokeUp = previous.close > preBreakHigh + buffer;
+  const priorBrokeDown = previous.close < preBreakLow - buffer;
+  const failedUp = priorBrokeUp && current.close < preBreakHigh;
+  const failedDown = priorBrokeDown && current.close > preBreakLow;
+  const averagePriorVolume = Math.max(1, average(structure.slice(-12).map(candle => candle.volume)));
+  const volumeRatio = current.volume / averagePriorVolume;
+  const latestRangeRatio = totalRange(current) / Math.max(earlyRange, atr * 0.1);
+  const contractingTriangle = upper.slope < -slopeTolerance && lower.slope > slopeTolerance && widthRatio < 0.76;
+  const expandingTriangle = upper.slope > slopeTolerance && lower.slope < -slopeTolerance && widthRatio > 1.24;
+  const directionalChannel = parallel && ((upper.slope > slopeTolerance && lower.slope > slopeTolerance) || (upper.slope < -slopeTolerance && lower.slope < -slopeTolerance));
+  const sameDirection = Math.sign(upper.slope) === Math.sign(lower.slope) && !upperFlat && !lowerFlat;
+  const contractingWedge = sameDirection && widthRatio < 0.76;
+
+  const push = (
+    name: string,
+    type: PatternResult['type'],
+    category: PatternResult['category'],
+    confidence: number,
+    description: string,
+  ) => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    results.push(createAdvancedPattern(name, type, category, confidence, description, startIndex, endIndex, rangeHigh, rangeLow, atr));
+  };
+
+  if (contractingTriangle) {
+    push('Contracting Triangle', 'neutral', 'continuation', 70, 'Converging resistance and support are compressing toward an apex.');
+    if (trend !== 'neutral') push('Running Triangle', trend, 'continuation', 68, `Triangle compression is holding inside a ${trend} directional run.`);
+  } else if (expandingTriangle) {
+    push('Expanding Triangle', 'neutral', 'breakout', 67, 'Diverging boundaries show an expanding triangle and rising two-sided volatility.');
+  } else if (parallel && upper.slope > slopeTolerance && lower.slope > slopeTolerance) {
+    push('Ascending Channel', 'bullish', 'continuation', 68, 'Parallel rising boundaries define an ascending channel.');
+    push('Parallel Channel', 'bullish', 'continuation', 64, 'Upper and lower channel boundaries remain parallel.');
+  } else if (parallel && upper.slope < -slopeTolerance && lower.slope < -slopeTolerance) {
+    push('Descending Channel', 'bearish', 'continuation', 68, 'Parallel falling boundaries define a descending channel.');
+    push('Parallel Channel', 'bearish', 'continuation', 64, 'Upper and lower channel boundaries remain parallel.');
+  } else if (upperFlat && lowerFlat) {
+    push('Horizontal Channel', 'neutral', 'structure', 66, 'Price is rotating between stable horizontal support and resistance.');
+    push('Box Range', 'neutral', 'structure', 64, 'Repeated containment defines a tradable box range.');
+  } else if (parallel && widthRatio > 1.2) {
+    push('Expanding Channel', trend, 'breakout', 65, 'Parallel directional boundaries are expanding as volatility increases.');
+  } else if (parallel && widthRatio < 0.8) {
+    push('Contracting Channel', trend, 'continuation', 67, 'Parallel directional boundaries are narrowing into compression.');
+  }
+
+  if (contractingWedge) {
+    push('Contracting Wedge', trend === 'bullish' ? 'bearish' : trend === 'bearish' ? 'bullish' : 'neutral', 'reversal', 69, 'Same-direction boundaries are converging into a reversal wedge.');
+    if (lastWidth <= atr * 1.4) push('Terminal Wedge', trend === 'bullish' ? 'bearish' : 'bullish', 'reversal', 72, 'A mature wedge has compressed near its terminal apex.');
+  }
+  if (sameDirection && widthRatio > 1.25) {
+    push('Broadening Wedge', trend === 'bullish' ? 'bearish' : trend === 'bearish' ? 'bullish' : 'neutral', 'reversal', 66, 'Same-direction boundaries are diverging into a broadening wedge.');
+  }
+
+  const recentWidth = Math.max(...structure.slice(-8).map(candle => candle.high)) - Math.min(...structure.slice(-8).map(candle => candle.low));
+  const priorWidth = Math.max(...structure.slice(0, -8).map(candle => candle.high)) - Math.min(...structure.slice(0, -8).map(candle => candle.low));
+  if (recentWidth < priorWidth * 0.62 || lateRange < earlyRange * 0.68) {
+    push('Compression Range', 'neutral', 'volatility', 68, 'Range and candle width are contracting ahead of a volatility release.');
+    if (recentWidth <= atr * 2.4) push('Micro-Range', 'neutral', 'structure', 66, 'The latest candles are confined to an unusually narrow micro-range.');
+  }
+  if (recentWidth > priorWidth * 1.35 || lateRange > earlyRange * 1.35) {
+    push('Expansion Range', trend, 'volatility', 65, 'Range width is expanding relative to the preceding structure.');
+  }
+  if ((upperFlat && lowerFlat) || recentWidth <= atr * 4) {
+    const closePosition = (current.close - rangeLow) / rangeWidth;
+    if (closePosition >= 0.62 && trend !== 'bearish') push('Accumulation Range', 'bullish', 'structure', 63, 'Contained trade is holding in the upper range with constructive accumulation.');
+    if (closePosition <= 0.38 && trend !== 'bullish') push('Distribution Range', 'bearish', 'structure', 63, 'Contained trade is holding in the lower range with distribution pressure.');
+  }
+
+  if (brokeUp) {
+    push('Breakout', 'bullish', 'breakout', volumeRatio >= 1.35 ? 82 : 72, 'Price closed above established resistance.');
+    push('Range Breakout', 'bullish', 'breakout', volumeRatio >= 1.35 ? 84 : 74, 'Price escaped the recent range above resistance.');
+    push('Channel Breakout', 'bullish', 'breakout', 72, 'Price closed above the projected upper channel boundary.');
+    if (contractingTriangle) push('Triangle Breakout → Continuation', 'bullish', 'continuation', 80, 'Price confirmed above a contracting triangle boundary.');
+    if (contractingWedge) push('Wedge Breakout', 'bullish', 'breakout', 80, 'Price confirmed above the wedge resistance boundary.');
+    if (upperFlat && lowerFlat) push('Bullish Rectangle Breakout', 'bullish', 'breakout', 79, 'Price confirmed above a rectangular consolidation.');
+    if (volumeRatio >= 1.35) push('Volume Expansion Breakout', 'bullish', 'volatility', 86, 'Upside range break is confirmed by expanding volume.');
+  }
+  if (brokeDown) {
+    push('Breakdown', 'bearish', 'breakout', volumeRatio >= 1.35 ? 82 : 72, 'Price closed below established support.');
+    push('Range Breakdown', 'bearish', 'breakout', volumeRatio >= 1.35 ? 84 : 74, 'Price escaped the recent range below support.');
+    push('Channel Breakdown', 'bearish', 'breakout', 72, 'Price closed below the projected lower channel boundary.');
+    if (contractingTriangle) push('Triangle Breakdown → Continuation', 'bearish', 'continuation', 80, 'Price confirmed below a contracting triangle boundary.');
+    if (contractingWedge) push('Wedge Breakdown', 'bearish', 'breakout', 80, 'Price confirmed below the wedge support boundary.');
+    if (upperFlat && lowerFlat) push('Bearish Rectangle Breakdown', 'bearish', 'breakout', 79, 'Price confirmed below a rectangular consolidation.');
+    if (volumeRatio >= 1.35) push('Volume Expansion Breakout', 'bearish', 'volatility', 86, 'Downside range break is confirmed by expanding volume.');
+  }
+  if (failedUp) {
+    push('Failed Breakout', 'bearish', 'reversal', 80, 'An upside break failed and price closed back inside the prior range.');
+    push('Trap Move (Bull Trap)', 'bearish', 'liquidity', 82, 'Buyers were trapped above resistance before price reclaimed the range.');
+    push('Range Fakeout', 'bearish', 'reversal', 78, 'The upside range break failed on the following candle.');
+    push('Triangle Fakeout → Reversal', 'bearish', 'reversal', 76, 'An upside compression break failed and reversed through the boundary.');
+    if (contractingWedge) {
+      push('Wedge Fakeout', 'bearish', 'reversal', 79, 'An upside wedge break failed and returned inside the structure.');
+      push('Wedge Throw-Over', 'bearish', 'reversal', 77, 'Price briefly exceeded wedge resistance before rejecting the throw-over.');
+      push('Wedge Failure → Opposite Reversal', 'bearish', 'reversal', 81, 'The bullish wedge break failed and reversed in the opposite direction.');
+    }
+    if (directionalChannel) push('Channel Fakeout', 'bearish', 'reversal', 77, 'An upside channel break failed and returned inside.');
+    push('Range Reversal', 'bearish', 'reversal', 76, 'The range extension rejected and reversed toward the opposite boundary.');
+  }
+  if (failedDown) {
+    push('Failed Breakdown', 'bullish', 'reversal', 80, 'A downside break failed and price closed back inside the prior range.');
+    push('Trap Move (Bear Trap)', 'bullish', 'liquidity', 82, 'Sellers were trapped below support before price reclaimed the range.');
+    push('Range Fakeout', 'bullish', 'reversal', 78, 'The downside range break failed on the following candle.');
+    push('Triangle Fakeout → Reversal', 'bullish', 'reversal', 76, 'A downside compression break failed and reversed through the boundary.');
+    if (contractingWedge) {
+      push('Wedge Fakeout', 'bullish', 'reversal', 79, 'A downside wedge break failed and returned inside the structure.');
+      push('Wedge Failure → Opposite Reversal', 'bullish', 'reversal', 81, 'The bearish wedge break failed and reversed in the opposite direction.');
+    }
+    if (directionalChannel) push('Channel Fakeout', 'bullish', 'reversal', 77, 'A downside channel break failed and returned inside.');
+    push('Range Reversal', 'bullish', 'reversal', 76, 'The range extension rejected and reversed toward the opposite boundary.');
+  }
+  if (priorBrokeUp && current.low <= preBreakHigh + buffer && current.close > preBreakHigh) {
+    push('Range Flip', 'bullish', 'structure', 78, 'Prior resistance held as support on the breakout retest.');
+  } else if (priorBrokeDown && current.high >= preBreakLow - buffer && current.close < preBreakLow) {
+    push('Range Flip', 'bearish', 'structure', 78, 'Prior support held as resistance on the breakdown retest.');
+  }
+
+  const rejectionBody = Math.max(bodySize(current), atr * 0.05);
+  const bullishRejection = lowerWick(current) > rejectionBody * 1.4 && isBullish(current);
+  const bearishRejection = upperWick(current) > rejectionBody * 1.4 && isBearish(current);
+  if (contractingTriangle && (bullishRejection || bearishRejection) && lastWidth <= atr * 1.5) {
+    push('Triangle Apex Reversal', bullishRejection ? 'bullish' : 'bearish', 'reversal', 73, 'Price rejected the compressed triangle apex before a sustained break.');
+  }
+  if (directionalChannel && ((trend === 'bullish' && bearishRejection) || (trend === 'bearish' && bullishRejection))) {
+    push('Channel Exhaustion Reversal', trend === 'bullish' ? 'bearish' : 'bullish', 'reversal', 74, 'A rejection at the channel extreme signals directional exhaustion.');
+  }
+  if ((bullishRejection || bearishRejection) && latestRangeRatio >= 1.65) {
+    const type = bullishRejection ? 'bullish' : 'bearish';
+    push('Volatility Expansion Reversal', type, 'volatility', 75, 'An expanded-range candle rejected its extreme and reversed direction.');
+    push('ATR Spike Reversal', type, 'volatility', 74, 'A true-range spike ended with a directional rejection.');
+  }
+  if ((bullishRejection || bearishRejection) && volumeRatio >= 2) {
+    push('Climax Volume Reversal', bullishRejection ? 'bullish' : 'bearish', 'volatility', 80, 'Climactic volume combined with wick rejection signals exhaustion.');
+  }
+
+  const recentCloses = structure.slice(-8).map(candle => candle.close);
+  const recentVolumes = structure.slice(-8).map(candle => candle.volume);
+  const priceSlope = recentCloses.at(-1)! - recentCloses[0];
+  const volumeSlope = recentVolumes.at(-1)! - recentVolumes[0];
+  if (Math.abs(priceSlope) >= atr * 1.2 && volumeSlope < -averagePriorVolume * 0.2) {
+    push('Volume Divergence Reversal', priceSlope > 0 ? 'bearish' : 'bullish', 'volatility', 71, 'Price extended while participation contracted, warning of a reversal.');
+    push('Volatility Divergence Reversal', priceSlope > 0 ? 'bearish' : 'bullish', 'volatility', 69, 'Directional price expansion is diverging from volatility participation.');
+  }
+  if (trend !== 'neutral' && volumeRatio < 0.65 && latestRangeRatio < 0.75) {
+    push('Volume Exhaustion', trend === 'bullish' ? 'bearish' : 'bullish', 'volatility', 67, 'Trend participation and candle range are fading together.');
+    push('Volatility Exhaustion Reversal', trend === 'bullish' ? 'bearish' : 'bullish', 'volatility', 66, 'Range contraction at a directional extreme warns of exhaustion.');
+  }
+
+  if (lateRange < earlyRange * 0.62 && (bullishRejection || bearishRejection)) {
+    const type = bullishRejection ? 'bullish' : 'bearish';
+    push('Volatility Compression Reversal', type, 'volatility', 70, 'A compressed volatility regime is reversing from a rejected extreme.');
+    push('ATR Collapse Reversal', type, 'volatility', 68, 'Collapsed true range is resolving through a directional rejection.');
+    push('BB Squeeze Reversal', type, 'volatility', 70, 'Squeeze conditions are resolving through a reversal candle.');
+  }
+
+  const closes = structure.map(candle => candle.close);
+  const closeMean = average(closes);
+  const closeDeviation = Math.sqrt(average(closes.map(close => (close - closeMean) ** 2)));
+  const upperBand = closeMean + closeDeviation * 2;
+  const lowerBand = closeMean - closeDeviation * 2;
+  const localAtr = Math.max(atr, average(structure.map(totalRange)));
+  const ema20 = ema([...closes, current.close], Math.min(20, closes.length + 1));
+  const upperKeltner = ema20 + localAtr * 1.5;
+  const lowerKeltner = ema20 - localAtr * 1.5;
+  if (previous.high > upperBand && current.close < upperBand && bearishRejection) {
+    push('Bollinger Band M-Top', 'bearish', 'volatility', 76, 'Price rejected an upper-band extension and closed back inside the envelope.');
+  }
+  if (previous.low < lowerBand && current.close > lowerBand && bullishRejection) {
+    push('Bollinger Band W-Bottom', 'bullish', 'volatility', 76, 'Price rejected a lower-band extension and closed back inside the envelope.');
+  }
+  if ((previous.high > upperKeltner && current.close < upperKeltner) || (previous.low < lowerKeltner && current.close > lowerKeltner)) {
+    push('Keltner Channel Reversal', previous.high > upperKeltner ? 'bearish' : 'bullish', 'volatility', 72, 'Price rejected a Keltner channel extension and returned inside.');
+  }
+
+  for (let index = Math.max(2, ohlc.length - 10); index < endIndex; index += 1) {
+    const bullishGapLow = ohlc[index - 2].high;
+    const bullishGapHigh = ohlc[index].low;
+    if (bullishGapHigh > bullishGapLow && current.low <= bullishGapHigh && current.close > bullishGapHigh && isBullish(current)) {
+      push('Fair Value Gap Reversal', 'bullish', 'liquidity', 74, 'Price mitigated a bullish fair-value gap and rejected higher.');
+      break;
+    }
+    const bearishGapHigh = ohlc[index - 2].low;
+    const bearishGapLow = ohlc[index].high;
+    if (bearishGapLow < bearishGapHigh && current.high >= bearishGapLow && current.close < bearishGapLow && isBearish(current)) {
+      push('Fair Value Gap Reversal', 'bearish', 'liquidity', 74, 'Price mitigated a bearish fair-value gap and rejected lower.');
+      break;
+    }
+  }
+
+  const priorBody = bodySize(previous);
+  const typicalBody = Math.max(avgBody(structure, 12), atr * 0.05);
+  const previousMidpoint = (previous.open + previous.close) / 2;
+  if (priorBody >= typicalBody * 1.8 && ((isBullish(previous) && isBearish(current) && current.close < previousMidpoint) || (isBearish(previous) && isBullish(current) && current.close > previousMidpoint))) {
+    push('Displacement Reversal', isBullish(current) ? 'bullish' : 'bearish', 'liquidity', 76, 'A large displacement candle was rejected through its midpoint.');
+  }
+
+  const blockSearch = ohlc.slice(Math.max(0, endIndex - 8), endIndex - 1);
+  for (let offset = blockSearch.length - 1; offset >= 1; offset -= 1) {
+    const block = blockSearch[offset];
+    const impulse = blockSearch[offset + 1] ?? previous;
+    const bullishBlock = isBearish(block) && isBullish(impulse) && bodySize(impulse) >= typicalBody * 1.5;
+    const bearishBlock = isBullish(block) && isBearish(impulse) && bodySize(impulse) >= typicalBody * 1.5;
+    const touchedBody = current.low <= Math.max(block.open, block.close) && current.high >= Math.min(block.open, block.close);
+    if (!touchedBody) continue;
+    if (bullishBlock && isBullish(current) && current.close > Math.max(block.open, block.close)) {
+      push('Mitigation Block Reversal', 'bullish', 'liquidity', 73, 'Price revisited a bullish origin block and rejected higher.');
+      push('Order Block Reversal (Bullish)', 'bullish', 'liquidity', 74, 'A bullish order block held on mitigation.');
+      break;
+    }
+    if (bearishBlock && isBearish(current) && current.close < Math.min(block.open, block.close)) {
+      push('Mitigation Block Reversal', 'bearish', 'liquidity', 73, 'Price revisited a bearish origin block and rejected lower.');
+      push('Order Block Reversal (Bearish)', 'bearish', 'liquidity', 74, 'A bearish order block held on mitigation.');
+      break;
+    }
+  }
+  if (bullishRejection || bearishRejection) {
+    push('Rejection Block Reversal', bullishRejection ? 'bullish' : 'bearish', 'liquidity', 68, 'A pronounced wick rejected a recent structural extreme.');
+  }
+
+  const reversalWindow = ohlc.slice(-16);
+  const reversalStart = ohlc.length - reversalWindow.length;
+  const lowIndex = reversalWindow.findIndex(candle => candle.low === Math.min(...reversalWindow.map(item => item.low)));
+  const highIndex = reversalWindow.findIndex(candle => candle.high === Math.max(...reversalWindow.map(item => item.high)));
+  if (lowIndex >= 3 && lowIndex <= reversalWindow.length - 4) {
+    const fall = reversalWindow[0].close - reversalWindow[lowIndex].low;
+    const rebound = current.close - reversalWindow[lowIndex].low;
+    if (fall >= atr * 2 && rebound >= fall * 0.65) {
+      results.push(createAdvancedPattern('V-Bottom', 'bullish', 'reversal', 76, 'A sharp selloff reversed with a comparably strong recovery leg.', reversalStart, endIndex, rangeHigh, reversalWindow[lowIndex].low, atr));
+    }
+  }
+  if (highIndex >= 3 && highIndex <= reversalWindow.length - 4) {
+    const rise = reversalWindow[highIndex].high - reversalWindow[0].close;
+    const decline = reversalWindow[highIndex].high - current.close;
+    if (rise >= atr * 2 && decline >= rise * 0.65) {
+      results.push(createAdvancedPattern('V-Top', 'bearish', 'reversal', 76, 'A sharp advance reversed with a comparably strong decline leg.', reversalStart, endIndex, reversalWindow[highIndex].high, rangeLow, atr));
+    }
+  }
+
+  const localLows = findLocalMinima(reversalWindow, 2);
+  const localHighs = findLocalMaxima(reversalWindow, 2);
+  if (localLows.length >= 2) {
+    const [first, second] = localLows.slice(-2);
+    const equalLows = Math.abs(reversalWindow[first].low - reversalWindow[second].low) <= atr * 0.55;
+    const separated = second - first >= 4;
+    const firstSharp = totalRange(reversalWindow[first]) > average(reversalWindow.slice(Math.max(0, second - 2), Math.min(reversalWindow.length, second + 3)).map(totalRange)) * 1.2;
+    if (equalLows && separated && firstSharp && current.close > reversalWindow[second].high) {
+      results.push(createAdvancedPattern('Adam & Eve Bottom', 'bullish', 'reversal', 75, 'A sharp first trough and rounded second trough completed above local resistance.', reversalStart + first, endIndex, rangeHigh, Math.min(reversalWindow[first].low, reversalWindow[second].low), atr));
+    }
+  }
+  if (localHighs.length >= 2) {
+    const [first, second] = localHighs.slice(-2);
+    const equalHighs = Math.abs(reversalWindow[first].high - reversalWindow[second].high) <= atr * 0.55;
+    const separated = second - first >= 4;
+    const firstSharp = totalRange(reversalWindow[first]) > average(reversalWindow.slice(Math.max(0, second - 2), Math.min(reversalWindow.length, second + 3)).map(totalRange)) * 1.2;
+    if (equalHighs && separated && firstSharp && current.close < reversalWindow[second].low) {
+      results.push(createAdvancedPattern('Adam & Eve Top', 'bearish', 'reversal', 75, 'A sharp first peak and rounded second peak completed below local support.', reversalStart + first, endIndex, Math.max(reversalWindow[first].high, reversalWindow[second].high), rangeLow, atr));
+    }
+  }
+
+  const thirds = Math.max(4, Math.floor(structure.length / 3));
+  const leftWidth = Math.max(...structure.slice(0, thirds).map(candle => candle.high)) - Math.min(...structure.slice(0, thirds).map(candle => candle.low));
+  const middleWidth = Math.max(...structure.slice(thirds, -thirds).map(candle => candle.high)) - Math.min(...structure.slice(thirds, -thirds).map(candle => candle.low));
+  const rightWidth = Math.max(...structure.slice(-thirds).map(candle => candle.high)) - Math.min(...structure.slice(-thirds).map(candle => candle.low));
+  if (trend === 'bearish' && middleWidth > leftWidth * 1.2 && rightWidth < middleWidth * 0.72) {
+    push('Diamond Bottom', 'bullish', 'reversal', current.close > rangeLow + rangeWidth * 0.55 ? 78 : 67, 'Volatility expanded and contracted after a decline, forming a diamond-bottom reversal.');
+  }
+
+  return results;
+}
+
+function deriveRequestedPatternVariants(patterns: PatternResult[], ohlc: OHLC[]): PatternResult[] {
+  const aliases: PatternResult[] = [];
+  const addAlias = (pattern: PatternResult, name: string, category = pattern.category, description?: string) => {
+    if (patterns.some(candidate => candidate.name === name) || aliases.some(candidate => candidate.name === name)) return;
+    aliases.push({ ...pattern, name, category, description: description ?? pattern.description });
+  };
+
+  for (const pattern of patterns) {
+    if (pattern.name === 'Bull Flag') {
+      addAlias(pattern, 'Ascending Flag');
+      addAlias(pattern, 'Channel Flag (Bullish)');
+      const move = ohlc[pattern.endIndex]?.close / Math.max(ohlc[pattern.startIndex]?.close ?? 1, 1) - 1;
+      if (move >= 0.08) addAlias(pattern, 'High-Tight Flag');
+    } else if (pattern.name === 'Bear Flag') {
+      addAlias(pattern, 'Descending Flag');
+      addAlias(pattern, 'Channel Flag (Bearish)');
+      const move = ohlc[pattern.endIndex]?.close / Math.max(ohlc[pattern.startIndex]?.close ?? 1, 1) - 1;
+      if (move <= -0.08) addAlias(pattern, 'Low-Tight Flag');
+    } else if (pattern.name === 'Falling Wedge') {
+      addAlias(pattern, 'Falling Wedge (Bullish Reversal)');
+    } else if (pattern.name === 'Rising Wedge') {
+      addAlias(pattern, 'Rising Wedge (Bearish Reversal)');
+    } else if (pattern.name === 'Channel Up') {
+      addAlias(pattern, 'Ascending Channel');
+    } else if (pattern.name === 'Channel Down') {
+      addAlias(pattern, 'Descending Channel');
+    } else if (pattern.name === 'Head and Shoulders') {
+      addAlias(pattern, 'Head & Shoulders');
+    } else if (pattern.name === 'Inverse Head and Shoulders') {
+      addAlias(pattern, 'Inverse Head & Shoulders');
+    } else if (pattern.name === 'Rounded Top') {
+      addAlias(pattern, 'Rounding Top');
+    } else if (pattern.name === 'Rounded Bottom') {
+      addAlias(pattern, 'Rounding Bottom');
+    } else if (pattern.name === 'Cup and Handle') {
+      addAlias(pattern, 'Cup & Handle (bullish reversal)', 'reversal');
+    } else if (pattern.name === 'Bullish Tri-Star Doji') {
+      addAlias(pattern, 'Tri-Star Doji (Bullish)', 'candlestick');
+    } else if (pattern.name === 'Bearish Tri-Star Doji') {
+      addAlias(pattern, 'Tri-Star Doji (Bearish)', 'candlestick');
+    } else if (pattern.name === 'Broadening Formation') {
+      addAlias(pattern, pattern.type === 'bearish' ? 'Broadening Top' : pattern.type === 'bullish' ? 'Broadening Bottom' : 'Expanding Triangle', 'reversal');
+    } else if (pattern.name.includes('Swing Failure Pattern')) {
+      addAlias(pattern, 'Swing Failure Pattern (SFP)', 'liquidity');
+      addAlias(pattern, 'Stop Hunt', 'liquidity');
+      addAlias(pattern, 'Stop-Hunt Reversal', 'liquidity');
+      addAlias(pattern, 'Stop-Run Reversal', 'liquidity');
+      addAlias(pattern, pattern.type === 'bullish' ? 'Equal Lows Sweep' : 'Equal Highs Sweep', 'liquidity');
+      addAlias(pattern, 'Donchian Channel Reversal', 'volatility');
+    } else if (pattern.name === 'Bearish Breakout Failure Reversal') {
+      if (patterns.some(candidate => candidate.name === 'Bull Flag')) addAlias(pattern, 'Bullish Flag Failure → Reversal', 'reversal');
+      if (patterns.some(candidate => candidate.name.includes('Wedge'))) addAlias(pattern, 'Wedge Failure → Opposite Reversal', 'reversal');
+      addAlias(pattern, 'Range Break Reversal', 'volatility');
+    } else if (pattern.name === 'Bullish Breakout Failure Reversal') {
+      if (patterns.some(candidate => candidate.name === 'Bear Flag')) addAlias(pattern, 'Bearish Flag Failure → Reversal', 'reversal');
+      if (patterns.some(candidate => candidate.name.includes('Wedge'))) addAlias(pattern, 'Wedge Failure → Opposite Reversal', 'reversal');
+      addAlias(pattern, 'Range Break Reversal', 'volatility');
+    } else if (pattern.name.includes('Liquidity Grab')) {
+      addAlias(pattern, 'Liquidity Grab', 'liquidity');
+      addAlias(pattern, pattern.type === 'bullish' ? 'Liquidity Sweep (Bullish)' : 'Liquidity Sweep (Bearish)', 'liquidity');
+      addAlias(pattern, pattern.type === 'bullish' ? 'Breaker Block (Bullish)' : 'Breaker Block (Bearish)', 'liquidity', 'A swept structure failed and is acting as a reversal breaker.');
+    } else if (pattern.name.includes('Volume Climax Reversal')) {
+      addAlias(pattern, 'Climax Volume Reversal', 'volatility');
+    } else if (pattern.name === 'Double Top') {
+      addAlias(pattern, 'Bollinger Band M-Top', 'volatility');
+    } else if (pattern.name === 'Double Bottom') {
+      addAlias(pattern, 'Bollinger Band W-Bottom', 'volatility');
+    }
+  }
+
+  return aliases;
+}
+
 /* =========================
    Unified runner
    ========================= */
@@ -3347,21 +4276,40 @@ const CANDLESTICK_DETECTORS: Detector[] = [
   detectBullishAbandonedBaby,
   detectBearishAbandonedBaby,
   detectTriStarDoji,
+  detectSpinningTop,
+  detectMarubozu,
+  detectHomingPigeon,
+  detectMatchingLowHigh,
+  detectStickSandwich,
+  detectDeliberationPattern,
+  detectConcealingBabySwallow,
+  detectBreakaway,
+  detectTasukiGap,
+  detectGapTwoCrowsAndMethods,
+  detectSideBySideLines,
+  detectThreeStarsInSouth,
+  detectThreeMountains,
+  detectTowerReversal,
+  detectLadderReversal,
+  detectThreeMethods,
+  detectTasukiContinuation,
+  detectSeparatingLines,
 ];
 
 const STRUCTURAL_DETECTORS: Detector[] = [
-  detectSpinningTop,
-  detectMarubozu,
   detectInsideBar,
   detectOutsideBar,
   detectGap,
   detectDoubleTop,
   detectDoubleBottom,
+  detectHeadAndShoulders,
+  detectInverseHeadAndShoulders,
   detectAscendingTriangle,
   detectDescendingTriangle,
   detectSymmetricalTriangle,
   detectRisingWedge,
   detectFallingWedge,
+  detectDiamondTop,
   detectFlag,
   detectChannelUp,
   detectChannelDown,
@@ -3402,6 +4350,12 @@ function scanCandlestickPatterns(ohlc: OHLC[]): PatternResult[] {
     for (const detector of CANDLESTICK_DETECTORS) {
       const res = detector(slice);
       if (!res) continue;
+      const key = `${res.name}_${res.startIndex}_${res.endIndex}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push(res);
+    }
+    for (const res of detectRequestedReversalVariants(slice)) {
       const key = `${res.name}_${res.startIndex}_${res.endIndex}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -3454,102 +4408,7 @@ function postProcessPatternDetections(patterns: PatternResult[], ohlcLength: num
     }
   }
 
-  const deduped = Array.from(byUniqueKey.values());
-
-  const keep = new Set<number>(deduped.map((_, idx) => idx));
-  const byCandlestickEnd = new Map<number, number[]>();
-
-  deduped.forEach((pattern, idx) => {
-    if (pattern.category !== 'candlestick') return;
-    const arr = byCandlestickEnd.get(pattern.endIndex) ?? [];
-    arr.push(idx);
-    byCandlestickEnd.set(pattern.endIndex, arr);
-  });
-
-  for (const [, indexes] of Array.from(byCandlestickEnd.entries())) {
-    const bucket = indexes.map((index: number) => ({ i: index, p: deduped[index] }));
-    const bulls = bucket
-      .filter((entry: { i: number; p: PatternResult }) => entry.p.type === 'bullish')
-      .sort((left: { i: number; p: PatternResult }, right: { i: number; p: PatternResult }) => right.p.confidence - left.p.confidence);
-    const bears = bucket
-      .filter((entry: { i: number; p: PatternResult }) => entry.p.type === 'bearish')
-      .sort((left: { i: number; p: PatternResult }, right: { i: number; p: PatternResult }) => right.p.confidence - left.p.confidence);
-
-    if (bulls.length === 0 || bears.length === 0) continue;
-
-    const bestBull = bulls[0];
-    const bestBear = bears[0];
-    const diff = Math.abs(bestBull.p.confidence - bestBear.p.confidence);
-
-    if (diff < 10) {
-      for (const x of bulls) keep.delete(x.i);
-      for (const x of bears) keep.delete(x.i);
-      continue;
-    }
-
-    const winningType = bestBull.p.confidence > bestBear.p.confidence ? 'bullish' : 'bearish';
-    for (const x of bucket) {
-      if (x.p.type !== winningType && x.p.type !== 'neutral') {
-        keep.delete(x.i);
-      }
-    }
-  }
-
-  const cleaned = deduped.filter((_, idx) => keep.has(idx));
-
-  const keepAfterPolarity = new Set<number>(cleaned.map((_, idx) => idx));
-  const byEndCategory = new Map<string, number[]>();
-
-  cleaned.forEach((pattern, idx) => {
-    if (pattern.type === 'neutral') return;
-    const key = `${pattern.endIndex}|${pattern.category}`;
-    const arr = byEndCategory.get(key) ?? [];
-    arr.push(idx);
-    byEndCategory.set(key, arr);
-  });
-
-  for (const [, indexes] of Array.from(byEndCategory.entries())) {
-    if (indexes.length < 2) continue;
-    const bucket = indexes.map((index: number) => ({ i: index, p: cleaned[index] }));
-    const bulls = bucket
-      .filter((entry: { i: number; p: PatternResult }) => entry.p.type === 'bullish')
-      .sort((left: { i: number; p: PatternResult }, right: { i: number; p: PatternResult }) => right.p.confidence - left.p.confidence);
-    const bears = bucket
-      .filter((entry: { i: number; p: PatternResult }) => entry.p.type === 'bearish')
-      .sort((left: { i: number; p: PatternResult }, right: { i: number; p: PatternResult }) => right.p.confidence - left.p.confidence);
-
-    if (bulls.length === 0 || bears.length === 0) continue;
-
-    const bullTop = bulls[0];
-    const bearTop = bears[0];
-    const confidenceGap = Math.abs(bullTop.p.confidence - bearTop.p.confidence);
-
-    if (confidenceGap < 8) {
-      for (const entry of bulls) keepAfterPolarity.delete(entry.i);
-      for (const entry of bears) keepAfterPolarity.delete(entry.i);
-      continue;
-    }
-
-    const winner = bullTop.p.confidence > bearTop.p.confidence ? 'bullish' : 'bearish';
-    for (const entry of bucket) {
-      if (entry.p.type !== winner) keepAfterPolarity.delete(entry.i);
-    }
-  }
-
-  const resolved = cleaned.filter((_, idx) => keepAfterPolarity.has(idx));
-
-  const directionalMax = resolved
-    .filter(p => p.type === 'bullish' || p.type === 'bearish')
-    .reduce((max, p) => Math.max(max, p.confidence), 0);
-
-  const deNoised = resolved.filter(p => {
-    if (p.type !== 'neutral') return true;
-    if (p.category !== 'candlestick' && p.category !== 'volatility') return true;
-    if (p.confidence >= 68) return true;
-    return directionalMax < 68;
-  });
-
-  return deNoised.sort((a, b) => {
+  return Array.from(byUniqueKey.values()).sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence;
     const lenA = a.endIndex - a.startIndex;
     const lenB = b.endIndex - b.startIndex;
@@ -3564,6 +4423,7 @@ export function detectAllPatterns(ohlc: OHLC[], timeframe?: string): PatternResu
     const res = detector(ohlc);
     if (res) results.push(res);
   }
+  results.push(...detectAdvancedStructuralPatterns(ohlc));
 
   const tf = (timeframe || '').toLowerCase();
   const candlestickTimeframes = new Set(['1m', '3m', '5m', '10m', '15m', '30m', '45m', '1h', '2h', '4h', '1d', 'daily']);
@@ -3572,7 +4432,103 @@ export function detectAllPatterns(ohlc: OHLC[], timeframe?: string): PatternResu
     results.push(...candlestickResults);
   }
 
+  results.push(...deriveRequestedPatternVariants(results, ohlc));
+
   return postProcessPatternDetections(results, ohlc.length);
+}
+
+export function detectFormingCandlestickPatterns(ohlc: OHLC[]): PatternResult[] {
+  if (ohlc.length < 3) return [];
+
+  const index = ohlc.length - 1;
+  const current = ohlc[index];
+  const previous = ohlc[index - 1];
+  const baseline = ohlc.slice(Math.max(0, index - 10), index);
+  const typicalRange = Math.max(avgRange(baseline), current.close * 0.0001);
+  const range = totalRange(current);
+  if (!Number.isFinite(range) || range <= 0) return [];
+
+  const body = bodySize(current);
+  const upper = Math.max(0, upperWick(current));
+  const lower = Math.max(0, lowerWick(current));
+  const closePosition = (current.close - current.low) / range;
+  const results: PatternResult[] = [];
+
+  if (lower >= Math.max(body * 1.2, typicalRange * 0.3) && closePosition >= 0.45) {
+    const confidence = Math.min(68, Math.round(52 + Math.min(16, (lower / typicalRange) * 10)));
+    results.push({
+      name: 'Bullish Wick Rejection (forming)',
+      type: 'bullish',
+      category: 'candlestick',
+      confidence,
+      description: 'Lower-wick rejection is developing on the active candle; wait for the candle to close before confirmation.',
+      startIndex: index,
+      endIndex: index,
+      pt1: current.high + typicalRange * 0.5,
+      pt2: current.high + typicalRange,
+      stopLoss: current.low,
+      strengthWeight: confidence / 100,
+    });
+  }
+
+  if (upper >= Math.max(body * 1.2, typicalRange * 0.3) && closePosition <= 0.55) {
+    const confidence = Math.min(68, Math.round(52 + Math.min(16, (upper / typicalRange) * 10)));
+    results.push({
+      name: 'Bearish Wick Rejection (forming)',
+      type: 'bearish',
+      category: 'candlestick',
+      confidence,
+      description: 'Upper-wick rejection is developing on the active candle; wait for the candle to close before confirmation.',
+      startIndex: index,
+      endIndex: index,
+      pt1: current.low - typicalRange * 0.5,
+      pt2: current.low - typicalRange,
+      stopLoss: current.high,
+      strengthWeight: confidence / 100,
+    });
+  }
+
+  const previousMidpoint = (previous.open + previous.close) / 2;
+  const bullishEngulfmentDeveloping = isBearish(previous) && isBullish(current)
+    && current.open <= previous.close + typicalRange * 0.1
+    && current.close > previousMidpoint;
+  const bearishEngulfmentDeveloping = isBullish(previous) && isBearish(current)
+    && current.open >= previous.close - typicalRange * 0.1
+    && current.close < previousMidpoint;
+
+  if (bullishEngulfmentDeveloping) {
+    results.push({
+      name: 'Bullish Engulfing (forming)',
+      type: 'bullish',
+      category: 'candlestick',
+      confidence: 60,
+      description: 'The active candle has reclaimed the prior bearish body midpoint and is developing a bullish engulfing pattern.',
+      startIndex: index - 1,
+      endIndex: index,
+      pt1: Math.max(previous.high, current.high) + typicalRange * 0.5,
+      pt2: Math.max(previous.high, current.high) + typicalRange,
+      stopLoss: Math.min(previous.low, current.low),
+      strengthWeight: 0.6,
+    });
+  }
+
+  if (bearishEngulfmentDeveloping) {
+    results.push({
+      name: 'Bearish Engulfing (forming)',
+      type: 'bearish',
+      category: 'candlestick',
+      confidence: 60,
+      description: 'The active candle has lost the prior bullish body midpoint and is developing a bearish engulfing pattern.',
+      startIndex: index - 1,
+      endIndex: index,
+      pt1: Math.min(previous.low, current.low) - typicalRange * 0.5,
+      pt2: Math.min(previous.low, current.low) - typicalRange,
+      stopLoss: Math.max(previous.high, current.high),
+      strengthWeight: 0.6,
+    });
+  }
+
+  return results.sort((left, right) => right.confidence - left.confidence);
 }
 
 /* =========================
@@ -3586,7 +4542,7 @@ const reversalDetectors: Array<(ohlc: OHLC[]) => PatternResult | null> = [
   detectInvertedHammer,
   detectShootingStar,
   detectDoji,
-  detectMarubozu,
+  detectSpinningTop,
 
   // Two/three-candle candlestick reversals
   detectBullishEngulfing,
@@ -3608,12 +4564,22 @@ const reversalDetectors: Array<(ohlc: OHLC[]) => PatternResult | null> = [
   detectBullishAbandonedBaby,
   detectBearishAbandonedBaby,
   detectTriStarDoji,
+  detectHomingPigeon,
+  detectMatchingLowHigh,
+  detectStickSandwich,
+  detectDeliberationPattern,
+  detectBreakaway,
+  detectThreeStarsInSouth,
+  detectThreeMountains,
+  detectTowerReversal,
+  detectLadderReversal,
 
   // Classical structural reversals
   detectDoubleTop,
   detectDoubleBottom,
   detectRisingWedge,
   detectFallingWedge,
+  detectDiamondTop,
 
   // Liquidity / structural reversals
   detectSwingFailurePattern,

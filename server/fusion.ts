@@ -228,6 +228,15 @@ export interface CompressionCluster {
   bbSqueezeActive: boolean;
   keltnerBreakoutSide: 'upper' | 'lower' | 'none';
   healthLow: boolean;
+  readinessScore: number;
+  factors: {
+    bollinger: number;
+    atrTightness: number;
+    volumeSweetSpot: number;
+    preBreakout: number;
+    timeframeStack: number;
+    triggerPressure: number;
+  };
   reasons: string[];
 }
 
@@ -485,16 +494,27 @@ function computeCompressionCluster(
   if (triggerProb >= 70) reasons.push(`Trigger pressure elevated (${triggerProb.toFixed(0)}%)`);
   if (volRatio > 0 && volRatio < 0.12) reasons.push(`Volume too dry (${volRatio.toFixed(2)})`);
 
+  const breakoutReleased = keltnerSide !== 'none';
   const active =
+    !breakoutReleased &&
     (bbSqueeze.active || compressionReadiness >= 0.62) &&
     !healthLow &&
     (preBreakoutScore >= 62 || stackAgreement >= 65 || triggerProb >= 68);
   
   return {
     active,
-    bbSqueezeActive: bbSqueeze.active,
+    bbSqueezeActive: bbSqueeze.active && !breakoutReleased,
     keltnerBreakoutSide: keltnerSide,
     healthLow,
+    readinessScore: Math.round(compressionReadiness * 100),
+    factors: {
+      bollinger: Math.round(bbNorm * 100),
+      atrTightness: Math.round(atrTight * 100),
+      volumeSweetSpot: Math.round(volSweet * 100),
+      preBreakout: Math.round(preScoreNorm * 100),
+      timeframeStack: Math.round(stackNorm * 100),
+      triggerPressure: Math.round(triggerNorm * 100),
+    },
     reasons
   };
 }
@@ -1263,15 +1283,15 @@ function computeTFIntel(
 }
 
 function computeMTFConsensus(tfIntel: TimeframePatternIntel[], marketHealth?: MarketHealthIndicators): MTFConsensus {
-  // Weighted multi-timeframe stack focusing on 15m/5m/1m as requested
+  // Historical sweep favors 1h for bias, 30m for setup, and 5m for timing.
   const weights: Record<string, number> = {
-    '1m': 0.1,
-    '5m': 0.3,
-    '15m': 0.6,
-    '30m': 0.5,
-    '1h': 0.6,
-    '4h': 0.7,
-    '1D': 0.8
+    '1m': 0.05,
+    '5m': 0.15,
+    '15m': 0.3,
+    '30m': 0.8,
+    '1h': 1.0,
+    '4h': 0.8,
+    '1D': 0.6
   };
 
   let bullishWeighted = 0;
@@ -1955,10 +1975,11 @@ export interface FusionInput {
   patternsByTF: Partial<Record<Timeframe, PatternResult[]>>;
   marketHealth: MarketHealthIndicators;
   lastPrice?: number;
+  primaryTimeframe?: Timeframe;
 }
 
 export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
-  const { symbol, ohlcByTF, patternsByTF, marketHealth, lastPrice } = input;
+  const { symbol, ohlcByTF, patternsByTF, marketHealth, lastPrice, primaryTimeframe } = input;
 
   const orderedTFs: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
 
@@ -1979,7 +2000,7 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   const forecast = buildForecast(mtfConsensus, dominant, marketHealth, volRegime, symbol);
 
   const findDominantTF = (): Timeframe => {
-    const tfWeight: Record<Timeframe, number> = { '1m': 0.5, '5m': 1, '15m': 2, '30m': 3, '1h': 4, '4h': 5, '1D': 6 };
+    const tfWeight: Record<Timeframe, number> = { '1m': 0.05, '5m': 0.15, '15m': 0.3, '30m': 0.8, '1h': 1.2, '4h': 0.8, '1D': 0.5 };
     let bestTF: Timeframe = '15m';
     let bestScore = -1;
     for (const tfInfo of timeframes) {
@@ -1995,13 +2016,19 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   };
   const dominantTF: Timeframe = findDominantTF();
   const ohlcForBreakout = ohlcByTF[dominantTF] ?? [];
-  const primaryOhlc = ohlcByTF['15m'] ?? ohlcByTF['5m'] ?? ohlcByTF['1m'] ?? ohlcByTF['1h'] ?? [];
+  const primaryOhlc = (primaryTimeframe ? ohlcByTF[primaryTimeframe] : undefined)
+    ?? ohlcByTF['30m']
+    ?? ohlcByTF['1h']
+    ?? ohlcByTF['15m']
+    ?? ohlcByTF['5m']
+    ?? ohlcByTF['1m']
+    ?? [];
   const currentPrice = lastPrice ?? primaryOhlc[primaryOhlc.length - 1]?.close ?? 0;
 
   const priorSessionOhlc = ohlcByTF['1D'] ?? ohlcByTF['4h'] ?? [];
   const corvonaLevels = computeCorvonaLevels(priorSessionOhlc) || undefined;
 
-  const emaTrend = computeEMACloudTrend(primaryOhlc, '15m') || undefined;
+  const emaTrend = computeEMACloudTrend(primaryOhlc, '30m') || undefined;
 
   // MTF Reversal: Look for Hammer/Shooting Star on 30m and confirm with 5m patterns
   const ohlc30m = ohlcByTF['30m'] ?? [];
@@ -2188,6 +2215,7 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
   // ---- Reversal detection + full Fusion gating ----
   // CRITICAL: Use 5m OHLC for bounce detection - 15m is too slow to catch momentum reversals
   const reversalOhlc = ohlcByTF['5m'] ?? ohlcByTF['15m'] ?? primaryOhlc;
+  const reversalVwapSeries = computeVWAPSeries(reversalOhlc);
   
   // Determine dominant trend for reversal context (NEW: prevent pullback false signals)
   const dominantTrend: 'bullish' | 'bearish' | 'neutral' = 
@@ -2200,6 +2228,7 @@ export function computeFusionSnapshot(input: FusionInput): FusionSnapshot {
     corvona: corvonaLevels,
     emaTrend,
     breakoutLifecycle,
+    vwapPrice: reversalVwapSeries[reversalVwapSeries.length - 1],
     dominantTrend  // NEW parameter for trend-aware gating
   });
 

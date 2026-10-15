@@ -10,7 +10,17 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "backtest:monster": "tsx server/monsterOtmBacktest.ts",
-    "backtest:spy:walk-forward": "tsx server/spyWalkForwardBacktest.ts"
+    "backtest:spy:walk-forward": "tsx server/spyWalkForwardBacktest.ts",
+    "backtest:selective:walk-forward": "tsx script/validateSelectiveScalper.ts 60",
+    "backtest:selective:freeze": "tsx script/prospectiveSelectiveScalper.ts freeze 60",
+    "backtest:selective:prospective": "tsx script/prospectiveSelectiveScalper.ts check 60",
+    "backtest:0dte:verify-model": "tsx script/verifyZeroDteProxy.ts",
+    "analyze:session-top-moves": "tsx script/analyzeSessionTopMoves.ts 3 6 55",
+    "analyze:intake-top-moves": "tsx script/analyzeIntakeTopMoves.ts 30",
+    "analyze:0dte:5m-breakouts": "tsx script/discoverFiveMinuteBreakouts.ts 30",
+    "analyze:0dte:micro-breakouts": "tsx script/discoverMicroBreakouts.ts 7",
+    "backtest:play-unlock": "tsx script/backtestPlayUnlock.ts ALL",
+    "backtest:play-unlock:spy": "tsx script/backtestPlayUnlock.ts SPY"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.60.1",

@@ -7,12 +7,6 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { ClerkProvider } from "@clerk/clerk-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
-import LandingPage from "@/pages/LandingPage";
-import LoginPage from "@/pages/LoginPage";
-import SignupPage from "@/pages/SignupPage";
-import CheckoutSuccess from "@/pages/CheckoutSuccess";
-import ManageSubscription from "@/pages/ManageSubscription";
-import ProtectedRoute from "@/components/ProtectedRoute";
 
 const CLERK_KEY =
   import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ||
@@ -22,18 +16,8 @@ const HAS_CLERK_KEY = typeof CLERK_KEY === "string" && CLERK_KEY.trim().length >
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={LandingPage} />
-      <Route path="/login/:rest*" component={LoginPage} />
-      <Route path="/login" component={LoginPage} />
-      <Route path="/signup/:rest*" component={SignupPage} />
-      <Route path="/signup" component={SignupPage} />
-      <Route path="/success" component={CheckoutSuccess} />
-      <Route path="/manage-subscription" component={ManageSubscription} />
-      <Route path="/app">
-        <ProtectedRoute>
-          <Dashboard />
-        </ProtectedRoute>
-      </Route>
+      <Route path="/" component={Dashboard} />
+      <Route path="/app" component={Dashboard} />
       <Route component={NotFound} />
     </Switch>
   );

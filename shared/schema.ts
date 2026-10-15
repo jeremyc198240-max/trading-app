@@ -60,6 +60,20 @@ export const trendExhaustionSchema = z.object({
 
 export type TrendExhaustion = z.infer<typeof trendExhaustionSchema>;
 
+export const preMovePressureSchema = z.object({
+  score: z.number(),
+  direction: z.enum(['bullish', 'bearish', 'neutral']),
+  components: z.object({
+    directional: z.number(),
+    candle: z.number(),
+    volume: z.number(),
+    trend: z.number(),
+  }),
+  reasons: z.array(z.string()),
+});
+
+export type PreMovePressure = z.infer<typeof preMovePressureSchema>;
+
 // Bullish power
 export const bullishPowerSchema = z.object({
   rawScore: z.number(),
@@ -559,6 +573,7 @@ export type DrawablePattern = z.infer<typeof drawablePatternSchema>;
 // Analysis payload (returned from API)
 export const analysisPayloadSchema = z.object({
   symbol: z.string(),
+  isMarketOpen: z.boolean().optional(),
   overall: z.number(),
   grade: z.enum(['A', 'B', 'C', 'D', 'F']),
   setupQuality: z.enum(['strong', 'medium', 'weak']),
@@ -577,6 +592,7 @@ export const analysisPayloadSchema = z.object({
   momentumDivergence: momentumDivergenceSchema.nullable().optional(),
   volumeSpike: volumeSpikeSchema.nullable().optional(),
   trendExhaustion: trendExhaustionSchema.nullable().optional(),
+  preMovePressure: preMovePressureSchema.optional(),
   emaCloud: emaCloudSchema.nullable().optional(),
   failedVwapReclaim: z.object({
     type: z.string(),

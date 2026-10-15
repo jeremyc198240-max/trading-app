@@ -233,9 +233,7 @@ function computeExpansionScore(
   }
 
   const last = ohlc[n - 1];
-  
-  // Look at last 25 bars for compression zone, excluding last 5 (recent bars)
-  const compSlice = ohlc.slice(-25, -5);
+  const compSlice = ohlc.slice(-21, -1);
   const compHigh = Math.max(...compSlice.map(c => c.high));
   const compLow = Math.min(...compSlice.map(c => c.low));
 

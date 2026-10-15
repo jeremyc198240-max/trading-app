@@ -120,7 +120,7 @@ function etMinute(candle: OHLC): number | null {
 }
 
 function isMonsterEntryWindow(minute: number): boolean {
-  return (minute >= 575 && minute <= 690) || (minute >= 840 && minute <= 935);
+  return (minute >= 590 && minute <= 690) || (minute >= 840 && minute <= 935);
 }
 
 async function runForSymbol(symbol: string, profileName: string, tuning: MonsterOtmTuningOverrides): Promise<TradeStat> {

@@ -1,0 +1,75 @@
+{
+  "generatedAt": "2026-09-05T14:51:37.610Z",
+  "policyGeneratedAt": "2026-09-05T14:48:42.065Z",
+  "lookbackDays": 60,
+  "aggregateProspective": {
+    "trades": 0,
+    "wins": 0,
+    "winRate": 0,
+    "targetWinRate": 70,
+    "minTrades": 30,
+    "releaseQualified": false
+  },
+  "rows": [
+    {
+      "symbol": "QQQ",
+      "selectedProfile": "baseline_v1.04_puts",
+      "frozenAfter": 1788566399,
+      "prospective": {
+        "totalSignals": 0,
+        "wins": 0,
+        "winRate": 0,
+        "profitFactor": 0,
+        "expectancy": 0
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "selectedProfile": "volume_v1.10_calls",
+      "frozenAfter": 1788566399,
+      "prospective": {
+        "totalSignals": 0,
+        "wins": 0,
+        "winRate": 0,
+        "profitFactor": 0,
+        "expectancy": 0
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "selectedProfile": "volume_v1.10_puts",
+      "frozenAfter": 1788566396,
+      "prospective": {
+        "totalSignals": 0,
+        "wins": 0,
+        "winRate": 0,
+        "profitFactor": 0,
+        "expectancy": 0
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "selectedProfile": "volume_v1.20_both",
+      "frozenAfter": 1788566399,
+      "prospective": {
+        "totalSignals": 0,
+        "wins": 0,
+        "winRate": 0,
+        "profitFactor": 0,
+        "expectancy": 0
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "selectedProfile": "baseline_v1.04_calls",
+      "frozenAfter": 1788566400,
+      "prospective": {
+        "totalSignals": 0,
+        "wins": 0,
+        "winRate": 0,
+        "profitFactor": 0,
+        "expectancy": 0
+      }
+    }
+  ]
+}

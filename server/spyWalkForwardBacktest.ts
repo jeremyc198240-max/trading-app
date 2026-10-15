@@ -76,7 +76,7 @@ function timestampOf(candle: OHLC): number {
 }
 
 function inSpyEntryWindow(minute: number): boolean {
-  return (minute >= 575 && minute <= 690) || (minute >= 840 && minute <= 955);
+  return (minute >= 590 && minute <= 690) || (minute >= 840 && minute <= 955);
 }
 
 function isRth(minute: number): boolean {

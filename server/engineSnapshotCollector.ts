@@ -4,8 +4,9 @@ import { analyzeSymbol } from "./finance";
 import { computeFusionSnapshot, type MarketHealthIndicators, type OHLC } from "./fusion";
 import { fetchLiveOHLC } from "./marketData";
 import { appendSystemAudit } from "./systemAuditLog";
+import { getWarRoomGaugeSymbols, resolveWarRoomGaugeOutcomes } from "./warRoomCalibration";
 
-const SNAPSHOT_SYMBOLS = ["SPY", "QQQ", "IWM"];
+const SNAPSHOT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "GLD"];
 const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
 const RETENTION_DAYS = 90;
 const LOGS_DIR = path.join("logs");
@@ -23,6 +24,77 @@ let collectionRunning = false;
 let lastCollectionAt = 0;
 let lastSuccessfulSymbols = 0;
 let lastFailedSymbols = 0;
+
+export interface PositionManagerAlertEvent {
+  event: "activated" | "resolved";
+  alertId: string;
+  symbol: string;
+  timeframe: string;
+  side: "CALL" | "PUT";
+  startedAt: number;
+  endedAt?: number;
+  resolvedReason?: string;
+  startPrice: number;
+  endPrice?: number | null;
+  score: number;
+  opposingScore: number;
+  scoreGap: number;
+  coverage: number;
+  gateState: string;
+  studyState: string;
+  fusionFresh: boolean;
+  fiveMinuteState?: string | null;
+  breakoutAgeMinutes?: number | null;
+  ignition?: {
+    direction?: string | null;
+    state?: string | null;
+    strength?: number | null;
+    volumeAcceleration?: number | null;
+  };
+  signals: Array<{
+    label: string;
+    score: number;
+    weight: number;
+    classification: "support" | "neutral" | "conflict";
+  }>;
+}
+
+export function appendPositionManagerAlertEvent(event: PositionManagerAlertEvent): void {
+  const receivedAt = Date.now();
+  const startedAt = Number.isFinite(event.startedAt) ? event.startedAt : receivedAt;
+  const endedAt = event.event === "resolved"
+    ? Number.isFinite(event.endedAt) ? event.endedAt! : receivedAt
+    : null;
+  const record = {
+    ...event,
+    type: "position_manager_gold_alert",
+    schemaVersion: 1,
+    recordedAt: new Date(receivedAt).toISOString(),
+    symbol: event.symbol.trim().toUpperCase(),
+    startedAt,
+    endedAt,
+    durationMs: endedAt == null ? null : Math.max(0, endedAt - startedAt),
+    durationSeconds: endedAt == null ? null : Math.round(Math.max(0, endedAt - startedAt) / 1000),
+  };
+
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  fs.appendFileSync(
+    path.join(LOGS_DIR, `black_box_position_manager_${nyDateKey(receivedAt)}.jsonl`),
+    `${JSON.stringify(record)}\n`,
+    "utf8",
+  );
+
+  const cutoff = receivedAt - RETENTION_DAYS * 86400000;
+  for (const fileName of fs.readdirSync(LOGS_DIR)) {
+    if (!/^black_box_position_manager_.*\.jsonl$/i.test(fileName)) continue;
+    const fullPath = path.join(LOGS_DIR, fileName);
+    try {
+      if (fs.statSync(fullPath).mtimeMs < cutoff) fs.unlinkSync(fullPath);
+    } catch {
+      // Log rotation failure must not interrupt position monitoring.
+    }
+  }
+}
 
 function nySessionClock(now = new Date()): { weekday: number; minuteOfDay: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -107,13 +179,18 @@ function normalizeMarketHealth(analysis: any): MarketHealthIndicators {
   };
 }
 
+function isCompletedCandle(bar: OHLC): boolean {
+  return bar.open > 0 && bar.high > 0 && bar.low > 0 && bar.close > 0 && bar.volume > 0;
+}
+
 function validateCaptureData(candles: OHLC[], isLive: boolean, now = Date.now()): { valid: boolean; reasons: string[] } {
   const reasons: string[] = [];
   if (!isLive) reasons.push("provider returned cached or fallback candles");
   if (candles.length < 120) reasons.push(`insufficient candles (${candles.length})`);
 
   const recent = candles.slice(-PRICE_ACTION_WINDOW);
-  const latest = recent[recent.length - 1];
+  const completed = candles.filter(isCompletedCandle);
+  const latest = completed[completed.length - 1];
   const latestTimeMs = Number(latest?.timeMs ?? (latest?.time ? latest.time * 1000 : 0));
   if (!Number.isFinite(latestTimeMs) || latestTimeMs <= 0 || now - latestTimeMs > MAX_CANDLE_AGE_MS) {
     reasons.push("latest candle is stale or missing a timestamp");
@@ -126,7 +203,7 @@ function validateCaptureData(candles: OHLC[], isLive: boolean, now = Date.now())
   );
   if (malformedBar) reasons.push("recent candle OHLC or volume values are invalid");
 
-  const nonzeroVolumeBars = recent.filter((bar) => bar.volume > 0).length;
+  const nonzeroVolumeBars = recent.filter(isCompletedCandle).length;
   if (nonzeroVolumeBars < MIN_RECENT_NONZERO_VOLUME_BARS) {
     reasons.push(`insufficient recent volume (${nonzeroVolumeBars}/${recent.length} nonzero bars)`);
   }
@@ -174,7 +251,7 @@ function getDirectionalExcursion(
 
   const observed = candles.filter((bar) => {
     const barTimeMs = Number(bar.timeMs ?? (bar.time ? bar.time * 1000 : 0));
-    return barTimeMs >= captureTimeMs && barTimeMs <= resolvedTimeMs;
+    return barTimeMs > captureTimeMs && barTimeMs <= resolvedTimeMs;
   });
   if (!observed.length) {
     return { maxFavorableExcursionPct: 0, maxAdverseExcursionPct: 0 };
@@ -210,19 +287,40 @@ function readResolvedOutcomeIds(): Set<string> {
   return ids;
 }
 
-function resolveSnapshotOutcomes(symbol: string, candles: OHLC[]): void {
-  if (!fs.existsSync(LOGS_DIR) || !candles.length) return;
-  const resolvedIds = readResolvedOutcomeIds();
-  const outcomes: Record<string, unknown>[] = [];
+function readSnapshotHistory(): Array<Record<string, any>> {
+  const snapshots: Array<Record<string, any>> = [];
+  if (!fs.existsSync(LOGS_DIR)) return snapshots;
+  const cutoff = Date.now() - RETENTION_DAYS * 86400000;
 
   for (const fileName of fs.readdirSync(LOGS_DIR)) {
     if (!/^black_box_15m_.*\.jsonl$/i.test(fileName)) continue;
     const filePath = path.join(LOGS_DIR, fileName);
     try {
-      if (fs.statSync(filePath).mtimeMs < Date.now() - RETENTION_DAYS * 86400000) continue;
+      if (fs.statSync(filePath).mtimeMs < cutoff) continue;
       for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
         if (!line.trim()) continue;
-        const snapshot = JSON.parse(line) as Record<string, any>;
+        snapshots.push(JSON.parse(line) as Record<string, any>);
+      }
+    } catch {
+      // Skip a bad source log rather than halting snapshot collection.
+    }
+  }
+
+  return snapshots;
+}
+
+interface OutcomeResolutionContext {
+  resolvedIds: Set<string>;
+  snapshots: Array<Record<string, any>>;
+}
+
+function resolveSnapshotOutcomes(symbol: string, candles: OHLC[], context: OutcomeResolutionContext): void {
+  if (!fs.existsSync(LOGS_DIR) || !candles.length) return;
+  const { resolvedIds, snapshots } = context;
+  const outcomes: Record<string, unknown>[] = [];
+
+  for (const snapshot of snapshots) {
+    try {
         if (
           snapshot.type !== "black_box_15m" ||
           snapshot.symbol !== symbol ||
@@ -261,18 +359,23 @@ function resolveSnapshotOutcomes(symbol: string, candles: OHLC[]): void {
           const stop = Number(tradePlan?.stop);
           const observed = candles.filter((bar) => {
             const barTimeMs = Number(bar.timeMs ?? (bar.time ? bar.time * 1000 : 0));
-            return barTimeMs >= Number(snapshot.candleTimeMs) && barTimeMs <= resolvedTimeMs;
+            return barTimeMs > Number(snapshot.candleTimeMs) && barTimeMs <= resolvedTimeMs;
           });
-          const targetHit = direction === "CALL"
-            ? targets.some((target) => observed.some((bar) => bar.high >= target))
+          const targetHitBar = direction === "CALL"
+            ? observed.find((bar) => targets.some((target) => bar.high >= target))
             : direction === "PUT"
-              ? targets.some((target) => observed.some((bar) => bar.low <= target))
-              : false;
-          const stopHit = Number.isFinite(stop) && (direction === "CALL"
-            ? observed.some((bar) => bar.low <= stop)
-            : direction === "PUT"
-              ? observed.some((bar) => bar.high >= stop)
-              : false);
+              ? observed.find((bar) => targets.some((target) => bar.low <= target))
+              : undefined;
+          const stopHitBar = Number.isFinite(stop) && direction === "CALL"
+            ? observed.find((bar) => bar.low <= stop)
+            : Number.isFinite(stop) && direction === "PUT"
+              ? observed.find((bar) => bar.high >= stop)
+              : undefined;
+          const targetHitAtMs = targetHitBar ? Number(targetHitBar.timeMs ?? (targetHitBar.time ? targetHitBar.time * 1000 : 0)) : null;
+          const stopHitAtMs = stopHitBar ? Number(stopHitBar.timeMs ?? (stopHitBar.time ? stopHitBar.time * 1000 : 0)) : null;
+          const firstHit = targetHitAtMs != null && stopHitAtMs != null
+            ? targetHitAtMs === stopHitAtMs ? "same_bar" : targetHitAtMs < stopHitAtMs ? "target" : "stop"
+            : targetHitAtMs != null ? "target" : stopHitAtMs != null ? "stop" : "none";
 
           outcomes.push({
             type: "black_box_outcome",
@@ -287,8 +390,12 @@ function resolveSnapshotOutcomes(symbol: string, candles: OHLC[]): void {
             resolvedPrice: resolvedBar.close,
             movePct: Number((movePct * 100).toFixed(3)),
             ...excursion,
-            targetHit,
-            stopHit,
+            pathBarsObserved: observed.length,
+            targetHit: targetHitAtMs != null,
+            targetHitAtMs,
+            stopHit: stopHitAtMs != null,
+            stopHitAtMs,
+            firstHit,
             dataValid: true,
             marketDataSource: snapshot.source,
             fusionDirection: predicted,
@@ -299,7 +406,6 @@ function resolveSnapshotOutcomes(symbol: string, candles: OHLC[]): void {
           });
           resolvedIds.add(outcomeId);
         }
-      }
     } catch {
       // Skip a bad source log rather than halting snapshot collection.
     }
@@ -314,7 +420,7 @@ function resolveSnapshotOutcomes(symbol: string, candles: OHLC[]): void {
   console.log(`[BlackBox] Resolved ${outcomes.length} ${symbol} outcomes`);
 }
 
-async function collectSymbolSnapshot(symbol: string): Promise<void> {
+async function collectSymbolSnapshot(symbol: string, outcomeContext: OutcomeResolutionContext): Promise<void> {
   const response = await fetchLiveOHLC(symbol, "5m", "FULL");
   const candles = (response.data ?? []).filter((bar) => Number.isFinite(bar.close) && Number.isFinite(bar.volume));
   const captureQuality = validateCaptureData(candles, response.isLive);
@@ -329,33 +435,39 @@ async function collectSymbolSnapshot(symbol: string): Promise<void> {
     throw new Error(`Black Box capture rejected: ${captureQuality.reasons.join("; ")}`);
   }
 
-  resolveSnapshotOutcomes(symbol, candles);
+  resolveSnapshotOutcomes(symbol, candles, outcomeContext);
+  resolveWarRoomGaugeOutcomes(symbol, candles);
 
   const latest = candles[candles.length - 1];
-  const prior = candles[candles.length - 2];
-  const recentCandles = candles.slice(-PRICE_ACTION_WINDOW);
-  const averageVolume = candles.slice(-21, -1).reduce((sum, candle) => sum + candle.volume, 0) / 20;
+  const completedCandles = candles.filter(isCompletedCandle);
+  const latestCompleted = completedCandles.at(-1) ?? latest;
+  const priorCompleted = completedCandles.at(-2);
+  const recentCandles = completedCandles.slice(-PRICE_ACTION_WINDOW);
+  const volumeBaseline = completedCandles.slice(-21, -1);
+  const averageVolume = volumeBaseline.length
+    ? volumeBaseline.reduce((sum, candle) => sum + candle.volume, 0) / volumeBaseline.length
+    : 0;
   const recentHigh = Math.max(...recentCandles.map((candle) => candle.high));
   const recentLow = Math.min(...recentCandles.map((candle) => candle.low));
-  const candleRange = Math.max(latest.high - latest.low, 0.000001);
-  const sessionSplit = { rth: candles, overnight: [] as OHLC[], prevDayRth: [] as OHLC[] };
-  const analysis = analyzeSymbol(symbol, candles, { maxAbsGammaStrike: null }, sessionSplit, latest.close);
+  const candleRange = Math.max(latestCompleted.high - latestCompleted.low, 0.000001);
+  const sessionSplit = { rth: completedCandles, overnight: [] as OHLC[], prevDayRth: [] as OHLC[] };
+  const analysis = analyzeSymbol(symbol, completedCandles, { maxAbsGammaStrike: null }, sessionSplit, latestCompleted.close);
   const fusion = computeFusionSnapshot({
     symbol,
-    ohlcByTF: { "5m": candles, "15m": aggregateOhlc(candles, 3) },
+    ohlcByTF: { "5m": completedCandles, "15m": aggregateOhlc(completedCandles, 3) },
     patternsByTF: {},
     marketHealth: normalizeMarketHealth(analysis),
-    lastPrice: latest.close,
+    lastPrice: latestCompleted.close,
   });
 
   const orderBlock = fusion.orderBlock;
   const monster = fusion.monsterOtm;
   const capturedAtMs = Date.now();
-  const candleTimeMs = Number(latest.timeMs ?? (latest.time ? latest.time * 1000 : capturedAtMs));
+  const candleTimeMs = Number(latestCompleted.timeMs ?? (latestCompleted.time ? latestCompleted.time * 1000 : capturedAtMs));
   const decisionId = getDecisionId(symbol, candleTimeMs);
   const snapshot = {
     type: "black_box_15m",
-    schemaVersion: 4,
+    schemaVersion: 5,
     decisionId,
     capturedAt: new Date().toISOString(),
     capturedAtMs,
@@ -374,19 +486,20 @@ async function collectSymbolSnapshot(symbol: string): Promise<void> {
       timezone: "America/New_York",
       captureMinuteEt: getRegularSessionState().minuteOfDay,
     },
-    price: latest.close,
+    price: latestCompleted.close,
     candleTimeMs,
     priceCheckpoint: {
-      capture: latest.close,
+      capture: latestCompleted.close,
       forward15m: null,
       forward30m: null,
       forward60m: null,
     },
     priceAction: {
-      change1BarPct: prior ? Number((((latest.close - prior.close) / Math.max(prior.close, 0.000001)) * 100).toFixed(3)) : null,
+      change1BarPct: priorCompleted ? Number((((latestCompleted.close - priorCompleted.close) / Math.max(priorCompleted.close, 0.000001)) * 100).toFixed(3)) : null,
+      liveVsCompletedPct: Number((((latest.close - latestCompleted.close) / Math.max(latestCompleted.close, 0.000001)) * 100).toFixed(3)),
       range20BarPct: Number((((recentHigh - recentLow) / Math.max(latest.close, 0.000001)) * 100).toFixed(3)),
-      closeLocationPct: Number((((latest.close - latest.low) / candleRange) * 100).toFixed(1)),
-      volumeRatio20Bar: Number((latest.volume / Math.max(averageVolume, 1)).toFixed(3)),
+      closeLocationPct: Number((((latestCompleted.close - latestCompleted.low) / candleRange) * 100).toFixed(1)),
+      volumeRatio20Bar: Number((latestCompleted.volume / Math.max(averageVolume, 1)).toFixed(3)),
       bars: recentCandles.map((candle) => ({
         timeMs: candle.timeMs ?? (candle.time ? candle.time * 1000 : null),
         open: candle.open,
@@ -468,7 +581,7 @@ async function collectSymbolSnapshot(symbol: string): Promise<void> {
   appendSystemAudit("engine.snapshot", {
     decisionId,
     symbol,
-    price: latest.close,
+    price: latestCompleted.close,
     direction: fusion.unifiedSignal?.unifiedDirection ?? "WAIT",
     confidence: fusion.unifiedSignal?.unifiedConfidence ?? 0,
     hasMonsterPlay: Boolean(monster?.hasPlay),
@@ -485,13 +598,26 @@ export async function collectEngineSnapshots(_force = false): Promise<{ ran: boo
   }
   collectionRunning = true;
   try {
-    const results = await Promise.allSettled(SNAPSHOT_SYMBOLS.map(collectSymbolSnapshot));
-    const succeeded = results.filter((result) => result.status === "fulfilled").length;
-    const failed = results.length - succeeded;
+    let succeeded = 0;
+    let failed = 0;
+    const symbols = [...new Set([...SNAPSHOT_SYMBOLS, ...getWarRoomGaugeSymbols()])];
+    const outcomeContext: OutcomeResolutionContext = {
+      resolvedIds: readResolvedOutcomeIds(),
+      snapshots: readSnapshotHistory(),
+    };
+    for (const symbol of symbols) {
+      try {
+        await collectSymbolSnapshot(symbol, outcomeContext);
+        succeeded += 1;
+      } catch {
+        failed += 1;
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     lastCollectionAt = Date.now();
     lastSuccessfulSymbols = succeeded;
     lastFailedSymbols = failed;
-    console.log(`[BlackBox] 15m session sample: ${succeeded}/${SNAPSHOT_SYMBOLS.length} symbols captured${failed ? `, ${failed} failed` : ""}`);
+    console.log(`[BlackBox] 15m session sample: ${succeeded}/${symbols.length} symbols captured${failed ? `, ${failed} failed` : ""}`);
     return { ran: true, succeeded, failed };
   } finally {
     collectionRunning = false;
@@ -506,7 +632,7 @@ export function getBlackBoxStatus() {
     lastCollectionAt,
     lastSuccessfulSymbols,
     lastFailedSymbols,
-    symbols: SNAPSHOT_SYMBOLS,
+    symbols: [...new Set([...SNAPSHOT_SYMBOLS, ...getWarRoomGaugeSymbols()])],
     retentionDays: RETENTION_DAYS,
   };
 }

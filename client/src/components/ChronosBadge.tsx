@@ -57,6 +57,75 @@ function pickTopAlert(alerts: EdgeAlert[] | undefined) {
   }, alerts[0]);
 }
 
+function ChronosRadar({
+  symbol,
+  signal,
+  state,
+  score,
+  confidence,
+  trigger,
+  edgeScore,
+  patternScore,
+  bullish,
+  bearish,
+}: {
+  symbol: string;
+  signal: string;
+  state: string;
+  score: number;
+  confidence: number;
+  trigger: number;
+  edgeScore: number;
+  patternScore: number;
+  bullish: boolean;
+  bearish: boolean;
+}) {
+  const metrics = [
+    score,
+    confidence,
+    trigger,
+    edgeScore,
+    clamp(patternScore * 50, 0, 100),
+  ];
+  const center = 90;
+  const radius = 62;
+  const point = (index: number, metric: number) => {
+    const angle = -Math.PI / 2 + index * Math.PI * 2 / metrics.length;
+    const scaledRadius = radius * clamp(metric, 0, 100) / 100;
+    return `${center + Math.cos(angle) * scaledRadius},${center + Math.sin(angle) * scaledRadius}`;
+  };
+  const polygon = metrics.map((metric, index) => point(index, metric)).join(" ");
+  const axes = metrics.map((_, index) => point(index, 100));
+  const callPressure = bullish ? score : bearish ? Math.max(8, 100 - score) : 50;
+  const putPressure = bearish ? score : bullish ? Math.max(8, 100 - score) : 50;
+  const tone = bullish ? "bullish" : bearish ? "bearish" : "neutral";
+
+  return (
+    <div className={`warroom-fvg-radar chronos-radar is-${tone}`} aria-label={`${symbol} Chronos radar at ${Math.round(score)} percent`}>
+      <svg viewBox="0 0 180 180" role="img">
+        {[1, 0.72, 0.42].map((scale) => <polygon key={scale} points={metrics.map((_, index) => point(index, scale * 100)).join(" ")} className="warroom-fvg-radar__grid" />)}
+        {axes.map((axis, index) => {
+          const [x, y] = axis.split(",");
+          return <line key={index} x1={center} y1={center} x2={x} y2={y} className="warroom-fvg-radar__axis" />;
+        })}
+        <polygon points={polygon} className="warroom-fvg-radar__field" />
+        <circle cx={center} cy={center} r="5" className="warroom-fvg-radar__core" />
+        <text x="90" y="13" textAnchor="middle">SCORE</text>
+        <text x="168" y="70" textAnchor="end">CONF</text>
+        <text x="142" y="164" textAnchor="middle">TRIGGER</text>
+        <text x="38" y="164" textAnchor="middle">EDGE</text>
+        <text x="12" y="70">PATTERN</text>
+      </svg>
+      <div className="warroom-fvg-radar__readout">
+        <span>{symbol} · {state}</span>
+        <strong>{Math.round(score)}%</strong>
+        <small>{signal} · {Math.round(trigger)}% TRIGGER</small>
+      </div>
+      <div className="warroom-fvg-radar__balance"><span style={{ width: `${callPressure}%` }}>CALL {Math.round(callPressure)}%</span><span style={{ width: `${putPressure}%` }}>PUT {Math.round(putPressure)}%</span></div>
+    </div>
+  );
+}
+
 export default function ChronosBadge() {
   const [expanded, setExpanded] = useState(false);
 
@@ -197,33 +266,18 @@ export default function ChronosBadge() {
           </div>
 
           <div className="chronos-breakout-card__body">
-            <div
-              className={`warroom-smart-engine is-${isBullish ? "call" : isBearish ? "put" : "neutral"}`}
-              aria-label={`Breakout alert ${signalLabel} at ${Math.round(compositeScore)} percent`}
-              style={{
-                width: "100%",
-                minHeight: "9.5rem",
-                "--engine-spin-speed": `${Math.max(4.2, 18 - compositeScore * 0.12)}s`,
-                "--engine-spin-direction": isBearish ? "reverse" : "normal",
-              }}
-            >
-              <div className="warroom-smart-engine__orbit" style={{ animationDuration: `${Math.max(4.2, 18 - compositeScore * 0.12)}s`, animationDirection: isBearish ? "reverse" : "normal" }}><i /><i /><i /></div>
-              <svg viewBox="0 0 180 180" role="img">
-                <circle className="warroom-smart-engine__halo" cx="90" cy="90" r="82" />
-                <circle className="warroom-smart-engine__track" cx="90" cy="90" r="70" pathLength="100" />
-                <circle className="warroom-smart-engine__probability" cx="90" cy="90" r="70" pathLength="100" style={{ strokeDasharray: `${Math.max(12, compositeScore)} ${100 - Math.max(12, compositeScore)}` }} />
-                <circle className="warroom-smart-engine__track is-inner" cx="90" cy="90" r="55" pathLength="100" />
-                <circle className="warroom-smart-engine__confidence" cx="90" cy="90" r="55" pathLength="100" style={{ strokeDasharray: `${Math.max(18, Math.min(100, confidence))} ${100 - Math.max(18, Math.min(100, confidence))}` }} />
-                <circle className="warroom-smart-engine__track is-core" cx="90" cy="90" r="40" pathLength="100" />
-                <circle className="warroom-smart-engine__reliability" cx="90" cy="90" r="40" pathLength="100" style={{ strokeDasharray: `${Math.max(12, Math.min(98, trigger))} ${100 - Math.max(12, Math.min(98, trigger))}` }} />
-              </svg>
-              <div className="warroom-smart-engine__readout">
-                <span>{isExecuteWindow ? "EXECUTE" : alertLevel}</span>
-                <strong>{Math.round(compositeScore)}</strong>
-                <em>{signalLabel}</em>
-                <small>{Math.round(trigger)}% trigger</small>
-              </div>
-            </div>
+            <ChronosRadar
+              symbol={top.id?.toUpperCase() ?? "CHRONOS"}
+              signal={signalLabel}
+              state={isExecuteWindow ? "EXECUTE" : alertLevel}
+              score={compositeScore}
+              confidence={confidence}
+              trigger={trigger}
+              edgeScore={edgeScore}
+              patternScore={patternScore}
+              bullish={isBullish}
+              bearish={isBearish}
+            />
           </div>
 
           <div className="chronos-breakout-card__plan">
@@ -377,6 +431,22 @@ export default function ChronosBadge() {
           display:flex;
           justify-content:center;
           align-items:center;
+        }
+        .chronos-breakout-card .chronos-radar{
+          width:100%;
+          min-height:14rem;
+          border:1px solid rgba(125,211,252,0.2);
+        }
+        .chronos-breakout-card .chronos-radar::before{
+          width:10rem;
+          height:10rem;
+        }
+        .chronos-breakout-card .chronos-radar svg{
+          width:min(100%, 14rem);
+          min-height:12rem;
+        }
+        .chronos-breakout-card .chronos-radar__readout{
+          top:44%;
         }
         .chronos-breakout-card .warroom-smart-engine {
           position:relative;

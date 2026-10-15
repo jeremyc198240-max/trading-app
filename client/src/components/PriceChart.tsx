@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { TrendingUp, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, X } from "lucide-react";
 import type { OHLC, DrawablePattern } from "@shared/schema";
 import { patternToGeometry } from "@/patterns/patternToGeometry";
+import { dedupeAndRankChartPatterns, MAX_CHART_OVERLAYS, selectChartOverlays } from "@/patterns/selectChartPatterns";
 
 interface ExternalPatternSelection {
   name: string;
@@ -56,17 +57,98 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function isInFlightCandle(candles: OHLC[]): boolean {
+  if (candles.length < 3) return false;
+
+  const diffs: number[] = [];
+  for (let index = 1; index < candles.length; index += 1) {
+    const previousTime = Number(candles[index - 1]?.time);
+    const currentTime = Number(candles[index]?.time);
+    const diff = currentTime - previousTime;
+    if (Number.isFinite(diff) && diff > 0) diffs.push(diff);
+  }
+
+  if (diffs.length === 0) return false;
+  diffs.sort((left, right) => left - right);
+  const medianDiffSec = diffs[Math.floor(diffs.length / 2)] ?? 0;
+  const lastTime = Number(candles[candles.length - 1]?.time);
+  return Number.isFinite(lastTime) && medianDiffSec > 0 && Date.now() / 1000 < lastTime + medianDiffSec - 2;
+}
+
 export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externalSelectedPattern, corvonaLevels, liveSpotPrice }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
-  const [visibleCount, setVisibleCount] = useState(80);
+  const [visibleCount, setVisibleCount] = useState(40);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
   const [pendingCenterId, setPendingCenterId] = useState<string | null>(null);
 
-  // Keep chart candles server-stable; live spot is rendered as readout only.
-  const updatedOhlc = useMemo(() => ohlc, [ohlc]);
+  const sanitizedSeries = useMemo(() => {
+    const candlesByKey = new Map<string, { candle: OHLC; vwap: number; sourceIndex: number }>();
+    let repairCount = 0;
+    let indexRepairCount = 0;
+
+    ohlc.forEach((candle, index) => {
+      const open = Number(candle.open);
+      const high = Number(candle.high);
+      const low = Number(candle.low);
+      const close = Number(candle.close);
+      const volume = Number(candle.volume);
+      const time = Number(candle.time);
+
+      if (![open, high, low, close].every((price) => Number.isFinite(price) && price > 0)) {
+        repairCount += 1;
+        indexRepairCount += 1;
+        return;
+      }
+
+      const correctedHigh = Math.max(high, open, close);
+      const correctedLow = Math.min(low, open, close);
+      const validTime = Number.isFinite(time) && time > 0 ? time : undefined;
+      if (correctedHigh !== high || correctedLow !== low || !Number.isFinite(volume) || volume < 0 || (candle.time != null && validTime == null)) {
+        repairCount += 1;
+      }
+
+      const key = validTime == null ? `index:${index}` : `time:${validTime}`;
+      if (candlesByKey.has(key)) {
+        repairCount += 1;
+        indexRepairCount += 1;
+      }
+      candlesByKey.set(key, {
+        candle: {
+          ...candle,
+          open,
+          high: correctedHigh,
+          low: correctedLow,
+          close,
+          volume: Number.isFinite(volume) && volume >= 0 ? volume : 0,
+          time: validTime,
+        },
+        vwap: Number.isFinite(Number(vwapSeries[index])) ? Number(vwapSeries[index]) : close,
+        sourceIndex: index,
+      });
+    });
+
+    const records = Array.from(candlesByKey.values()).sort((left, right) => {
+      if (left.candle.time == null || right.candle.time == null) return 0;
+      return left.candle.time - right.candle.time;
+    });
+    if (records.some((record, index) => index > 0 && record.sourceIndex < records[index - 1].sourceIndex)) {
+      repairCount += 1;
+      indexRepairCount += 1;
+    }
+
+    return {
+      candles: records.map((record) => record.candle),
+      vwap: records.map((record) => record.vwap),
+      repairCount,
+      indexRepairCount,
+    };
+  }, [ohlc, vwapSeries]);
+
+  // Live spot is rendered as a readout only; it never mutates the source candle.
+  const updatedOhlc = sanitizedSeries.candles;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -92,19 +174,21 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const leftPad = dataStartIdx - viewStartIdx;
 
   const visibleOhlc = useMemo(() => updatedOhlc.slice(dataStartIdx, dataEndIdx), [updatedOhlc, dataStartIdx, dataEndIdx]);
-  const visibleVwap = useMemo(() => vwapSeries.slice(dataStartIdx, dataEndIdx), [vwapSeries, dataStartIdx, dataEndIdx]);
+  const visibleVwap = useMemo(() => sanitizedSeries.vwap.slice(dataStartIdx, dataEndIdx), [sanitizedSeries.vwap, dataStartIdx, dataEndIdx]);
 
   const allDrawablePatterns = useMemo(() => {
+    if (sanitizedSeries.indexRepairCount > 0) return [];
     return (drawablePatterns || []).filter((p) => p.lifecycle !== "expired");
-  }, [drawablePatterns]);
+  }, [drawablePatterns, sanitizedSeries.indexRepairCount]);
 
   const activePatterns = useMemo(() => {
-    return allDrawablePatterns.filter((p) => {
+    const closedCandleCount = updatedOhlc.length - (isInFlightCandle(updatedOhlc) ? 1 : 0);
+    const active = allDrawablePatterns.filter((p) => {
       if (p.lifecycle === "failed") return false;
       if (updatedOhlc.length === 0) return true;
-      const scanStart = Math.min(Math.max(0, p.endIndex + 1), updatedOhlc.length);
+      const scanStart = Math.min(Math.max(0, p.endIndex + 1), closedCandleCount);
       const isBull = p.type === "bullish";
-      for (let i = scanStart; i < updatedOhlc.length; i++) {
+      for (let i = scanStart; i < closedCandleCount; i++) {
         const candle = updatedOhlc[i];
         if (p.pt1 != null) {
           if (isBull && candle.high >= p.pt1) return false;
@@ -117,6 +201,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
       }
       return true;
     });
+    return dedupeAndRankChartPatterns(active);
   }, [allDrawablePatterns, updatedOhlc]);
 
   const [externallyForcedPattern, setExternallyForcedPattern] = useState<string | null>(null);
@@ -126,14 +211,25 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
       const alreadyIn = activePatterns.some(p => p.id === externallyForcedPattern);
       if (!alreadyIn) {
         const forced = allDrawablePatterns.find(p => p.id === externallyForcedPattern);
-        if (forced) return [...activePatterns, forced];
+        if (forced) return dedupeAndRankChartPatterns([...activePatterns, forced]);
       }
     }
     return activePatterns;
   }, [activePatterns, allDrawablePatterns, externallyForcedPattern]);
 
+  const overlayPatterns = useMemo(
+    () => selectChartOverlays(displayPatterns, selectedPatternId),
+    [displayPatterns, selectedPatternId],
+  );
+
+  const patternGroups = useMemo(() => [
+    { lifecycle: "breaking", label: "BREAKING NOW", patterns: displayPatterns.filter((pattern) => pattern.lifecycle === "breaking") },
+    { lifecycle: "forming", label: "FORMING", patterns: displayPatterns.filter((pattern) => pattern.lifecycle === "forming") },
+    { lifecycle: "valid", label: "FORMED", patterns: displayPatterns.filter((pattern) => pattern.lifecycle === "valid") },
+  ].filter((group) => group.patterns.length > 0), [displayPatterns]);
+
   const adjustedPatterns = useMemo(() => {
-    return displayPatterns
+    return overlayPatterns
       .map((p) => ({
         ...p,
         startIndex: p.startIndex - dataStartIdx,
@@ -154,7 +250,7 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
         },
       }))
       .filter((p) => p.endIndex >= 0 && p.startIndex < visibleOhlc.length);
-  }, [displayPatterns, dataStartIdx, visibleOhlc.length]);
+  }, [overlayPatterns, dataStartIdx, visibleOhlc.length]);
 
   useEffect(() => {
     if (activePatterns.length > 0 && !selectedPatternId) {
@@ -211,20 +307,12 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
   const volumeChartHeight = innerHeight * 0.15;
   const volumeTopY = margin.top + priceChartHeight + (innerHeight * 0.05);
 
-  const candleSpacing = chartWidth / Math.max(1, visibleCount);
+  const slotCount = Math.max(1, Math.min(visibleCount, visibleOhlc.length + Math.max(0, leftPad)));
+  const candleSpacing = chartWidth / slotCount;
   const candleBodyWidth = Math.max(2, candleSpacing * 0.65);
   const wickWidth = Math.max(1, candleBodyWidth * 0.15);
 
-  // Keep candlesticks faithful to server OHLC and only coerce numeric safety.
-  const normalizedOhlc = useMemo(() => {
-    return visibleOhlc.map((c) => {
-      const open = Number(c.open);
-      const close = Number(c.close);
-      const high = Math.max(Number(c.high), open, close);
-      const low = Math.min(Number(c.low), open, close);
-      return { ...c, open, high, low, close };
-    });
-  }, [visibleOhlc]);
+  const normalizedOhlc = visibleOhlc;
 
   // Use closed candles for axis scaling when the latest bar is still forming.
   const rangeOhlc = useMemo(() => {
@@ -472,6 +560,11 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
             >
               {chartModeLabel}
             </div>
+            {sanitizedSeries.repairCount > 0 ? (
+              <div className="rounded-full border border-amber-300/40 bg-amber-400/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-200" title={sanitizedSeries.indexRepairCount > 0 ? "Malformed, duplicate, or reordered source bars changed candle indices; pattern overlays are paused." : "Malformed candle values were corrected without changing candle indices; pattern overlays remain active."}>
+                Data repaired · {sanitizedSeries.repairCount}
+              </div>
+            ) : null}
             <div className="flex items-center gap-1">
               <Button size="icon" variant="ghost" onClick={handleScrollLeft} data-testid="button-scroll-left" className="text-cyan-200 hover:text-cyan-100 hover:bg-cyan-400/10 border border-cyan-300/15">
                 <ChevronLeft className="w-4 h-4" />
@@ -490,33 +583,47 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
         </div>
 
         {displayPatterns.length > 0 && (
-          <div className="mt-2 flex items-center gap-2 flex-wrap" data-testid="pattern-selector">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Patterns:</span>
-            {displayPatterns.map((p, i) => {
-              const color = PATTERN_COLORS[p.type] || PATTERN_COLORS.neutral;
-              const isSelected = selectedPatternId === p.id;
-              return (
-                <button
-                  key={`psel-${p.id}`}
-                  data-testid={`button-pattern-${i}`}
-                  onClick={() => handleSelectPattern(p.id)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all border backdrop-blur-sm"
-                  style={{
-                    borderColor: isSelected ? color : "rgba(120, 220, 255, 0.16)",
-                    backgroundColor: isSelected ? `${color}1f` : "rgba(8, 20, 45, 0.45)",
-                    color: isSelected ? color : "hsl(var(--muted-foreground))",
-                    boxShadow: isSelected ? `0 0 8px ${color}33` : "none",
-                  }}
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: color }}
-                  />
-                  {p.name}
-                  {isSelected && <X className="w-3 h-3 ml-0.5 opacity-60" />}
-                </button>
-              );
-            })}
+          <div className="mt-2 space-y-1.5" data-testid="pattern-selector">
+            <div className="flex items-center justify-between gap-3 border-b border-cyan-300/15 pb-1">
+              <span className="text-[10px] text-cyan-100/70 uppercase tracking-[0.18em] font-semibold">Structure Monitor</span>
+              <span className="text-[10px] text-cyan-200/80 font-mono" data-testid="pattern-overlay-count">
+                SHOWING {overlayPatterns.length} OF {displayPatterns.length} · MAX {MAX_CHART_OVERLAYS} STATES
+              </span>
+            </div>
+            {patternGroups.map((group) => (
+              <div className="grid grid-cols-[106px_1fr] items-start gap-2" data-testid={`pattern-group-${group.lifecycle}`} key={group.lifecycle}>
+                <div className={`flex items-center justify-between rounded border px-2 py-1 text-[9px] font-bold tracking-[0.12em] ${group.lifecycle === "breaking" ? "border-amber-300/50 bg-amber-400/10 text-amber-200" : group.lifecycle === "forming" ? "border-cyan-300/40 bg-cyan-400/10 text-cyan-200" : "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"}`}>
+                  <span>{group.label}</span><b>{group.patterns.length}</b>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {group.patterns.map((pattern) => {
+                    const color = PATTERN_COLORS[pattern.type] || PATTERN_COLORS.neutral;
+                    const isSelected = selectedPatternId === pattern.id;
+                    const isVisible = overlayPatterns.some((overlay) => overlay.id === pattern.id);
+                    return (
+                      <button
+                        key={`psel-${pattern.id}`}
+                        data-testid={`button-pattern-${pattern.id}`}
+                        onClick={() => handleSelectPattern(pattern.id)}
+                        className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold transition-all backdrop-blur-sm"
+                        style={{
+                          borderColor: isSelected ? color : isVisible ? `${color}88` : "rgba(120, 220, 255, 0.12)",
+                          backgroundColor: isSelected ? `${color}26` : isVisible ? `${color}10` : "rgba(8, 20, 45, 0.36)",
+                          color: isSelected || isVisible ? color : "hsl(var(--muted-foreground))",
+                          boxShadow: isSelected ? `0 0 9px ${color}38` : "none",
+                          opacity: isVisible ? 1 : 0.58,
+                        }}
+                        title={isVisible ? "Visible on chart" : "Click to promote this structure onto the chart"}
+                      >
+                        <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                        {pattern.name}
+                        {isSelected && <X className="ml-0.5 h-3 w-3 opacity-60" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </CardHeader>
@@ -608,9 +715,10 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
               </text>
             ))}
 
-            {selectedPattern && (
+            {adjustedPatterns.map((pattern, index) => (
               <SelectedPatternOverlay
-                pattern={selectedPattern}
+                key={pattern.id}
+                pattern={pattern}
                 ohlc={visibleOhlc}
                 xForIndex={xForIndex}
                 yForPrice={yForPrice}
@@ -619,8 +727,10 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
                 candleSpacing={candleSpacing}
                 margin={margin}
                 priceChartHeight={priceChartHeight}
+                highlighted={selectedPatternId === pattern.id}
+                labelOffset={index * 18}
               />
-            )}
+            ))}
 
             {normalizedOhlc.map((candle, i) => {
               const cx = xForIndex(i);
@@ -712,28 +822,6 @@ export function PriceChart({ ohlc, vwapSeries, symbol, drawablePatterns, externa
                 </text>
               </g>
             ))}
-
-            {!selectedPattern && adjustedPatterns
-              .filter(p => p.category === 'candlestick' && (p.geometry?.lines || []).length === 0)
-              .map((p) => {
-                const mainPt = (p.geometry?.points || []).find(pt => pt.label && pt.label.length > 0);
-                if (!mainPt || mainPt.x < 0 || mainPt.x >= visibleOhlc.length) return null;
-                const cx = xForIndex(mainPt.x);
-                const cy = yForPrice(mainPt.y);
-                const bull = p.type === 'bullish';
-                const mColor = PATTERN_COLORS[p.type] || PATTERN_COLORS.neutral;
-                const dir = bull ? 1 : -1;
-                const tipY = cy + dir * 6;
-                const sz = 4;
-                return (
-                  <g key={`cm-${p.id}`} opacity={0.7}>
-                    <polygon
-                      points={`${cx},${tipY} ${cx - sz},${tipY + dir * sz * 1.8} ${cx + sz},${tipY + dir * sz * 1.8}`}
-                      fill={mColor}
-                    />
-                  </g>
-                );
-              })}
 
             {selectedPattern && (() => {
               const p = selectedPattern;
@@ -1007,6 +1095,8 @@ function SelectedPatternOverlay({
   candleSpacing,
   margin,
   priceChartHeight,
+  highlighted,
+  labelOffset,
 }: {
   pattern: DrawablePattern & { startIndex: number; endIndex: number };
   ohlc: OHLC[];
@@ -1017,6 +1107,8 @@ function SelectedPatternOverlay({
   candleSpacing: number;
   margin: { top: number; right: number; bottom: number; left: number };
   priceChartHeight: number;
+  highlighted: boolean;
+  labelOffset: number;
 }) {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
   const geometry = patternToGeometry(ohlc, pattern);
@@ -1069,14 +1161,19 @@ function SelectedPatternOverlay({
   const mainLabel = points.find(p => p.label && p.label.length > 0);
 
   return (
-    <g data-testid="selected-pattern-overlay">
+    <g
+      data-testid={highlighted ? "selected-pattern-overlay" : "pattern-overlay"}
+      data-pattern-id={pattern.id}
+      data-lifecycle={pattern.lifecycle}
+      opacity={highlighted ? 1 : pattern.lifecycle === "forming" ? 0.62 : pattern.lifecycle === "breaking" ? 0.95 : 0.72}
+    >
       <rect
         x={startX}
         y={margin.top}
         width={zoneWidth}
         height={priceChartHeight}
         fill={color}
-        opacity={isCandlestickPattern ? 0.08 : 0.04}
+        opacity={highlighted ? (isCandlestickPattern ? 0.08 : 0.04) : 0.015}
       />
 
       {fillPath && (
@@ -1142,10 +1239,10 @@ function SelectedPatternOverlay({
             x2={x2}
             y2={y2}
             stroke={color}
-            strokeWidth={l.style === "dashed" ? 1.5 : 2.5}
-            strokeDasharray={l.style === "dashed" ? "6 4" : "none"}
+            strokeWidth={pattern.lifecycle === "breaking" ? 3 : l.style === "dashed" ? 1.5 : 2.25}
+            strokeDasharray={pattern.lifecycle === "forming" ? "6 5" : l.style === "dashed" ? "6 4" : "none"}
             strokeLinecap="round"
-            opacity={0.9}
+            opacity={pattern.lifecycle === "forming" ? 0.72 : 0.92}
           />
         );
       })}
@@ -1184,7 +1281,7 @@ function SelectedPatternOverlay({
           );
         })}
 
-      {geometry.breakoutLevel != null && (
+      {highlighted && geometry.breakoutLevel != null && (
         <g>
           <line
             x1={startX}
@@ -1209,7 +1306,7 @@ function SelectedPatternOverlay({
         </g>
       )}
 
-      {geometry.invalidationLevel != null && (
+      {highlighted && geometry.invalidationLevel != null && (
         <g>
           <line
             x1={startX}
@@ -1237,7 +1334,7 @@ function SelectedPatternOverlay({
 
       <PatternLabelSVG
         x={(xForIndex(si) + xForIndex(ei)) / 2}
-        y={margin.top + 14}
+        y={margin.top + 14 + labelOffset}
         name={pattern.name}
         lifecycle={pattern.lifecycle}
         color={color}
@@ -1276,8 +1373,8 @@ function SelectedPatternOverlay({
 function PatternLabelSVG({ x, y, name, lifecycle, color }: { x: number; y: number; name: string; lifecycle: string; color: string }) {
   const badgeMap: Record<string, string> = {
     forming: "FORMING",
-    valid: "ACTIVE",
-    breaking: "BREAK",
+    valid: "FORMED",
+    breaking: "BREAKING",
     failed: "FAIL",
   };
   const badge = badgeMap[lifecycle] || "";

@@ -200,7 +200,8 @@ function evaluateRunnerGate(input: CompressionLiveInput): {
   if (confidence < 68) blockers.push("confidence_low");
   if (momentumAbs < 22) blockers.push("momentum_too_weak");
   if (deltaAbs < 0.14 || deltaAbs > 0.32) blockers.push("delta_out_of_runner_lane");
-  if (bbWidth > 1.7) blockers.push("compression_already_expanded");
+  const breakoutReleased = phase === "NOW" || String(input.edgeSignal ?? "").toUpperCase() === "BREAK_UP" || String(input.edgeSignal ?? "").toUpperCase() === "BREAK_DOWN";
+  if (bbWidth > 1.7 && !breakoutReleased) blockers.push("compression_already_expanded");
   if (volRatio < 0.08) blockers.push("volume_too_dry");
   if (preBreakoutScore < 65) blockers.push("setup_score_too_low");
   if (timeframeAgreement < 60) blockers.push("mtf_stack_not_aligned");

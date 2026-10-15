@@ -134,6 +134,10 @@ interface ScannerResult {
 interface BestPlayData {
   symbol: string;
   spotPrice: number;
+  availability?: {
+    state: 'LIVE' | 'DEGRADED';
+    reason?: string;
+  };
   recommendation: {
     direction: 'CALL' | 'PUT' | 'NEUTRAL';
     setupGrade: 'GOLD' | 'HOT' | 'READY' | 'BUILDING' | 'WAIT';
@@ -410,7 +414,6 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
     queryKey: ['/api/fusion', symbol],
     enabled: !!symbol,
     staleTime: 8000,
-    refetchInterval: 30000,
   });
 
   const { data: bestPlayData } = useQuery<BestPlayData>({
@@ -418,6 +421,7 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
     enabled: !!symbol,
     staleTime: 8000,
     refetchInterval: 30000,
+    retry: false,
   });
 
   const { data: scannerResults } = useQuery<ScannerResult[]>({
@@ -762,6 +766,15 @@ export function TradeAnalysisPanel({ symbol, currentPriceOverride }: TradeAnalys
           </div>
           
           <div className="flex items-center gap-1.5">
+            {bestPlayData?.availability?.state === 'DEGRADED' && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/40 bg-amber-500/10 px-1.5 py-0 text-[9px] font-bold text-amber-300"
+                title={bestPlayData.availability.reason}
+              >
+                CHAIN DEGRADED
+              </Badge>
+            )}
             <Badge 
               variant="outline"
               className={cn(

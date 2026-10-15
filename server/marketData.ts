@@ -2,10 +2,16 @@
 
 const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY || '';
 const FINNHUB_COOLDOWN_MS = 30 * 1000;
+const FINNHUB_NETWORK_COOLDOWN_MS = 5 * 1000;
+const FINNHUB_REQUEST_TIMEOUT_MS = 8 * 1000;
+const YAHOO_DIRECT_REQUEST_TIMEOUT_MS = 8 * 1000;
+const YAHOO_SDK_REQUEST_TIMEOUT_MS = 5 * 1000;
 let finnhubGlobalCooldownUntil = 0;
 let finnhubCooldownLogAt = 0;
 let finnhubCandlesDisabled = false;
 let finnhubCandlesDisabledLogged = false;
+const finnhubQuoteInFlight = new Map<string, Promise<FinnhubQuote | null>>();
+let finnhubQuoteQueue: Promise<void> = Promise.resolve();
 
 let yahooFinanceInstance: any | null = null;
 
@@ -31,8 +37,14 @@ interface FinnhubCandlesResponse {
   v?: number[];
 }
 
+function enqueueFinnhubQuote<T>(operation: () => Promise<T>): Promise<T> {
+  const queued = finnhubQuoteQueue.then(operation, operation);
+  finnhubQuoteQueue = queued.then(() => undefined, () => undefined);
+  return queued;
+}
+
 // Fetch real-time quote from Finnhub
-async function fetchFinnhubQuote(symbol: string): Promise<FinnhubQuote | null> {
+async function fetchFinnhubQuoteFromProvider(symbol: string): Promise<FinnhubQuote | null> {
   if (!FINNHUB_API_KEY) {
     return null;
   }
@@ -48,7 +60,7 @@ async function fetchFinnhubQuote(symbol: string): Promise<FinnhubQuote | null> {
   
   try {
     const url = `https://finnhub.io/api/v1/quote?symbol=${symbol.toUpperCase()}&token=${FINNHUB_API_KEY}`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(FINNHUB_REQUEST_TIMEOUT_MS) });
     
     if (!response.ok) {
       if (response.status === 429) {
@@ -65,21 +77,53 @@ async function fetchFinnhubQuote(symbol: string): Promise<FinnhubQuote | null> {
     }
     
     const data = await response.json() as FinnhubQuote;
+    const currentPrice = Number(data.c);
     
-    // Finnhub returns { c: 0, d: null, ... } for invalid symbols
-    if (data.c === 0 && data.pc === 0) {
-      console.warn(`[Finnhub] No data for ${symbol}`);
+    // Finnhub can return an incomplete payload for unsupported symbols.
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      console.warn(`[Finnhub] No usable quote for ${symbol}`);
       return null;
     }
     
     if (process.env.DEBUG_SIGNALS === '1') {
-      console.log(`[Finnhub] Quote for ${symbol}: $${data.c.toFixed(2)} (${data.dp > 0 ? '+' : ''}${data.dp.toFixed(2)}%)`);
+      const percentChange = Number.isFinite(data.dp) ? data.dp : 0;
+      console.log(`[Finnhub] Quote for ${symbol}: $${currentPrice.toFixed(2)} (${percentChange > 0 ? '+' : ''}${percentChange.toFixed(2)}%)`);
     }
-    return data;
+    return { ...data, c: currentPrice };
   } catch (error) {
-    console.warn(`[Finnhub] Error fetching ${symbol}:`, error);
+    finnhubGlobalCooldownUntil = Math.max(finnhubGlobalCooldownUntil, Date.now() + FINNHUB_NETWORK_COOLDOWN_MS);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[Finnhub] Request failed for ${symbol}: ${message}; retrying once.`);
+    if (message.includes('ECONNRESET') || message.includes('aborted') || message.includes('fetch failed')) {
+      try {
+        const retryResponse = await fetch(
+          `https://finnhub.io/api/v1/quote?symbol=${symbol.toUpperCase()}&token=${FINNHUB_API_KEY}`,
+          { signal: AbortSignal.timeout(FINNHUB_REQUEST_TIMEOUT_MS) },
+        );
+        if (!retryResponse.ok) return null;
+        const retryData = await retryResponse.json() as FinnhubQuote;
+        const retryPrice = Number(retryData.c);
+        if (Number.isFinite(retryPrice) && retryPrice > 0) {
+          return { ...retryData, c: retryPrice };
+        }
+      } catch (retryError) {
+        const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+        console.warn(`[Finnhub] Retry failed for ${symbol}: ${retryMessage}`);
+      }
+    }
     return null;
   }
+}
+
+async function fetchFinnhubQuote(symbol: string): Promise<FinnhubQuote | null> {
+  const upperSymbol = symbol.toUpperCase();
+  const existing = finnhubQuoteInFlight.get(upperSymbol);
+  if (existing) return existing;
+
+  const request = enqueueFinnhubQuote(() => fetchFinnhubQuoteFromProvider(upperSymbol));
+  finnhubQuoteInFlight.set(upperSymbol, request);
+  request.finally(() => finnhubQuoteInFlight.delete(upperSymbol));
+  return request;
 }
 
 async function getYahooFinance() {
@@ -143,9 +187,10 @@ export type SessionType = 'RTH' | 'OVERNIGHT' | 'FULL';
 const cache = new Map<string, CacheEntry>();
 
 // Timeframe-specific cache TTLs (in milliseconds)
-// 5m/15m/30m: 60 seconds, 2h/4h: 5 minutes, 1d: 10 minutes
+// 5m: 15 seconds, 15m/30m: 60 seconds, 2h/4h: 5 minutes, 1d: 10 minutes
 const CACHE_TTL_BY_TF: Record<string, number> = {
-  '5m': 60 * 1000,
+  '1m': 5 * 1000,
+  '5m': 15 * 1000,
   '15m': 60 * 1000,
   '30m': 60 * 1000,
   '1h': 2 * 60 * 1000,
@@ -171,6 +216,7 @@ const STOOQ_MAX_STALENESS_MS = 24 * 60 * 60 * 1000;
 const MAX_CACHED_SPOT_FALLBACK_MS = 120 * 1000;
 const MAX_CACHED_SPOT_RATE_LIMIT_FALLBACK_MS = 10 * 60 * 1000;
 const YAHOO_OHLC_COOLDOWN_MS = 60 * 1000;
+const YAHOO_OHLC_NETWORK_COOLDOWN_MS = 15 * 1000;
 const YAHOO_SPOT_COOLDOWN_MS = 60 * 1000;
 
 let yahooOhlcGlobalCooldownUntil = 0;
@@ -199,11 +245,8 @@ function getCacheKey(
   period1: Date,
   period2: Date
 ): string {
-  // Time-window params are dynamic per request; keep cache key stable per symbol/timeframe/session
-  // and rely on TTL to invalidate.
-  void period1;
-  void period2;
-  return [symbol.toUpperCase(), timeframe, session].join('-');
+  const rangeDays = Math.max(1, Math.round((period2.getTime() - period1.getTime()) / (24 * 60 * 60 * 1000)));
+  return [symbol.toUpperCase(), timeframe, session, `${rangeDays}d`].join('-');
 }
 
 function getFromCache(
@@ -247,7 +290,8 @@ function setCache(
   }
 }
 
-const INTERVAL_MAP: Record<string, '5m' | '15m' | '30m' | '1h' | '1d'> = {
+const INTERVAL_MAP: Record<string, '1m' | '5m' | '15m' | '30m' | '1h' | '1d'> = {
+  '1m': '1m',
   '5m': '5m',
   '15m': '15m',
   '30m': '30m',
@@ -260,6 +304,8 @@ const INTERVAL_MAP: Record<string, '5m' | '15m' | '30m' | '1h' | '1d'> = {
 
 function getFinnhubResolution(timeframe: string): string | null {
   switch (timeframe) {
+    case '1m':
+      return '1';
     case '5m':
       return '5';
     case '15m':
@@ -278,12 +324,24 @@ function getFinnhubResolution(timeframe: string): string | null {
   }
 }
 
-function getDateRange(timeframe: string): { period1: Date; period2: Date } {
+function getDateRange(timeframe: string, lookbackDays?: number): { period1: Date; period2: Date } {
   const now = new Date();
   const period2 = now;
   let period1: Date;
 
+  const requestedDays = Number.isFinite(lookbackDays)
+    ? Math.max(1, Math.min(59, Math.floor(lookbackDays as number)))
+    : null;
+  if (requestedDays != null) {
+    const providerDays = timeframe === '1m' ? Math.min(7, requestedDays) : requestedDays;
+    period1 = new Date(now.getTime() - providerDays * 24 * 60 * 60 * 1000);
+    return { period1, period2 };
+  }
+
   switch (timeframe) {
+    case '1m':
+      period1 = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+      break;
     case '5m':
       period1 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       break;
@@ -327,6 +385,34 @@ function isRthEst(date: Date): boolean {
   const open = 9 * 60 + 30;
   const close = 16 * 60;
   return totalMin >= open && totalMin < close;
+}
+
+function isIntradayCandleSetStale(ohlc: OHLC[], timeframe: string, nowMs: number = Date.now()): boolean {
+  if (!isRthEst(new Date(nowMs)) || ohlc.length === 0) return false;
+
+  const timeframeMinutes = timeframe === '1m'
+    ? 1
+    : timeframe === '5m'
+      ? 5
+      : timeframe === '15m'
+        ? 15
+        : timeframe === '30m'
+          ? 30
+          : timeframe === '1h'
+            ? 60
+            : null;
+  if (timeframeMinutes == null) return false;
+
+  const latest = ohlc[ohlc.length - 1];
+  const latestMs = Number.isFinite(latest?.timeMs)
+    ? Number(latest.timeMs)
+    : Number.isFinite(latest?.time)
+      ? Number(latest.time) * 1000
+      : Number.NaN;
+  if (!Number.isFinite(latestMs)) return true;
+
+  const maxAgeMs = (timeframeMinutes * 2 + 2) * 60_000;
+  return nowMs - latestMs > maxAgeMs;
 }
 
 function splitSessions(ohlc: OHLC[]): {
@@ -414,6 +500,7 @@ async function fetchYahooChartDirect(
       headers: {
         'User-Agent': 'Mozilla/5.0',
       },
+      signal: AbortSignal.timeout(YAHOO_DIRECT_REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -472,6 +559,14 @@ async function fetchYahooChartDirect(
     }
     return candles;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const networkFailure = /ECONNRESET|fetch failed|aborted|timed out|timeout/i.test(message);
+    if (networkFailure) {
+      yahooOhlcGlobalCooldownUntil = Math.max(
+        yahooOhlcGlobalCooldownUntil,
+        Date.now() + YAHOO_OHLC_NETWORK_COOLDOWN_MS,
+      );
+    }
     if (process.env.DEBUG_SIGNALS === '1') {
       console.warn(`[YahooDirect] Error for ${symbol}/${timeframe}:`, error);
     }
@@ -480,10 +575,60 @@ async function fetchYahooChartDirect(
 }
 
 function sanitizeOhlcWicks(candles: OHLC[]): OHLC[] {
-  if (candles.length < 5) return candles;
+  const normalized: OHLC[] = [];
+  const timestampIndexes = new Map<number, number>();
 
-  const validCandles = candles.filter(c => c.volume > 0 && c.high > c.low);
-  if (validCandles.length < 3) return candles;
+  for (const candle of candles) {
+    const open = Number(candle.open);
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const close = Number(candle.close);
+    const volume = Number(candle.volume);
+
+    if (![open, high, low, close].every(price => Number.isFinite(price) && price > 0)) {
+      continue;
+    }
+
+    const repaired: OHLC = {
+      ...candle,
+      open,
+      high: Math.max(high, low, open, close),
+      low: Math.min(high, low, open, close),
+      close,
+      volume: Number.isFinite(volume) && volume >= 0 ? volume : 0,
+    };
+    const timestamp = Number.isFinite(repaired.timeMs)
+      ? Number(repaired.timeMs)
+      : Number.isFinite(repaired.time)
+        ? Number(repaired.time) * 1000
+        : null;
+
+    if (timestamp == null) {
+      normalized.push(repaired);
+      continue;
+    }
+
+    const existingIndex = timestampIndexes.get(timestamp);
+    if (existingIndex == null) {
+      timestampIndexes.set(timestamp, normalized.length);
+      normalized.push(repaired);
+      continue;
+    }
+
+    const existing = normalized[existingIndex];
+    normalized[existingIndex] = {
+      ...repaired,
+      open: existing.open,
+      high: Math.max(existing.high, repaired.high),
+      low: Math.min(existing.low, repaired.low),
+      volume: Math.max(existing.volume, repaired.volume),
+    };
+  }
+
+  if (normalized.length === 0) return [];
+
+  const validCandles = normalized.filter(c => c.volume > 0 && c.high > c.low);
+  if (validCandles.length < 3) return normalized;
 
   const bodies = validCandles.map(c => Math.abs(c.close - c.open)).filter(b => b > 0).sort((a, b) => a - b);
   const ranges = validCandles.map(c => c.high - c.low).sort((a, b) => a - b);
@@ -493,8 +638,8 @@ function sanitizeOhlcWicks(candles: OHLC[]): OHLC[] {
 
   const result: OHLC[] = [];
 
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
+  for (let i = 0; i < normalized.length; i++) {
+    const c = normalized[i];
     let { open, high, low, close } = c;
 
     open = Number(open);
@@ -619,10 +764,11 @@ async function fetchFinnhubCandles(
 // ----------------------
 // CANDLES (historical)
 // ----------------------
-export async function fetchLiveOHLC(
+async function fetchLiveOHLCFromProvider(
   symbol: string,
   timeframe: string = '15m',
-  session: SessionType = 'FULL'
+  session: SessionType = 'FULL',
+  options?: { lookbackDays?: number },
 ): Promise<{
   data: OHLC[];
   rth: OHLC[];
@@ -631,7 +777,7 @@ export async function fetchLiveOHLC(
   isLive: boolean;
   error?: string;
 }> {
-  const { period1, period2 } = getDateRange(timeframe);
+  const { period1, period2 } = getDateRange(timeframe, options?.lookbackDays);
   const lastKnownKey = getLastKnownKey(symbol, timeframe);
   
   // Check cache first
@@ -642,7 +788,16 @@ export async function fetchLiveOHLC(
       session === 'RTH' ? rth :
       session === 'OVERNIGHT' ? overnight :
       full;
-    return { data, rth, overnight, prevDayRth, isLive: true };
+    if (!isIntradayCandleSetStale(data, timeframe)) {
+      return {
+        data,
+        rth,
+        overnight,
+        prevDayRth,
+        isLive: false,
+        error: 'Using cached OHLC within cache TTL',
+      };
+    }
   }
 
   const tryFinnhubFallback = async (reason: string) => {
@@ -725,7 +880,10 @@ export async function fetchLiveOHLC(
     }
 
     const lastKnown = lastKnownData.get(lastKnownKey);
-    if (lastKnown && lastKnown.full.length > 0) {
+    const lastKnownDataForSession = lastKnown
+      ? session === 'RTH' ? lastKnown.rth : session === 'OVERNIGHT' ? lastKnown.overnight : lastKnown.full
+      : [];
+    if (lastKnown && lastKnownDataForSession.length > 0 && !isIntradayCandleSetStale(lastKnownDataForSession, timeframe)) {
       const data =
         session === 'RTH' ? lastKnown.rth :
         session === 'OVERNIGHT' ? lastKnown.overnight :
@@ -740,11 +898,22 @@ export async function fetchLiveOHLC(
       };
     }
 
-    const yahooDirectFallback = await tryYahooDirectFallback(`Yahoo cooldown ${remainingSec}s`);
-    if (yahooDirectFallback) return yahooDirectFallback;
+    const yahooDirectFallback = await tryYahooDirectFallback(`Yahoo SDK cooldown ${remainingSec}s`);
+    if (yahooDirectFallback && !isIntradayCandleSetStale(yahooDirectFallback.data, timeframe)) return yahooDirectFallback;
 
     const finnhubFallback = await tryFinnhubFallback(`Yahoo cooldown ${remainingSec}s`);
-    if (finnhubFallback) return finnhubFallback;
+    if (finnhubFallback && !isIntradayCandleSetStale(finnhubFallback.data, timeframe)) return finnhubFallback;
+
+    if (lastKnown && lastKnownDataForSession.length > 0) {
+      return {
+        data: lastKnownDataForSession,
+        rth: lastKnown.rth,
+        overnight: lastKnown.overnight,
+        prevDayRth: lastKnown.prevDayRth,
+        isLive: false,
+        error: `Yahoo cooldown active (${remainingSec}s), live fallbacks unavailable; using stale cached data`,
+      };
+    }
 
     return {
       data: [],
@@ -763,12 +932,12 @@ export async function fetchLiveOHLC(
     const interval = INTERVAL_MAP[timeframe] || '1d';
     const yahooFinance = await getYahooFinance();
 
-    const result = await yahooFinance.chart(symbol.toUpperCase(), {
+    const sdkRequest = yahooFinance.chart(symbol.toUpperCase(), {
       period1,
       period2,
       interval,
       includePrePost: session !== 'RTH',
-    }) as {
+    }) as Promise<{
       quotes: Array<{
         date: Date;
         open: number | null;
@@ -777,7 +946,16 @@ export async function fetchLiveOHLC(
         close: number | null;
         volume: number | null;
       }>;
-    };
+    }>;
+    const result = await Promise.race([
+      sdkRequest,
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`Yahoo SDK request timed out after ${YAHOO_SDK_REQUEST_TIMEOUT_MS}ms`)),
+          YAHOO_SDK_REQUEST_TIMEOUT_MS,
+        );
+      }),
+    ]);
     if (!result || !result.quotes) {
       console.error(`[fetchLiveOHLC] No result or quotes for ${symbol} / ${timeframe}`);
       console.error(`[fetchLiveOHLC] Yahoo API response:`, JSON.stringify(result, null, 2));
@@ -792,14 +970,13 @@ export async function fetchLiveOHLC(
     if (!result || !result.quotes || result.quotes.length === 0) {
       console.warn(`[fetchLiveOHLC] GAP: No data for ${symbol} / ${timeframe}`);
       const lastKnown = lastKnownData.get(lastKnownKey);
-      if (lastKnown && lastKnown.full.length > 0) {
+      const lastKnownDataForSession = lastKnown
+        ? session === 'RTH' ? lastKnown.rth : session === 'OVERNIGHT' ? lastKnown.overnight : lastKnown.full
+        : [];
+      if (lastKnown && lastKnownDataForSession.length > 0 && !isIntradayCandleSetStale(lastKnownDataForSession, timeframe)) {
         console.warn(`[Yahoo] No new data for ${symbol}/${timeframe}, using last known (${lastKnown.full.length} candles)`);
-        const data =
-          session === 'RTH' ? lastKnown.rth :
-          session === 'OVERNIGHT' ? lastKnown.overnight :
-          lastKnown.full;
         return { 
-          data, 
+          data: lastKnownDataForSession,
           rth: lastKnown.rth, 
           overnight: lastKnown.overnight, 
           prevDayRth: lastKnown.prevDayRth, 
@@ -809,10 +986,21 @@ export async function fetchLiveOHLC(
       }
 
       const yahooDirectFallback = await tryYahooDirectFallback('Yahoo SDK returned no candles');
-      if (yahooDirectFallback) return yahooDirectFallback;
+      if (yahooDirectFallback && !isIntradayCandleSetStale(yahooDirectFallback.data, timeframe)) return yahooDirectFallback;
 
       const finnhubFallback = await tryFinnhubFallback('Yahoo returned no candles');
-      if (finnhubFallback) return finnhubFallback;
+      if (finnhubFallback && !isIntradayCandleSetStale(finnhubFallback.data, timeframe)) return finnhubFallback;
+
+      if (lastKnown && lastKnownDataForSession.length > 0) {
+        return {
+          data: lastKnownDataForSession,
+          rth: lastKnown.rth,
+          overnight: lastKnown.overnight,
+          prevDayRth: lastKnown.prevDayRth,
+          isLive: false,
+          error: 'Live OHLC fallbacks unavailable; using stale cached data',
+        };
+      }
 
       return {
         data: [],
@@ -845,14 +1033,13 @@ export async function fetchLiveOHLC(
     if (fullOhlc.length === 0) {
       console.warn(`[fetchLiveOHLC] GAP: No valid OHLC for ${symbol} / ${timeframe}`);
       const lastKnown = lastKnownData.get(lastKnownKey);
-      if (lastKnown && lastKnown.full.length > 0) {
+      const lastKnownDataForSession = lastKnown
+        ? session === 'RTH' ? lastKnown.rth : session === 'OVERNIGHT' ? lastKnown.overnight : lastKnown.full
+        : [];
+      if (lastKnown && lastKnownDataForSession.length > 0 && !isIntradayCandleSetStale(lastKnownDataForSession, timeframe)) {
         console.warn(`[Yahoo] No valid OHLC for ${symbol}/${timeframe}, using last known`);
-        const data =
-          session === 'RTH' ? lastKnown.rth :
-          session === 'OVERNIGHT' ? lastKnown.overnight :
-          lastKnown.full;
         return { 
-          data, 
+          data: lastKnownDataForSession,
           rth: lastKnown.rth, 
           overnight: lastKnown.overnight, 
           prevDayRth: lastKnown.prevDayRth, 
@@ -862,10 +1049,21 @@ export async function fetchLiveOHLC(
       }
 
       const yahooDirectFallback = await tryYahooDirectFallback('Yahoo SDK produced invalid OHLC');
-      if (yahooDirectFallback) return yahooDirectFallback;
+      if (yahooDirectFallback && !isIntradayCandleSetStale(yahooDirectFallback.data, timeframe)) return yahooDirectFallback;
 
       const finnhubFallback = await tryFinnhubFallback('Yahoo produced invalid OHLC');
-      if (finnhubFallback) return finnhubFallback;
+      if (finnhubFallback && !isIntradayCandleSetStale(finnhubFallback.data, timeframe)) return finnhubFallback;
+
+      if (lastKnown && lastKnownDataForSession.length > 0) {
+        return {
+          data: lastKnownDataForSession,
+          rth: lastKnown.rth,
+          overnight: lastKnown.overnight,
+          prevDayRth: lastKnown.prevDayRth,
+          isLive: false,
+          error: 'Live OHLC fallbacks unavailable; using stale cached data',
+        };
+      }
 
       return {
         data: [],
@@ -875,6 +1073,18 @@ export async function fetchLiveOHLC(
         isLive: false,
         error: 'No valid OHLC data',
       };
+    }
+
+    if (isIntradayCandleSetStale(fullOhlc, timeframe)) {
+      const yahooDirectFallback = await tryYahooDirectFallback('Yahoo SDK candles are stale');
+      if (yahooDirectFallback && !isIntradayCandleSetStale(yahooDirectFallback.data, timeframe)) {
+        return yahooDirectFallback;
+      }
+
+      const finnhubFallback = await tryFinnhubFallback('Yahoo SDK candles are stale');
+      if (finnhubFallback && !isIntradayCandleSetStale(finnhubFallback.data, timeframe)) {
+        return finnhubFallback;
+      }
     }
 
     const rawSplit = splitSessions(fullOhlc);
@@ -926,16 +1136,15 @@ export async function fetchLiveOHLC(
       ? `Yahoo rate-limited (cooldown ${Math.max(1, Math.ceil((yahooOhlcGlobalCooldownUntil - Date.now()) / 1000))}s)`
       : message;
     
-    // GAP PROTECTION: On error, return last known good data
+    // Prefer alternate live providers before falling back to a stale snapshot.
     const lastKnown = lastKnownData.get(lastKnownKey);
-    if (lastKnown && lastKnown.full.length > 0) {
+    const lastKnownDataForSession = lastKnown
+      ? session === 'RTH' ? lastKnown.rth : session === 'OVERNIGHT' ? lastKnown.overnight : lastKnown.full
+      : [];
+    if (lastKnown && lastKnownDataForSession.length > 0 && !isIntradayCandleSetStale(lastKnownDataForSession, timeframe)) {
       console.warn(`[Yahoo] Using last known data for ${symbol}/${timeframe} (${lastKnown.full.length} candles)`);
-      const data =
-        session === 'RTH' ? lastKnown.rth :
-        session === 'OVERNIGHT' ? lastKnown.overnight :
-        lastKnown.full;
       return { 
-        data, 
+        data: lastKnownDataForSession,
         rth: lastKnown.rth, 
         overnight: lastKnown.overnight, 
         prevDayRth: lastKnown.prevDayRth, 
@@ -945,10 +1154,21 @@ export async function fetchLiveOHLC(
     }
 
     const yahooDirectFallback = await tryYahooDirectFallback(effectiveMessage);
-    if (yahooDirectFallback) return yahooDirectFallback;
+    if (yahooDirectFallback && !isIntradayCandleSetStale(yahooDirectFallback.data, timeframe)) return yahooDirectFallback;
 
     const finnhubFallback = await tryFinnhubFallback(effectiveMessage);
-    if (finnhubFallback) return finnhubFallback;
+    if (finnhubFallback && !isIntradayCandleSetStale(finnhubFallback.data, timeframe)) return finnhubFallback;
+
+    if (lastKnown && lastKnownDataForSession.length > 0) {
+      return {
+        data: lastKnownDataForSession,
+        rth: lastKnown.rth,
+        overnight: lastKnown.overnight,
+        prevDayRth: lastKnown.prevDayRth,
+        isLive: false,
+        error: `Live OHLC fallbacks unavailable; using stale cached data (${effectiveMessage})`,
+      };
+    }
     
     return {
       data: [],
@@ -959,6 +1179,34 @@ export async function fetchLiveOHLC(
       error: effectiveMessage,
     };
   }
+}
+
+type LiveOhlcResult = Awaited<ReturnType<typeof fetchLiveOHLCFromProvider>>;
+const liveOhlcInFlight = new Map<string, Promise<LiveOhlcResult>>();
+const LIVE_OHLC_IN_FLIGHT_MAX_MS = 5_000;
+
+export function fetchLiveOHLC(
+  symbol: string,
+  timeframe: string = '15m',
+  session: SessionType = 'FULL',
+  options?: { lookbackDays?: number },
+): Promise<LiveOhlcResult> {
+  const requestKey = `${symbol.toUpperCase()}:${timeframe.toLowerCase()}:${session}:${options?.lookbackDays ?? 'default'}`;
+  const existing = liveOhlcInFlight.get(requestKey);
+  if (existing) return existing;
+
+  const request = fetchLiveOHLCFromProvider(symbol, timeframe, session, options);
+  liveOhlcInFlight.set(requestKey, request);
+  void request.then(
+    () => liveOhlcInFlight.delete(requestKey),
+    () => liveOhlcInFlight.delete(requestKey),
+  );
+  setTimeout(() => {
+    if (liveOhlcInFlight.get(requestKey) === request) {
+      liveOhlcInFlight.delete(requestKey);
+    }
+  }, LIVE_OHLC_IN_FLIGHT_MAX_MS);
+  return request;
 }
 
 // ----------------------
@@ -1147,7 +1395,7 @@ export async function fetchLiveSpot(
   if (
     cached &&
     Date.now() - cached.timestamp < getSpotCacheTTL() &&
-    hasFreshCachedQuote(INTRADAY_SPOT_MAX_STALENESS_MS)
+    hasFreshCachedQuote(Math.min(INTRADAY_SPOT_MAX_STALENESS_MS, YAHOO_MAX_STALENESS_MS))
   ) {
     return cached.data;
   }
@@ -1191,20 +1439,6 @@ export async function fetchLiveSpot(
   // Global cooldown after Yahoo 429s to avoid quote hammering loops.
   if (Date.now() < yahooSpotGlobalCooldownUntil) {
     const remainingSec = Math.max(1, Math.ceil((yahooSpotGlobalCooldownUntil - Date.now()) / 1000));
-    const intradayFallback = await resolveIntradayFallback();
-    if (intradayFallback) {
-      const intradayResult: SpotCache['data'] = {
-        symbol: upperSymbol,
-        spot: intradayFallback.price,
-        prevClose: cached?.data.prevClose ?? intradayFallback.price,
-        marketState: cached?.data.marketState ?? 'REGULAR',
-        timestamp: new Date(intradayFallback.timestampMs).toISOString(),
-        source: 'yahoo',
-      };
-      spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
-      return intradayResult;
-    }
-
     const finnhubFallback = await resolveFinnhubFallback();
     if (finnhubFallback) {
       spotCache.set(upperSymbol, { data: finnhubFallback, timestamp: Date.now() });
@@ -1231,6 +1465,20 @@ export async function fetchLiveSpot(
     if (stooqFallback) {
       spotCache.set(upperSymbol, { data: stooqFallback, timestamp: Date.now() });
       return stooqFallback;
+    }
+
+    const intradayFallback = await resolveIntradayFallback();
+    if (intradayFallback) {
+      const intradayResult: SpotCache['data'] = {
+        symbol: upperSymbol,
+        spot: intradayFallback.price,
+        prevClose: cached?.data.prevClose ?? intradayFallback.price,
+        marketState: cached?.data.marketState ?? 'REGULAR',
+        timestamp: new Date(intradayFallback.timestampMs).toISOString(),
+        source: 'yahoo',
+      };
+      spotCache.set(upperSymbol, { data: intradayResult, timestamp: Date.now() });
+      return intradayResult;
     }
 
     throw new Error(`Yahoo rate-limited cooldown active (${remainingSec}s), no fallback data`);
@@ -1388,13 +1636,25 @@ export async function fetchLiveSpot(
         source,
       };
     } else {
-      // During regular hours, prefer Yahoo and only fall back if stale.
+      // During regular hours, use the newest valid provider print; Yahoo can report
+      // a recent-looking regular price with an older market timestamp during fast moves.
       let spot = regularPrice;
       let prevClose = quotePrevClose;
       let timestampMs = quoteTimeMs;
       let source: 'finnhub' | 'yahoo' = 'yahoo';
 
-      if (Date.now() - timestampMs > YAHOO_MAX_STALENESS_MS) {
+      const finnhubFallback = await resolveFinnhubFallback();
+      const finnhubTimestampMs = finnhubFallback
+        ? sanitizeTimestampMs(toMs(finnhubFallback.timestamp))
+        : null;
+      if (finnhubFallback && finnhubTimestampMs != null && finnhubTimestampMs > timestampMs) {
+        spot = finnhubFallback.spot;
+        prevClose = finnhubFallback.prevClose;
+        timestampMs = finnhubTimestampMs;
+        source = 'finnhub';
+      }
+
+      if (source === 'yahoo' && Date.now() - timestampMs > YAHOO_MAX_STALENESS_MS) {
         const intradayFallback = await resolveIntradayFallback();
         if (intradayFallback) {
           spot = intradayFallback.price;
@@ -1403,7 +1663,6 @@ export async function fetchLiveSpot(
             console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using intraday fallback ${spot.toFixed(2)}.`);
           }
         } else {
-          const finnhubFallback = await resolveFinnhubFallback();
           if (finnhubFallback) {
             spot = finnhubFallback.spot;
             prevClose = finnhubFallback.prevClose;
@@ -1422,8 +1681,8 @@ export async function fetchLiveSpot(
               if (process.env.DEBUG_SIGNALS === '1') {
                 console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; using Stooq fallback ${spot.toFixed(2)}.`);
               }
-            } else if (process.env.DEBUG_SIGNALS === '1') {
-              console.warn(`[Spot] Yahoo regular quote stale for ${symbol}; keeping Yahoo quote to avoid provider drift.`);
+            } else {
+              throw new Error(`Yahoo quote stale for ${symbol} and no fresh fallback is available`);
             }
           }
         }

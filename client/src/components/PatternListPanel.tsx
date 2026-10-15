@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { NormalizedPattern, FusionPatternSignal, PatternCategory, PatternLifecycle } from "@shared/schema";
 import { PATTERN_REGISTRY } from "@shared/patternRegistry";
+import { dedupeNormalizedPatterns } from "@/lib/warRoomPatternDedupe";
 
 type UICategory = "smc" | "volatility" | "classical" | "candlestick";
 
@@ -388,7 +389,7 @@ export function PatternListPanel({
   const setupUniverseCount = useMemo(() => Object.keys(PATTERN_REGISTRY).length, []);
 
   const allPatterns = useMemo(() => {
-    return normalizedPatterns ?? [];
+    return dedupeNormalizedPatterns(normalizedPatterns ?? []);
   }, [normalizedPatterns]);
 
   const activePatterns = useMemo(
